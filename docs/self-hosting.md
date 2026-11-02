@@ -191,7 +191,7 @@ removed on the Worker's Domains tab, which only the dashboard does. So Custom do
 Ember moved away from, links to that tab, and checks each until it's gone. Workspace settings stay
 wherever they're opened, so if Ember's domain ever stops reaching it, open Domain settings at the
 workers.dev address and go back there. Deploys leave the domain alone as long as `wrangler.jsonc` lists no
-`routes`.
+`routes`, and keep the workers.dev address on (`workers_dev`), for going back.
 
 #### When the domain's DNS is elsewhere
 
