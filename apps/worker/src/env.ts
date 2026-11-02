@@ -35,10 +35,9 @@ export interface Env {
   /** What the Set up Ember form suggests for their email address in place of "kevin@kevinrose.com". */
   EMBER_SETUP_EMAIL_PLACEHOLDER?: string;
   /**
-   * The setup password, at least 12 characters, which the Set up Ember page asks for, so that only
-   * whoever deployed Ember sets it up (setup.ts). Deploy to Cloudflare's form asks the deployer to make
-   * one up. With neither it nor EMBER_SETUP_TOKEN, setup is closed, except over loopback, where
-   * `wrangler dev` serves.
+   * The setup password, which the Set up Ember page asks for, so that only whoever deployed Ember sets
+   * it up (setup.ts). Deploy to Cloudflare's form asks the deployer to make one up. With neither it nor
+   * EMBER_SETUP_TOKEN, setup is closed, except over loopback, where `wrangler dev` serves.
    */
   EMBER_SETUP_PASSWORD?: string;
   /**

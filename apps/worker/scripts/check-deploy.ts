@@ -63,7 +63,7 @@ async function checkSignInRequired(baseUrl: string): Promise<void> {
 
 /**
  * Whether Ember is set up yet, and until it is, what setting it up takes: the Worker's setup password, or
- * the deploy's setup link, which nobody can use while the Worker has neither, or a password too short.
+ * the deploy's setup link, which nobody can use while the Worker has neither.
  */
 async function checkSetup(baseUrl: string): Promise<{ fine: boolean; said: string }> {
   const response = await fetch(new URL("/api/bootstrap", baseUrl), { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
@@ -77,10 +77,9 @@ async function checkSetup(baseUrl: string): Promise<{ fine: boolean; said: strin
   if (setupAccess === "password") return { fine: true, said: `Setup is waiting for the Worker's setup password at ${new URL("/first_run", baseUrl).href}` };
   if (setupAccess === "link") return { fine: true, said: `Setup is waiting for the setup link the deploy printed (if it's lost, ${newToken}, then open ${link})` };
   if (setupAccess === "open") return { fine: true, said: "Setup is waiting, open to whoever is here" };
-  if (setupAccess === "weak") return { fine: false, said: `Setup is waiting, and nobody can do it: the Worker's setup password is shorter than 12 characters. Give it a longer one with ${putPassword}` };
   return {
     fine: false,
-    said: `Setup is waiting, and nobody can do it: the Worker has no setup password or EMBER_SETUP_TOKEN. Give it a setup password of at least 12 characters with ${putPassword}, or deploy it with pnpm run deploy, which makes a token and prints the link`,
+    said: `Setup is waiting, and nobody can do it: the Worker has no setup password or EMBER_SETUP_TOKEN. Give it a setup password with ${putPassword}, or deploy it with pnpm run deploy, which makes a token and prints the link`,
   };
 }
 

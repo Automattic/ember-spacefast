@@ -6,8 +6,8 @@
 # The name and email address the Set up Ember form suggests, rather than Kevin Rose's.
 # EMBER_SETUP_NAME_PLACEHOLDER=
 # EMBER_SETUP_EMAIL_PLACEHOLDER=
-# The setup password, at least 12 characters, which Set up Ember asks for before it opens, as a
-# deployed Worker's does; left blank, setup on localhost is open to whoever's there.
+# The setup password, which Set up Ember asks for before it opens, as a deployed Worker's does; left
+# blank, setup on localhost is open to whoever's there.
 EMBER_SETUP_PASSWORD=
 # Or closes setup behind a link, http://localhost:8787/first_run#token=<this>, as a deploy from a
 # terminal does. Make one with `openssl rand -hex 32`.

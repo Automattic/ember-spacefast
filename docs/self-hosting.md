@@ -30,8 +30,8 @@ account, as [Deploying](#deploying) describes.
 
 The Deploy to Cloudflare button at the top asks you to name the repository, the Worker and the R2
 bucket for files (turn R2 on for your account first), and to make up a setup password,
-`EMBER_SETUP_PASSWORD`, of at least 12 characters, then Cloudflare's Workers Builds builds and
-deploys it, and again after every push to the copy. Connecting GitHub or GitLab to Cloudflare the
+`EMBER_SETUP_PASSWORD`, then Cloudflare's Workers Builds builds and deploys it, and again after
+every push to the copy. Connecting GitHub or GitLab to Cloudflare the
 first time leaves you on Cloudflare's page for deploying one of your own repositories, so click the
 button again afterwards. If your account already has a bucket named `ember`, the form picks it, so
 pick a new one there for this Ember's files. The copy has all of Ember but its `.github` folder, so
@@ -51,8 +51,8 @@ with the code and never appear in the deploy's output.
 Whoever deployed Ember sets it up, and nobody else. After Deploy to Cloudflare, open the Worker's
 address and type the setup password you gave the form: `/first_run` asks for it before the
 administrator's account, so nobody who merely finds the address can make themselves the
-administrator, and it allows 10 tries at the password every 10 minutes, from anywhere, so nobody can
-guess it either. Once Ember is set up, setup closes for good, as in Campfire. If the password is
+administrator, and it allows 10 tries at the password every 10 minutes, from anywhere, so guessing
+it is slow. Once Ember is set up, setup closes for good, as in Campfire. If the password is
 forgotten, give `EMBER_SETUP_PASSWORD` a new value in the Worker's **Settings**, under **Variables and
 Secrets**, or from a terminal, and type that one:
 
@@ -73,11 +73,11 @@ pnpm exec wrangler secret put EMBER_SETUP_TOKEN   # asks for it; add --name <wor
 ```
 
 A deploy whose environment sets `EMBER_SETUP_PASSWORD` gives a Worker without one that password, and
-makes it no token. A setup password shorter than 12 characters opens nothing, and `/first_run` says
-so; a setup token set to anything but 64 lowercase hex characters counts as a setup password. Spaces
-and line breaks around either, which pasting can bring along, don't count. On localhost, where
-`wrangler dev` serves, setup is open to whoever's there unless `.dev.vars` sets a setup password or
-token.
+makes it no token. A setup password of any length opens setup, as the deploy form can't ask for a
+longer one; a setup token set to anything but 64 lowercase hex characters counts as a setup
+password. Spaces and line breaks around either, which pasting can bring along, don't count. On
+localhost, where `wrangler dev` serves, setup is open to whoever's there unless `.dev.vars` sets a
+setup password or token.
 
 The setup form suggests Kevin Rose and kevin@kevinrose.com for the administrator. To suggest your
 own, set the Worker's `EMBER_SETUP_NAME_PLACEHOLDER` and `EMBER_SETUP_EMAIL_PLACEHOLDER` variables,
@@ -583,7 +583,8 @@ What a self-hoster should know, beyond keeping the setup password and link to th
   so finding a new deployment's address isn't enough to become its administrator. Tries at the
   password count against one limit for the whole deployment, 10 every 10 minutes, kept in its
   storage, so neither another address nor a restarted Worker starts the count over; past it, the
-  right password waits too, though the link doesn't, since its token is too long to guess. On
+  right password waits too, though the link doesn't, since its token is too long to guess. Ember
+  takes a setup password of any length, so make yours one nobody would guess in a few tries. On
   localhost, and on a Worker with neither, setup is open or closed as [Deploying](#deploying) says.
 - `EMBER_GUEST_SIGN_IN=true` lets anyone with the address in with just a name, so keep it to
   `wrangler dev`, as `.dev.vars.example` says.

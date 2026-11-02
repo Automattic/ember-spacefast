@@ -119,8 +119,7 @@ describe("Setup", () => {
     ["password", "✓ Setup is waiting for the Worker's setup password at <address>/first_run\n"],
     ["link", "✓ Setup is waiting for the setup link the deploy printed (if it's lost,"],
     ["open", "✓ Setup is waiting, open to whoever is here\n"],
-    ["weak", "! Setup is waiting, and nobody can do it: the Worker's setup password is shorter than 12 characters. Give it a longer one with wrangler secret put EMBER_SETUP_PASSWORD"],
-    ["closed", "! Setup is waiting, and nobody can do it: the Worker has no setup password or EMBER_SETUP_TOKEN. Give it a setup password of at least 12 characters"],
+    ["closed", "! Setup is waiting, and nobody can do it: the Worker has no setup password or EMBER_SETUP_TOKEN. Give it a setup password with wrangler secret put EMBER_SETUP_PASSWORD"],
   ])("says what setting Ember up takes while it waits, as its setup access is %s", async (setupAccess, said) => {
     bootstrap = { setup: "pending", setupAccess };
     const { status, stdout } = await run(address, null);

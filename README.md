@@ -198,10 +198,9 @@ was made.
 
 1. Turn on R2 in your Cloudflare dashboard, for the files people share.
 2. Click **Deploy to Cloudflare** above. Cloudflare copies Ember to your GitHub or GitLab account, asks
-   you to name the Worker and its bucket, and to make up a setup password of at least 12 characters,
-   and deploys it. If it first has you connect GitHub or GitLab, it comes back to a page for deploying
-   one of your own repositories instead: click the button again, and Ember's form opens with your
-   account connected.
+   you to name the Worker and its bucket, and to make up a setup password, and deploys it. If it first
+   has you connect GitHub or GitLab, it comes back to a page for deploying one of your own repositories
+   instead: click the button again, and Ember's form opens with your account connected.
 3. Open your Worker's address, `https://<your Worker>`, type the setup password, and create your
    community and its administrator. Only that password opens setup, so nobody who finds the address
    first can take it over. Forgot it? Give `EMBER_SETUP_PASSWORD` a new value in the Worker's

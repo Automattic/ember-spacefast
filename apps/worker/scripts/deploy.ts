@@ -79,8 +79,6 @@ function secretNames(target: string[]): string[] {
 
 /** The shape of EMBER_SETUP_TOKEN, as the Worker checks it (apps/worker/src/secrets.ts): `openssl rand -hex 32`. */
 const SETUP_TOKEN = /^[0-9a-f]{64}$/;
-/** The fewest characters the Worker takes in a setup password (MIN_SETUP_PASSWORD_LENGTH in packages/protocol). */
-const MIN_SETUP_PASSWORD_LENGTH = 12;
 
 /** Whether this deploy's output may be public: a CI log, except Workers Builds', which is the account's own. */
 const inPublicLog = () => !!process.env.CI && !process.env.WORKERS_CI;
@@ -137,7 +135,6 @@ async function missingSecrets(names: string[]): Promise<{ secrets: Record<string
     // one, Ember may well be set up.
     if (!names.includes("SESSION_SECRET")) setupToken = "password";
   } else if (password) {
-    if ([...password].length < MIN_SETUP_PASSWORD_LENGTH) throw new Error(`EMBER_SETUP_PASSWORD must be at least ${MIN_SETUP_PASSWORD_LENGTH} characters.`);
     [secrets.EMBER_SETUP_PASSWORD, setupToken] = [password, "password"];
   } else if (!names.includes("EMBER_SETUP_TOKEN")) {
     const given = process.env.EMBER_SETUP_TOKEN?.trim();
@@ -209,7 +206,7 @@ function tellSetupLink(setupToken: SetupToken, token: string | undefined, url: s
   } else if (setupToken === "given") {
     console.log(`\nSet up Ember at ${page}<your EMBER_SETUP_TOKEN>`);
   } else if (setupToken === "withheld") {
-    const notice = `Nobody can set Ember up until the Worker has a setup password or an EMBER_SETUP_TOKEN secret, and this log may be public, so this deploy made no token. Give it a setup password of at least ${MIN_SETUP_PASSWORD_LENGTH} characters with ${putPassword}, and open ${setup}; or set EMBER_SETUP_TOKEN in the deploy's environment from a secret of your own (openssl rand -hex 32) and deploy again, then open ${page}<your EMBER_SETUP_TOKEN>; or ${newToken}`;
+    const notice = `Nobody can set Ember up until the Worker has a setup password or an EMBER_SETUP_TOKEN secret, and this log may be public, so this deploy made no token. Give it a setup password with ${putPassword}, and open ${setup}; or set EMBER_SETUP_TOKEN in the deploy's environment from a secret of your own (openssl rand -hex 32) and deploy again, then open ${page}<your EMBER_SETUP_TOKEN>; or ${newToken}`;
     console.log(process.env.GITHUB_ACTIONS === "true" ? `::notice::${notice}` : `\n${notice}`);
   }
 }

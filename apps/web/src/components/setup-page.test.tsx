@@ -251,7 +251,7 @@ describe("Installer-protected setup link", () => {
     expect(screen.getByText("pnpm run deploy")).toBeInTheDocument();
     // Without the link, a setup password set in the dashboard opens setup instead.
     expect(screen.getByText("EMBER_SETUP_PASSWORD")).toBeInTheDocument();
-    expect(screen.getByText(/If it's lost, give the Worker a setup password instead, of at least 12 characters/)).toBeInTheDocument();
+    expect(screen.getByText(/If it's lost, give the Worker a setup password instead: set/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Skip to main content" })).toBeInTheDocument();
@@ -442,15 +442,6 @@ describe("Setup password", () => {
     await typeSetupPassword(password);
     expect(await screen.findByLabelText("Name")).toBeInTheDocument();
     expect(authorizationOf(fetch.mock.calls[1]!)).toBe(`Bearer ${encodeURIComponent(password)}`);
-  });
-
-  it("says nobody can set Ember up while its setup password is too short, and how to give it a longer one", () => {
-    render(<SetupPage placeholders={DEFAULTS} access="weak" onSetUp={() => {}} />);
-    expect(screen.getByText("Nobody can set it up yet.")).toBeInTheDocument();
-    expect(screen.getByText("This deployment's setup password is shorter than 12 characters, too short to keep anyone else from guessing it.")).toBeInTheDocument();
-    expect(screen.getByText("EMBER_SETUP_PASSWORD")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Setup password")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 });
 

@@ -4,7 +4,6 @@ import {
   MAX_PASSWORD_LENGTH,
   MAX_USER_NAME_LENGTH,
   MIN_PASSWORD_LENGTH,
-  MIN_SETUP_PASSWORD_LENGTH,
   PASSWORD_TOO_SHORT,
   type NewWorkspace,
   type SetupAccess,
@@ -82,7 +81,6 @@ function Setup({ placeholders, access, onSetUp }: { placeholders: SetupPlacehold
   }, []);
 
   if (access === "closed") return <SetupClosed />;
-  if (access === "weak") return <SetupPasswordTooShort />;
   if (access === "link" && setupToken === null) return <SetupLinkNeeded />;
   if (access === "password" && accepted === null) return <SetupPasswordStep linkToken={setupToken} onAccepted={setAccepted} />;
   return <SetupForm placeholders={placeholders} setupSecret={access === "password" ? accepted : setupToken} onSetUp={onSetUp} />;
@@ -253,8 +251,7 @@ function SetupLinkNeeded() {
         </p>
         <p>
           The link is in the output of <Code>pnpm run deploy</Code>, or in the build's log in the Cloudflare dashboard after Deploy to Cloudflare. If it's lost, give
-          the Worker a setup password instead, of at least {MIN_SETUP_PASSWORD_LENGTH} characters: set <Code>{SETUP_PASSWORD}</Code> {WHERE_SECRETS_ARE}, then reload
-          this page.
+          the Worker a setup password instead: set <Code>{SETUP_PASSWORD}</Code> {WHERE_SECRETS_ARE}, then reload this page.
         </p>
       </Notice>
     </SetupCard>
@@ -268,21 +265,7 @@ function SetupClosed() {
       <Notice>
         <p>This deployment has no setup password, so nobody can set it up.</p>
         <p>
-          Give it one of at least {MIN_SETUP_PASSWORD_LENGTH} characters: set <Code>{SETUP_PASSWORD}</Code> {WHERE_SECRETS_ARE}, then reload this page.
-        </p>
-      </Notice>
-    </SetupCard>
-  );
-}
-
-/** The page without its form: the Worker's setup password is too short to keep anyone from guessing it. */
-function SetupPasswordTooShort() {
-  return (
-    <SetupCard subtitle="Nobody can set it up yet.">
-      <Notice>
-        <p>This deployment's setup password is shorter than {MIN_SETUP_PASSWORD_LENGTH} characters, too short to keep anyone else from guessing it.</p>
-        <p>
-          Give it a longer one: set <Code>{SETUP_PASSWORD}</Code> {WHERE_SECRETS_ARE}, then reload this page.
+          Give it one: set <Code>{SETUP_PASSWORD}</Code> {WHERE_SECRETS_ARE}, then reload this page.
         </p>
       </Notice>
     </SetupCard>

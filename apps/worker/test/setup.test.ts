@@ -3,7 +3,6 @@ import {
   MAX_EMAIL_ADDRESS_LENGTH,
   MAX_PASSWORD_LENGTH,
   MAX_USER_NAME_LENGTH,
-  MIN_SETUP_PASSWORD_LENGTH,
   NAME_TOO_LONG,
   PASSWORD_TOO_LONG,
   PASSWORD_TOO_SHORT,
@@ -23,7 +22,6 @@ import {
   SETUP_LINK_REFUSED,
   SETUP_PASSWORD_NEEDED,
   SETUP_PASSWORD_REFUSED,
-  SETUP_PASSWORD_TOO_SHORT,
   SETUP_TRIES_LIMITED,
 } from "../src/setup";
 import { api, apiWith, builtPages, cookieOf, freshDeploy, listedRoom, origin, SETUP_TOKEN, signIn, workspaceSql, workspaceStub } from "./support";
@@ -406,23 +404,15 @@ describe("Setup password from the deploy form", () => {
     expect((await withPassword("/api/first_run/check", { password: "100%sure, of course", token: "100%sure" })).status).toBe(403);
   });
 
-  it(`refuses a setup password shorter than ${MIN_SETUP_PASSWORD_LENGTH} characters, saying so in the log without repeating it`, async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const short = "ünicode-pw!";
-    expect([...short]).toHaveLength(MIN_SETUP_PASSWORD_LENGTH - 1);
+  it("takes a setup password of any length, since Deploy to Cloudflare's form can't ask for a longer one", async () => {
+    const short = "ü7";
     for (const secrets of [{ password: short }, { secret: short }, { secret: ` ${short} `, password: "" }]) {
       const given = { secret: undefined, ...secrets };
-      expect(await setupAccessAt(origin, given.secret, given.password), JSON.stringify(secrets)).toBe("weak");
-      const response = await firstRunWith({ ...given, token: encoded(short) });
-      expect([response.status, await response.json()]).toEqual([403, { error: SETUP_PASSWORD_TOO_SHORT }]);
+      expect(await setupAccessAt(origin, given.secret, given.password), JSON.stringify(secrets)).toBe("password");
+      expect((await firstRunAt(`${origin}/api/first_run/check`, { ...given, token: encoded(short) })).status, JSON.stringify(secrets)).toBe(204);
     }
-    await nothingCreated();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining(`must be at least ${MIN_SETUP_PASSWORD_LENGTH} characters`));
-    expect(error.mock.calls.flat().join(" ")).not.toContain(short);
-    error.mockRestore();
-
-    // One character more is enough.
-    expect(await setupAccessAt(origin, undefined, `${short}!`)).toBe("password");
+    expect((await withPassword("/api/first_run", { password: short, token: encoded("ü8") })).status).toBe(403);
+    expect((await withPassword("/api/first_run", { password: short, token: encoded(short) })).status).toBe(201);
   });
 
   it("takes a setup token that isn't shaped like one as a setup password, as one typed into the dashboard may be", async () => {
