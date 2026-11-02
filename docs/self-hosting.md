@@ -110,7 +110,9 @@ The workflow looks for a newer release every Monday, or when you run it from the
 Ember, then Run workflow), and opens a pull request, "Update Ember to v1.2.3", that links to what's
 new. Merging it deploys the update, as every push to `main` does, and that's all: each room's and the
 workspace's tables bring themselves up to date the first time they open. Closing it instead turns that
-release down until the next, whose pull request brings its changes too.
+release down until the next, whose pull request brings its changes too. Workers Builds builds each
+pull request's branch as a Preview, and the pull request shows whether it built; that's all a Preview
+is for, since `wrangler.jsonc` gives Previews none of Ember's bindings and no address.
 
 Ember tells its administrators too: while a newer release is out, Admin on the rail has a dot, and
 General, in Community settings, names the release, with its notes and how to update. To know, the
