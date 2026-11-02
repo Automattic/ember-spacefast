@@ -223,7 +223,8 @@ function githubRepository(): string | null {
 
 /**
  * Says how to add the Update Ember workflow to a copy that has none, as Deploy to Cloudflare's don't:
- * on GitHub, with a link that opens the copy's editor with Ember's workflow in it, ready to commit.
+ * on GitHub, with a link that opens the copy's editor with Ember's workflow in it, ready to commit, on a
+ * line of its own to copy, as the whole workflow makes it long.
  */
 function tellUpdateWorkflow(): void {
   if (existsSync(path.join(ROOT, UPDATE_WORKFLOW))) return;
@@ -234,7 +235,7 @@ function tellUpdateWorkflow(): void {
     const branch = (process.env.WORKERS_CI_BRANCH || "main").split("/").map(encodeURIComponent).join("/");
     const editor = `https://github.com/${repository}/new/${branch}`;
     const workflow = new URLSearchParams({ filename: UPDATE_WORKFLOW, value: readFileSync(EMBERS_UPDATE_WORKFLOW, "utf8") });
-    console.log(`${missing} To have each come as a pull request, commit the workflow in GitHub's editor, which this opens with it filled in: ${editor}?${workflow}`);
+    console.log(`${missing} To have each come as a pull request, commit the workflow in GitHub's editor, which this link opens with it filled in:\n${editor}?${workflow}`);
   } else {
     console.log(
       `${missing} On GitHub, add ${UPDATE_WORKFLOW} to it as Ember has it, ${EMBER}/blob/main/${UPDATE_WORKFLOW}, to have each come as a pull request; elsewhere, update it with apps/worker/scripts/update-ember.ts (docs/self-hosting.md#updating).`,

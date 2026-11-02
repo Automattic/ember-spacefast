@@ -1,27 +1,27 @@
 name: Preview
 
 # Deploys main to a Worker named ember-production on the account's workers.dev subdomain, then checks
-# it end to end. It needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets and
-# skips without them, so forks don't try to deploy. A new Worker takes its setup token from an
-# EMBER_SETUP_TOKEN repository secret, if there is one (`openssl rand -hex 32`), since this log may be
-# public and the deploy prints no token into it; without one, nobody can set the Worker up until a
-# deploy from a terminal, or `wrangler secret put EMBER_SETUP_TOKEN`, gives it a token.
-# EMBER_SETUP_NAME_PLACEHOLDER and EMBER_SETUP_EMAIL_PLACEHOLDER repository variables, if set, are the
-# name and email address its Set up Ember form suggests in place of Kevin Rose's. MEMBERFUL_URL,
-# MEMBERFUL_CLIENT_ID and MEMBERFUL_CLIENT_SECRET repository secrets, if set, are a Memberful custom
-# app's keys, which go up with each deploy so its members can sign in once an administrator turns that on,
-# and MEMBERFUL_API_KEY and MEMBERFUL_WEBHOOK_SECRET the app's API key and its site's webhook secret,
-# with which Ember hears when a membership lapses. TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY
-# repository secrets, if set, are a Turnstile widget's keys, with which open sign-up and the forms that
-# email someone check that whoever uses them is a person, in place of any an administrator gave in Set
-# up Turnstile, and a RESEND_API_KEY repository secret, if set, has Ember send its email with Resend
-# rather than Cloudflare Email Service.
+# it end to end. It runs only when started from the Actions tab, so nothing brings back a Worker that
+# was deleted, or binds the bucket wrangler.jsonc names, `ember`, which a Deploy to Cloudflare copy in
+# the same account may use too, without someone choosing to. It needs the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID repository secrets and skips without them, so forks don't try to deploy. A new
+# Worker takes its setup token from an EMBER_SETUP_TOKEN repository secret, if there is one (`openssl
+# rand -hex 32`), since this log may be public and the deploy prints no token into it; without one,
+# nobody can set the Worker up until a deploy from a terminal, or `wrangler secret put
+# EMBER_SETUP_TOKEN`, gives it a token. EMBER_SETUP_NAME_PLACEHOLDER and EMBER_SETUP_EMAIL_PLACEHOLDER
+# repository variables, if set, are the name and email address its Set up Ember form suggests in place
+# of Kevin Rose's. MEMBERFUL_URL, MEMBERFUL_CLIENT_ID and MEMBERFUL_CLIENT_SECRET repository secrets,
+# if set, are a Memberful custom app's keys, which go up with each deploy so its members can sign in
+# once an administrator turns that on, and MEMBERFUL_API_KEY and MEMBERFUL_WEBHOOK_SECRET the app's
+# API key and its site's webhook secret, with which Ember hears when a membership lapses.
+# TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY repository secrets, if set, are a Turnstile widget's
+# keys, with which open sign-up and the forms that email someone check that whoever uses them is a
+# person, in place of any an administrator gave in Set up Turnstile, and a RESEND_API_KEY repository
+# secret, if set, has Ember send its email with Resend rather than Cloudflare Email Service.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# One deploy at a time. A push while one runs waits for it rather than cancelling it mid-upload.
+# One deploy at a time. A run while one deploys waits for it rather than cancelling it mid-upload.
 concurrency:
   group: preview
   cancel-in-progress: false
