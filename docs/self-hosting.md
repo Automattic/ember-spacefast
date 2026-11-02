@@ -475,8 +475,8 @@ cuts short ends with an ellipsis, and when the model thinks for all it may befor
 ### A preview from GitHub Actions
 
 The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
-`ember-production` on your workers.dev subdomain after every push, or when run by hand from the
-Actions tab. It needs two repository secrets, and skips without them:
+`ember-production` on your workers.dev subdomain when run by hand from the Actions tab. It needs two
+repository secrets, and skips without them:
 
 - `CLOUDFLARE_API_TOKEN`: a token made from the "Edit Cloudflare Workers" template.
 - `CLOUDFLARE_ACCOUNT_ID`: under Account details on the Workers & Pages overview.
