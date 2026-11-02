@@ -1,8 +1,6 @@
 import {
   isPasswordTooLong,
   isPasswordTooShort,
-  isSetupPasswordTooShort,
-  MIN_SETUP_PASSWORD_LENGTH,
   parseSignUp,
   PASSWORD_TOO_LONG,
   PASSWORD_TOO_SHORT,
@@ -27,9 +25,10 @@ import { workspace } from "./workspace";
 // page asks for. A deploy from a terminal makes EMBER_SETUP_TOKEN instead, for a Worker with neither, and
 // prints the setup link that ends in it (apps/worker/scripts/deploy.ts), which the page reads off the
 // address's fragment. The page sends either as the form's bearer token, so the first stranger to find a
-// new deployment can't make themselves its administrator, and tries at a setup password count against a
-// limit for the whole deployment, so nobody can guess one either. There's no cookie, lock or expiry: setup
-// closes once an administrator exists, which is all a setup password or link needs. Over loopback, where
+// new deployment can't make themselves its administrator. A setup password of any length opens setup,
+// since the deploy form can't ask for a longer one, and tries at one count against a limit for the whole
+// deployment, so nobody can guess it quickly. There's no cookie, lock or expiry: setup closes once an
+// administrator exists, which is all a setup password or link needs. Over loopback, where
 // `wrangler dev` serves and nobody on the Internet can reach, a deployment with neither is open, as
 // Campfire is.
 
@@ -45,8 +44,6 @@ export const SETUP_LINK_REFUSED = "This setup link isn't this deployment's. Open
 export const SETUP_TRIES_LIMITED = "Too many tries at the setup password. Please wait a few minutes and try again.";
 /** What it answers while the deployment has neither a setup password nor a setup token. */
 export const NO_SETUP_PASSWORD = "This deployment has no setup password, so nobody can set it up until it's given one";
-/** What it answers while the setup password it has is too short to keep setup safe. */
-export const SETUP_PASSWORD_TOO_SHORT = `This deployment's setup password is shorter than ${MIN_SETUP_PASSWORD_LENGTH} characters, so nobody can set it up until it's given a longer one`;
 /** What setup answers once Ember is set up. */
 const ALREADY_SET_UP = { error: "Ember is already set up", redirect: "/" };
 
@@ -63,8 +60,6 @@ export const setupPlaceholdersOf = (env: Env): SetupPlaceholders => ({
 interface SetupSecrets {
   passwords: string[];
   token: string | null;
-  /** Whether a setup password is set, but too short to open anything. */
-  tooShort: boolean;
 }
 
 /**
@@ -74,25 +69,22 @@ interface SetupSecrets {
  */
 function setupSecretsOf(env: Env): SetupSecrets {
   const token = secretOf(env.EMBER_SETUP_TOKEN);
-  const typed = [secretOf(env.EMBER_SETUP_PASSWORD), isSecretToken(token) ? undefined : token].filter((secret) => secret !== undefined);
   return {
-    passwords: typed.filter((secret) => !isSetupPasswordTooShort(secret)),
+    passwords: [secretOf(env.EMBER_SETUP_PASSWORD), isSecretToken(token) ? undefined : token].filter((secret) => secret !== undefined),
     token: isSecretToken(token) ? token : null,
-    tooShort: typed.some(isSetupPasswordTooShort),
   };
 }
 
 /**
  * How setup can be reached from `request`, as `/api/bootstrap` tells the app: with the deployment's setup
  * password, with its setup link, open to whoever is here (over loopback, with neither set), or by nobody,
- * while its setup password is too short or it has neither.
+ * while it has neither.
  */
 export function setupAccessOf(request: Request, env: Env): SetupAccess {
-  const { passwords, token, tooShort } = setupSecretsOf(env);
+  const { passwords, token } = setupSecretsOf(env);
   if (passwords.length > 0) return "password";
   if (token !== null) return "link";
-  if (isLoopbackHost(request)) return "open";
-  return tooShort ? "weak" : "closed";
+  return isLoopbackHost(request) ? "open" : "closed";
 }
 
 /**
@@ -125,14 +117,8 @@ async function isOneOf(given: string[], secrets: string[]): Promise<boolean> {
  * tries sent at once count as surely as tries sent one by one.
  */
 async function setupRefusal(request: Request, env: Env): Promise<Response | null> {
-  const { passwords, token, tooShort } = setupSecretsOf(env);
-  if (passwords.length === 0 && token === null) {
-    if (isLoopbackHost(request)) return null;
-    if (!tooShort) return formAnswer({ error: NO_SETUP_PASSWORD }, 403);
-    // Never the value, which may be most of the password meant.
-    console.error(`The setup password, EMBER_SETUP_PASSWORD or EMBER_SETUP_TOKEN, must be at least ${MIN_SETUP_PASSWORD_LENGTH} characters, so setup is closed`);
-    return formAnswer({ error: SETUP_PASSWORD_TOO_SHORT }, 403);
-  }
+  const { passwords, token } = setupSecretsOf(env);
+  if (passwords.length === 0 && token === null) return isLoopbackHost(request) ? null : formAnswer({ error: NO_SETUP_PASSWORD }, 403);
   const given = setupSecretsGivenBy(request);
   if (given.length === 0) return formAnswer({ error: passwords.length > 0 ? SETUP_PASSWORD_NEEDED : SETUP_LINK_NEEDED }, 403);
   if (token !== null && (await isOneOf(given, [token]))) return null;

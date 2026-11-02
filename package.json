@@ -27,7 +27,7 @@
   "cloudflare": {
     "bindings": {
       "EMBER_SETUP_PASSWORD": {
-        "description": "Make up a setup password of at least 12 characters. Ember's setup page asks for it once, so only you can set Ember up. Forgot it? Change it in the Worker's Settings, under Variables and Secrets."
+        "description": "Make up a setup password nobody would guess. Ember's setup page asks for it once, so only you can set Ember up. Forgot it? Change it in the Worker's Settings, under Variables and Secrets."
       },
       "EMAIL": {
         "description": "Cloudflare Email Service, which sends Ember's email once your account is on Workers Paid and has a domain onboarded to Email Sending."

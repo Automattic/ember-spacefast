@@ -262,7 +262,7 @@ describe("Installer-protected setup link", () => {
     expect(secrets).toEqual({ SESSION_SECRET: expect.any(String), VAPID_PUBLIC_KEY: expect.any(String), VAPID_PRIVATE_KEY: expect.any(String) });
     expect(logs).not.toContain("Set up Ember at");
     expect(logs).toContain("this log may be public, so this deploy made no token");
-    expect(logs).toContain(`Give it a setup password of at least 12 characters with pnpm exec wrangler secret put EMBER_SETUP_PASSWORD, which asks for it, and open ${WORKER_URL}/first_run;`);
+    expect(logs).toContain(`Give it a setup password with pnpm exec wrangler secret put EMBER_SETUP_PASSWORD, which asks for it, and open ${WORKER_URL}/first_run;`);
     expect(logs).toContain(`${WORKER_URL}/first_run#token=<your EMBER_SETUP_TOKEN>`);
     expect(logs).toContain(`pnpm exec wrangler secret put EMBER_SETUP_TOKEN, which asks for it, and open ${WORKER_URL}/first_run#token=<the token>`);
     expect(logs).not.toContain("::notice::");
@@ -327,11 +327,11 @@ describe("Setup password", () => {
     expect(secrets).not.toHaveProperty("EMBER_SETUP_PASSWORD");
   });
 
-  it("refuses a setup password from the environment shorter than 12 characters, before deploying", () => {
-    const { status, deployed, logs } = deploy("no worker", [], { env: { EMBER_SETUP_PASSWORD: "ünicode-pw!" } });
-    expect(status).toBe(1);
-    expect(deployed).toBe(false);
-    expect(logs).toContain("EMBER_SETUP_PASSWORD must be at least 12 characters");
+  it("takes a setup password of any length from the environment, as the Worker does", () => {
+    const { status, secrets, logs } = deploy("no worker", [], { env: { EMBER_SETUP_PASSWORD: "ünicode" } });
+    expect(status).toBe(0);
+    expect(secrets!.EMBER_SETUP_PASSWORD).toBe("ünicode");
+    expect(logs).toContain(withPassword());
     expect(logs).not.toContain("ünicode");
   });
 
