@@ -196,7 +196,8 @@ was made.
 
 ### Deploy to Cloudflare
 
-1. Turn on R2 in your Cloudflare dashboard, for the files people share.
+1. Turn on R2 in your Cloudflare dashboard, for the files people share. Each Ember needs a bucket of its
+   own, so if your account already runs an Ember, choose Create new when the form picks that one's bucket.
 2. Click **Deploy to Cloudflare** above. Cloudflare copies Ember to your GitHub or GitLab account, asks
    you to name the Worker and its bucket, and to make up a setup password of at least 12 characters,
    and deploys it. If it first has you connect GitHub or GitLab, it comes back to a page for deploying

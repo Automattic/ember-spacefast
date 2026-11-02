@@ -13,6 +13,16 @@
   "observability": { "enabled": true, "traces": { "enabled": true } },
   // Lets production CPU and heap profiles and exception stacks name our source files.
   "upload_source_maps": true,
+  // Ember answers at its workers.dev address until an administrator gives it a domain of its own, and goes
+  // back there from one (docs/self-hosting.md#a-custom-domain), so every deploy keeps that address on.
+  // Preview URLs stay off: Cloudflare makes no Version URLs for a Worker with Durable Objects, and the
+  // Previews below can't run Ember.
+  "workers_dev": true,
+  "preview_urls": false,
+  // Workers Builds builds each branch but the production one as a Preview, which `wrangler preview` won't
+  // make without this block. Empty, it gives a Preview none of the bindings below, and preview_urls gives
+  // it no address, so a branch's build only checks that Ember builds.
+  "previews": {},
 
   // The built React app. Everything but its static files goes to the Worker first, page loads
   // included, so each answer carries Campfire's headers and old browsers get the upgrade page;

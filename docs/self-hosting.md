@@ -110,7 +110,9 @@ The workflow looks for a newer release every Monday, or when you run it from the
 Ember, then Run workflow), and opens a pull request, "Update Ember to v1.2.3", that links to what's
 new. Merging it deploys the update, as every push to `main` does, and that's all: each room's and the
 workspace's tables bring themselves up to date the first time they open. Closing it instead turns that
-release down until the next, whose pull request brings its changes too.
+release down until the next, whose pull request brings its changes too. Workers Builds builds each
+pull request's branch as a Preview, and the pull request shows whether it built; that's all a Preview
+is for, since `wrangler.jsonc` gives Previews none of Ember's bindings and no address.
 
 Ember tells its administrators too: while a newer release is out, Admin on the rail has a dot, and
 General, in Community settings, names the release, with its notes and how to update. To know, the
@@ -191,7 +193,7 @@ removed on the Worker's Domains tab, which only the dashboard does. So Custom do
 Ember moved away from, links to that tab, and checks each until it's gone. Workspace settings stay
 wherever they're opened, so if Ember's domain ever stops reaching it, open Domain settings at the
 workers.dev address and go back there. Deploys leave the domain alone as long as `wrangler.jsonc` lists no
-`routes`.
+`routes`, and keep the workers.dev address on (`workers_dev`), for going back.
 
 #### When the domain's DNS is elsewhere
 
@@ -475,8 +477,8 @@ cuts short ends with an ellipsis, and when the model thinks for all it may befor
 ### A preview from GitHub Actions
 
 The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
-`ember-production` on your workers.dev subdomain after every push, or when run by hand from the
-Actions tab. It needs two repository secrets, and skips without them:
+`ember-production` on your workers.dev subdomain when run by hand from the Actions tab. It needs two
+repository secrets, and skips without them:
 
 - `CLOUDFLARE_API_TOKEN`: a token made from the "Edit Cloudflare Workers" template.
 - `CLOUDFLARE_ACCOUNT_ID`: under Account details on the Workers & Pages overview.

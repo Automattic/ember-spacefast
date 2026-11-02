@@ -401,6 +401,8 @@ describe("Updates for a copy made with Deploy to Cloudflare", () => {
     expect(`${link.origin}${link.pathname}`).toBe("https://github.com/someone/my-ember/new/main");
     expect(link.searchParams.get("filename")).toBe(WORKFLOW);
     expect(link.searchParams.get("value")).toBe(embersWorkflow);
+    // A line of its own, to copy whole.
+    expect(logs).toMatch(/^https:\/\/github\.com\/someone\/my-ember\/new\/main\?\S+$/m);
     expect(logs).not.toContain("ghs_clone-only");
   });
 
