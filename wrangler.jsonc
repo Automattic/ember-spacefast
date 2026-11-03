@@ -71,11 +71,12 @@
     // "do-sqlite" keeps each room's messages in its Durable Object's SQLite storage.
     // "d1" writes them to the shared D1 database below instead.
     "STORAGE_BACKEND": "do-sqlite"
-  }
+  },
 
-  // To use D1, create a database (`pnpm exec wrangler d1 create ember`), paste its id here,
-  // set STORAGE_BACKEND to "d1", and apply apps/worker/migrations/ with `pnpm --filter @ember/worker d1:migrate:local`.
-  // "d1_databases": [
-  //   { "binding": "DB", "database_name": "ember", "database_id": "<your-database-id>", "migrations_dir": "apps/worker/migrations" }
-  // ]
+  // The D1 database messages go to when STORAGE_BACKEND is "d1" (docs/self-hosting.md#storage-durable-object-sqlite-or-d1).
+  // Deploy to Cloudflare's form makes one for every copy, as it can't make one only for "d1", and
+  // `pnpm run deploy` binds it only for "d1", making it first if the account has none of this name, and
+  // applying apps/worker/migrations/ to it. `wrangler dev` keeps one on this machine, which
+  // `pnpm --filter @ember/worker d1:migrate:local` migrates.
+  "d1_databases": [{ "binding": "DB", "database_name": "ember", "migrations_dir": "apps/worker/migrations" }]
 }

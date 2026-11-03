@@ -28,13 +28,15 @@ account, as [Deploying](#deploying) describes.
 
 ## Deploying
 
-The Deploy to Cloudflare button at the top asks you to name the repository, the Worker and the R2
-bucket for files (turn R2 on for your account first), and to make up a setup password,
+The Deploy to Cloudflare button at the top asks you to name the repository, the Worker, the R2
+bucket for files (turn R2 on for your account first) and a D1 database, to choose where messages
+live, as [Storage](#storage-durable-object-sqlite-or-d1) says, and to make up a setup password,
 `EMBER_SETUP_PASSWORD`, then Cloudflare's Workers Builds builds and deploys it, and again after
 every push to the copy. Connecting GitHub or GitLab to Cloudflare the
 first time leaves you on Cloudflare's page for deploying one of your own repositories, so click the
 button again afterwards. If your account already has a bucket named `ember`, the form picks it, so
-pick a new one there for this Ember's files. The copy has all of Ember but its `.github` folder, so
+pick a new one there for this Ember's files, and choose Create new for the database if it picks one
+another Ember uses. The copy has all of Ember but its `.github` folder, so
 add the Update Ember workflow to it, as [Updating](#updating) says, for it to be offered Ember's
 releases. To deploy from your machine instead, after `pnpm exec wrangler login`:
 
@@ -656,14 +658,40 @@ Cloudflare's pages have the details: [Workers pricing](https://developers.cloudf
 
 ## Storage: Durable Object SQLite or D1
 
-`STORAGE_BACKEND` in `wrangler.jsonc` picks where messages live.
+`STORAGE_BACKEND` picks where messages live, and with them the rooms, the people and the rest of what
+Ember keeps: type it in Deploy to Cloudflare's form, or set it in `wrangler.jsonc`'s `vars`.
 
-- **`do-sqlite`** (default): each room's Durable Object keeps its messages in its own SQLite
-  storage. Nothing to provision, and reads and writes never leave the object.
-- **`d1`**: messages go to one shared D1 database, which makes cross-room queries (activity,
-  exports) straightforward. Create the database with `pnpm exec wrangler d1 create ember`,
-  uncomment the `d1_databases` block, set `STORAGE_BACKEND` to `"d1"`, and apply
-  `apps/worker/migrations/` with `pnpm --filter @ember/worker d1:migrate:local` (or `--remote`).
+- **`do-sqlite`** (the default): each room's Durable Object keeps its messages in its own SQLite
+  storage, and the Workspace object keeps what the rooms share in its own. There's nothing to set up,
+  reads and writes never leave the object, and no room waits on another, so it scales furthest:
+  Durable Objects may keep 5 GB in all on Workers Free, and 10 GB for each room on Workers Paid.
+- **`d1`**: everything goes to one D1 database, which you can query in the dashboard or with
+  `wrangler d1 execute`, export with `wrangler d1 export`, and restore to any minute of the last 7 days
+  (30 on Workers Paid) with Time Travel. It's one database for the whole Ember, which runs one query at
+  a time, each a trip from the room's object to the database, and holds at most 500 MB on Workers Free
+  and 10 GB on Workers Paid, which Cloudflare can't raise.
+
+Neither choice changes much how many people Ember carries: on Workers Free, D1 has a daily allowance
+of rows written of its own beside Durable Objects', which lifts the estimate in
+[What it costs](#what-it-costs) from about 100 people a day to about 125. Past that, move to Workers
+Paid, whichever you chose. Choose before you set Ember up: nothing moves messages from one to the
+other, so switching later starts an empty Ember, to be set up again, and leaves the messages where
+they were.
+
+The form makes the D1 database bound as `DB` whatever you type, since it can't make one only for D1;
+on `do-sqlite`, the deploy leaves it unbound and empty. From a terminal, set `STORAGE_BACKEND` to
+`"d1"` and run `pnpm run deploy`, which makes the database that `d1_databases` names, `ember`, if your
+account has none of that name. Each Ember needs a database of its own, so give a second one another
+`database_name`.
+
+On `d1`, `pnpm run deploy` applies `apps/worker/migrations/` to the database before the Worker deploys,
+which takes a Cloudflare API token that may edit D1. The token Workers Builds makes for a build may
+not: if a Deploy to Cloudflare build stops at `wrangler d1`, give its token D1 Edit in the dashboard,
+under **My Profile**, **API Tokens**, and retry the build. The deploy also stops, saying why, where
+`STORAGE_BACKEND` is anything but `do-sqlite` or `d1`, which the Worker would take for `do-sqlite`, and
+where a new Worker's database already holds a set-up Ember, as another Ember's would. For
+`wrangler dev`, apply the migrations to the database on your machine with
+`pnpm --filter @ember/worker d1:migrate:local`.
 
 Both use the same schema (`apps/worker/migrations/`) and the same queries
 (`apps/worker/src/store.ts`); only the driver (`apps/worker/src/db.ts`) differs. The Workspace
