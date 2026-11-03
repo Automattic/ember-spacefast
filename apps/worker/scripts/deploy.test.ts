@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,8 @@ type Listing = string[] | "no worker" | "error";
  * $WRANGLER_OUTPUT_FILE_PATH, unless $NO_URL says there's no record, and exits with $DEPLOY_STATUS. `d1`
  * commands, noted in $OUT/d1-calls too, find the account's databases in $D1_DATABASES, and the one bound
  * as DB as $D1_STATE says, "fresh", "migrated" or "set up", and apply migrations with $MIGRATIONS_STATUS.
+ * The Worker's current deployment binds the D1 database $BOUND_D1 as DB, if it's set, unless
+ * $DEPLOYMENTS_STATUS says reading it fails.
  */
 const PNPM = `#!/usr/bin/env bash
 [ "$1 $2" = "exec wrangler" ] || { echo "unexpected: $*" >&2; exit 2; }
@@ -43,6 +45,11 @@ if [ "$1" = "d1" ]; then
     migrations) echo "CI=$CI" >> "$OUT/d1-calls"; exit "\${MIGRATIONS_STATUS:-0}" ;;
     *) echo "unexpected: $*" >&2; exit 2 ;;
   esac
+elif [ "$1 $2" = "deployments status" ]; then
+  [ -z "$DEPLOYMENTS_STATUS" ] || { echo "✘ [ERROR] A request to the Cloudflare API failed." >&2; exit 1; }
+  echo '{"versions":[{"version_id":"0a1b2c3d","percentage":100}]}'
+elif [ "$1 $2" = "versions view" ]; then
+  if [ -n "$BOUND_D1" ]; then echo '{"resources":{"bindings":[{"type":"d1","name":"DB","id":"'"$BOUND_D1"'"}]}}'; else echo '{"resources":{"bindings":[]}}'; fi
 elif [ "$1 $2" = "secret list" ]; then
   echo "$*" > "$OUT/list-args"
   case "$LISTING" in
@@ -109,6 +116,7 @@ function deploy(
     TURNSTILE_SITE_KEY: _siteKey,
     TURNSTILE_SECRET_KEY: _turnstileSecret,
     RESEND_API_KEY: _resendKey,
+    EMBER_ADOPT_D1_DATABASE: _adopted,
     ...shell
   } = process.env;
   const run = spawnSync(process.execPath, [script, ...args], {
@@ -162,7 +170,7 @@ describe("Deploy secrets", () => {
   it("passes its options to wrangler deploy, and the Worker's name to the secrets it lists", () => {
     deploy(EVERY_SECRET, ["--name", "ember-production", "--var", "GIT_REVISION:abc1234"]);
     expect(output("list-args")).toBe("secret list --name ember-production");
-    expect(output("deploy-args")).toBe("--name ember-production --var GIT_REVISION:abc1234 --config wrangler.deploy.json");
+    expect(output("deploy-args")).toMatch(/^--name ember-production --var GIT_REVISION:abc1234 --config wrangler\.\d+\.deploy\.json$/);
   });
 
   it.each([
@@ -405,6 +413,9 @@ describe("Where messages live", () => {
     return ["--config", file];
   }
 
+  /** The configs the deploy wrote for wrangler and left beside Ember's own. */
+  const leftConfigs = () => readdirSync(ROOT).filter((name) => name.endsWith(".deploy.json"));
+
   /** The commands the deploy gave wrangler, in order, each by its first two words. */
   const commands = () => (output("calls") ?? "").split("\n").map((line) => line.split(" ").slice(0, 2).join(" "));
 
@@ -413,16 +424,17 @@ describe("Where messages live", () => {
     expect(status).toBe(0);
     const { d1_databases, ...rest } = dataOf(readFileSync(path.join(ROOT, "wrangler.jsonc"), "utf8")) as Record<string, unknown>;
     expect(d1_databases).toEqual([DATABASE]);
-    expect(output("deploy-args")).toBe("--config wrangler.deploy.json");
+    // Named for this deploy alone, so a deploy run beside it from the same checkout keeps its own.
+    expect(output("deploy-args")).toMatch(/^--config wrangler\.\d+\.deploy\.json$/);
     expect(JSON.parse(output("deploy-config.json")!)).toEqual(rest);
-    expect(existsSync(path.join(ROOT, "wrangler.deploy.json"))).toBe(false);
+    expect(leftConfigs()).toEqual([]);
     expect(commands()).toEqual(["secret list", "deploy --secrets-file"]);
   });
 
   it("removes the config it deployed from when wrangler fails to deploy, too", () => {
     deploy(EVERY_SECRET, [], { deployStatus: 1 });
     expect(output("deploy-config.json")).not.toBeNull();
-    expect(existsSync(path.join(ROOT, "wrangler.deploy.json"))).toBe(false);
+    expect(leftConfigs()).toEqual([]);
   });
 
   it("deploys a config that binds no D1 database as it is", () => {
@@ -453,26 +465,45 @@ describe("Where messages live", () => {
     const options = copysConfig("d1", [DATABASE]);
     const { status, logs } = deploy("no worker", options);
     expect(status).toBe(0);
-    expect(commands()).toEqual(["secret list", "d1 list", "d1 create", "d1 execute", "d1 migrations", "deploy --secrets-file"]);
+    expect(commands()).toEqual(["secret list", "d1 list", "d1 create", "d1 migrations", "deploy --secrets-file"]);
     expect(output("d1-calls")).toContain(`d1 create ember --no-update-config --config ${options[1]}`);
     expect(logs).toContain("Making the D1 database ember, which keeps this Ember's messages");
   });
 
   it("uses the account's D1 database of the name a config gives, as wrangler deploy binds it", () => {
-    const D1_DATABASES = JSON.stringify([{ name: "ember-other" }, { name: "ember" }]);
+    const D1_DATABASES = JSON.stringify([
+      { name: "ember-other", uuid: "11111111-2222-4333-8444-555555555555" },
+      { name: "ember", uuid: MADE.database_id },
+    ]);
     const { status } = deploy("no worker", copysConfig("d1", [DATABASE]), { env: { D1_DATABASES } });
     expect(status).toBe(0);
     expect(commands()).toEqual(["secret list", "d1 list", "d1 execute", "d1 migrations", "deploy --secrets-file"]);
   });
 
   it("refuses a D1 database another Ember is set up in for a new Worker, before migrating it or deploying", () => {
-    const options = copysConfig("d1");
-    const { status, deployed, logs } = deploy("no worker", options, { env: { D1_STATE: "set up" } });
+    const { status, deployed, logs } = deploy("no worker", copysConfig("d1"), { env: { D1_STATE: "set up" } });
     expect(status).toBe(1);
     expect(deployed).toBe(false);
     expect(commands()).toEqual(["secret list", "d1 execute", "d1 execute"]);
-    expect(logs).toContain("Two Embers can't share a database");
-    expect(logs).toContain(`pnpm exec wrangler secret put SESSION_SECRET ${options.join(" ")}, and deploy again`);
+    expect(logs).toContain("An Ember is already set up in the D1 database ember, which this Worker isn't bound to. Two Embers can't share a database");
+    expect(logs).toContain("set EMBER_ADOPT_D1_DATABASE to its name in the deploy's environment, and deploy again");
+  });
+
+  it("refuses one for a Worker deployed before that isn't bound to it, as one on DO SQLite is bound to none", () => {
+    const { status, deployed, logs } = deploy(EVERY_SECRET, copysConfig("d1"), { env: { D1_STATE: "set up" } });
+    expect(status).toBe(1);
+    expect(deployed).toBe(false);
+    expect(commands()).toEqual(["secret list", "deployments status", "versions view", "d1 execute", "d1 execute"]);
+    expect(logs).toContain("which this Worker isn't bound to");
+  });
+
+  it.each([
+    ["name", "ember", 0],
+    ["id", MADE.database_id, 0],
+    ["name, when it's another database's", "ember-other", 1],
+  ])("takes one the deploy's environment names, by its %s, as this Ember's own", (_, adopted, deployStatus) => {
+    const { status } = deploy("no worker", copysConfig("d1"), { env: { D1_STATE: "set up", EMBER_ADOPT_D1_DATABASE: adopted } });
+    expect(status).toBe(deployStatus);
   });
 
   it("takes a D1 database that's migrated but not set up, as a first deploy that failed after migrating leaves it", () => {
@@ -481,11 +512,46 @@ describe("Where messages live", () => {
     expect(commands()).toEqual(["secret list", "d1 execute", "d1 execute", "d1 migrations", "deploy --secrets-file"]);
   });
 
-  it("migrates the database of a Worker deployed before without asking whether an Ember is set up in it, as its own is", () => {
-    const { status } = deploy(EVERY_SECRET, copysConfig("d1"), { env: { D1_STATE: "set up" } });
+  it("migrates the database a Worker deployed before is bound to without asking whether an Ember is set up in it, as its own is", () => {
+    const { status } = deploy(EVERY_SECRET, copysConfig("d1"), { env: { D1_STATE: "set up", BOUND_D1: MADE.database_id } });
     expect(status).toBe(0);
-    expect(commands()).toEqual(["secret list", "d1 migrations", "deploy --secrets-file"]);
+    expect(commands()).toEqual(["secret list", "deployments status", "versions view", "d1 migrations", "deploy --secrets-file"]);
   });
+
+  it("stops where it can't tell which D1 database a Worker deployed before is bound to", () => {
+    const { status, deployed, logs } = deploy(EVERY_SECRET, copysConfig("d1"), { env: { D1_STATE: "set up", DEPLOYMENTS_STATUS: "1" } });
+    expect(status).toBe(1);
+    expect(deployed).toBe(false);
+    expect(logs).toContain("Couldn't tell which D1 database the Worker uses");
+  });
+
+  it.each([[["--dry-run"]], [["--dry-run=true"]], [["--dry-run", "true"]]])("changes no D1 database on a dry run (%j)", (dryRun) => {
+    const options = [...copysConfig("d1", [DATABASE]), ...dryRun];
+    const { status } = deploy("no worker", options);
+    expect(status).toBe(0);
+    expect(commands()).toEqual(["secret list", "deploy --secrets-file"]);
+    expect(output("deploy-args")).toBe(options.join(" "));
+  });
+
+  it.each([[["--dry-run=false"]], [["--dry-run", "false"]]])("readies the D1 database where the options turn the dry run off (%j)", (dryRun) => {
+    const { status } = deploy("no worker", [...copysConfig("d1"), ...dryRun]);
+    expect(status).toBe(0);
+    expect(commands()).toEqual(["secret list", "d1 execute", "d1 migrations", "deploy --secrets-file"]);
+  });
+
+  it.each([[[]], [["--var", "STORAGE_BACKEND:d1"]]])(
+    "deploys a TOML config as it is, since it reads only JSON and JSONC, and says what that leaves to the deployer (%j)",
+    (vars) => {
+      const file = path.join(dir, "wrangler.toml");
+      writeFileSync(file, 'name = "ember"\n\n[vars]\nSTORAGE_BACKEND = "d1"\n');
+      const { status, logs } = deploy(EVERY_SECRET, ["--config", file, ...vars]);
+      expect(status).toBe(0);
+      expect(commands()).toEqual(["secret list", "deploy --secrets-file"]);
+      expect(output("deploy-args")).toBe(["--config", file, ...vars].join(" "));
+      expect(logs).toContain("not TOML, so it deploys");
+      expect(logs).toContain("Where it keeps messages in D1, apply Ember's migrations to the database with pnpm exec wrangler d1 migrations apply DB --remote --config");
+    },
+  );
 
   it("stops before deploying where the migrations fail, and says what D1 takes", () => {
     const { status, deployed, logs } = deploy(EVERY_SECRET, copysConfig("d1"), { env: { MIGRATIONS_STATUS: "1" } });
@@ -502,7 +568,7 @@ describe("Where messages live", () => {
   });
 
   it.each([
-    ["do-sqlite", "d1", ["secret list", "d1 migrations", "deploy --secrets-file"]],
+    ["do-sqlite", "d1", ["secret list", "deployments status", "versions view", "d1 execute", "d1 migrations", "deploy --secrets-file"]],
     ["d1", "do-sqlite", ["secret list", "deploy --secrets-file"]],
   ])("keeps messages where a --var says, over a config's %s (%s)", (configured, given, expected) => {
     const { status } = deploy(EVERY_SECRET, [...copysConfig(configured), "--var", `STORAGE_BACKEND:${given}`]);

@@ -689,9 +689,12 @@ which takes a Cloudflare API token that may edit D1. The token Workers Builds ma
 not: if a Deploy to Cloudflare build stops at `wrangler d1`, give its token D1 Edit in the dashboard,
 under **My Profile**, **API Tokens**, and retry the build. The deploy also stops, saying why, where
 `STORAGE_BACKEND` is anything but `do-sqlite` or `d1`, which the Worker would take for `do-sqlite`, and
-where a new Worker's database already holds a set-up Ember, as another Ember's would. For
-`wrangler dev`, apply the migrations to the database on your machine with
-`pnpm --filter @ember/worker d1:migrate:local`.
+where the database holds a set-up Ember that the Worker isn't bound to, as another Ember's would. If
+that database is this Ember's own, from before it was on DO SQLite or before its Worker was made again,
+set `EMBER_ADOPT_D1_DATABASE` to the database's name in the deploy's environment, a build variable
+under the Worker's **Settings**, **Build** for a Deploy to Cloudflare copy, and deploy again. A dry run
+(`--dry-run`) leaves the database as it is. For `wrangler dev`, apply the migrations to the database on
+your machine with `pnpm --filter @ember/worker d1:migrate:local`.
 
 Both use the same schema (`apps/worker/migrations/`) and the same queries
 (`apps/worker/src/store.ts`); only the driver (`apps/worker/src/db.ts`) differs. The Workspace
