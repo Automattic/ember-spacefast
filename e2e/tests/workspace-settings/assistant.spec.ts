@@ -41,7 +41,7 @@ async function askEmber(page: Page, question: string) {
   await page.getByRole("complementary", { name: "Conversations" }).getByRole("link", { name: "general" }).click();
   const composer = editorField(page, "Write a message");
   await composer.pressSequentially("@Embe");
-  await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember Agent"]);
   await composer.press("Tab");
   await composer.pressSequentially(`${question} ${crypto.randomUUID().slice(0, 8)}`);
   const answering = gateway.hold();
@@ -231,7 +231,8 @@ test.describe("@ember", () => {
     const question = `What's our logo? ${crypto.randomUUID().slice(0, 8)}`;
     const composer = editorField(page, "Write a message");
     await composer.pressSequentially("@Embe");
-    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
+    // The prompt badges it as an agent, as its messages do.
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember Agent"]);
     await composer.press("Tab");
     await expect(page.getByRole("listbox")).toBeHidden();
     await composer.pressSequentially(question);
@@ -244,7 +245,7 @@ test.describe("@ember", () => {
     await expect(page.locator(".spinner")).toHaveText("Ember");
     answering();
     const answer = page.getByRole("article").filter({ hasText: HELLO });
-    await expect(answer).toContainText("Ember");
+    await expect(answer.getByRole("heading", { level: 3 })).toHaveText(/^Ember Agent/);
     await expect(page.locator(".spinner")).toHaveText("");
     const [instructions, ...turns] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
     expect(instructions!.content).toContain(`You're asked in the room "general".`);
@@ -264,7 +265,7 @@ test.describe("@ember", () => {
 
     const composer = editorField(page, "Write a message");
     await composer.pressSequentially("@Embe");
-    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember Agent"]);
     await composer.press("Tab");
     await composer.pressSequentially(`What's AI Gateway? ${crypto.randomUUID().slice(0, 8)}`);
     await composer.press("Enter");

@@ -1,5 +1,5 @@
 import { avatarSvg, type Room, type User } from "@ember/protocol";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,8 @@ const people = (count: number): User[] => Array.from({ length: count }, (_, i) =
 const general: Room = { id: "general", name: "general", kind: "open", icon: null };
 /** Ada's DM with Linus, as Linus reads it. */
 const adaDirect: Room = { id: "direct-1", kind: "direct", members: [{ id: "ada", name: "Ada" }, { id: "linus", name: "Linus" }], activeAt: "2026-10-15T12:00:00.000Z" };
+/** @ember, the AI assistant. */
+const ember: User = { id: "ember", name: "Ember" };
 
 afterEach(() => history.replaceState(null, "", "/"));
 
@@ -121,6 +123,22 @@ describe("Group DMs and DM names", () => {
     expect(heading).toHaveTextContent(/^Direct message with Ada$/);
     expect(heading.previousElementSibling).toHaveClass("iconoir-chat-bubble-empty");
     expect(screen.getByRole("navigation", { name: "Page" })).not.toHaveTextContent("#");
+  });
+
+  it("badges a DM with @ember alone as an agent's after its name", () => {
+    renderHeader({ room: { ...adaDirect, members: [{ id: "ada", name: "Ada" }, ember] }, name: "Ember" });
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Direct message with Ember$/);
+    expect(heading.nextElementSibling).toHaveTextContent(/^Agent$/);
+    expect(heading.nextElementSibling).toHaveAttribute("data-slot", "badge");
+  });
+
+  it("badges no other DM, nor a group DM @ember is in", () => {
+    renderHeader({ room: adaDirect, name: "Ada" });
+    expect(screen.queryByText("Agent")).not.toBeInTheDocument();
+    cleanup();
+    renderHeader({ room: { ...adaDirect, members: [...adaDirect.members, ember] }, name: "Ada and Ember" });
+    expect(screen.queryByText("Agent")).not.toBeInTheDocument();
   });
 
   it("links to a DM's settings at a DM's address, saying it's a Ping's", () => {

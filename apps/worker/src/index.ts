@@ -1,4 +1,5 @@
 import {
+  ASSISTANT_ID,
   AVATAR_PATH,
   CloseCode,
   CURRENT_PASSWORD_NEEDED,
@@ -771,8 +772,8 @@ async function personPage(request: Request, env: Env, pathname: string, userId: 
 
 /**
  * Whom the mentions prompt offers: the first 20 by name of the active people in `room_id`, or anywhere
- * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s. A room someone
- * isn't in is 404.
+ * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s, with @ember's
+ * badged as an agent's. A room someone isn't in is 404.
  */
 async function mentionable(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
@@ -784,7 +785,7 @@ async function mentionable(request: Request, env: Env): Promise<Response> {
   const people = await workspace(env).mentionable(credentials, roomId ?? null, query);
   if (!people) return problem(401, "Not signed in");
   if (people === "not found") return problem(404, ROOM_NOT_FOUND);
-  const items = (await directoryOf(people, env.SESSION_SECRET)).map(mentionPromptItem);
+  const items = (await directoryOf(people, env.SESSION_SECRET)).map((person) => mentionPromptItem({ ...person, agent: person.id === ASSISTANT_ID }));
   return new Response(items.join(""), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
