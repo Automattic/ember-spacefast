@@ -176,7 +176,7 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
         return Response.json({ turnstile });
       case "PUT /api/account/assistant": {
         const { accountId, model } = JSON.parse(String(init?.body)) as AssistantSetup;
-        assistant = { accountId, model, most: assistant?.most ?? TOP_LEVELS };
+        assistant = { accountId, model, most: assistant?.most ?? TOP_LEVELS, webTools: model.startsWith("@cf/") ? null : [] };
         return Response.json({ assistant, greeting: "Hello, team!" });
       }
       case "PATCH /api/account/assistant":
@@ -1683,7 +1683,7 @@ describe("Ember AI", () => {
   });
 
   it("turns Ember AI off once the administrator confirms", async () => {
-    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS } });
+    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS, webTools: null } });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
@@ -1695,7 +1695,7 @@ describe("Ember AI", () => {
   });
 
   it("changes the most @ember may think and write for anyone on the card, at once", async () => {
-    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS } });
+    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS, webTools: null } });
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
     const thinking = within(card).getByRole("group", { name: "Thinking" });

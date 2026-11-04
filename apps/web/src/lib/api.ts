@@ -77,6 +77,7 @@ import {
   type TurnstileKeysChange,
   type TurnstileSettings,
   type UserId,
+  type WebSearchChanged,
   type WorkspaceSettings,
 } from "@ember/protocol";
 import type { LogoVariants } from "@/lib/previews";
@@ -528,6 +529,18 @@ export async function forgetAssistant(): Promise<null> {
  */
 export async function changeAssistantMost(changes: AnswerLevelChanges): Promise<AssistantChanged["assistant"]> {
   return (await request<AssistantChanged>("/api/account/assistant", { method: "PATCH", body: JSON.stringify(changes) })).assistant;
+}
+
+/**
+ * Turns Search the web on, once Ember AI's model has searched the web for a test question through AI
+ * Gateway, or off, answering Ember AI as it is then and, once it's on, what the model said. Fails with a
+ * 422 ApiError when AI Gateway refused the model's tools for the web, the model answered without
+ * searching or can't search, a 429 one while AI Gateway turns requests away, a 502 one when it didn't
+ * answer, a 409 one while Ember AI is off, or changed while the model searched, and a 403 one for anyone
+ * but an administrator.
+ */
+export async function changeWebSearch(on: boolean): Promise<WebSearchChanged> {
+  return request<WebSearchChanged>("/api/account/assistant/web_search", { method: "PUT", body: JSON.stringify({ on }) });
 }
 
 /** Changes how much @ember thinks and how long it answers you, answering your levels as they are then, or null while Ember AI is off. */

@@ -481,6 +481,25 @@ as the levels may take, 2 minutes at the least and about 13 at High and Long. An
 cuts short ends with an ellipsis, and when the model thinks for all it may before writing anything,
 @ember says so and suggests less thinking.
 
+Search the web, on the Ember AI card, lets @ember search the web and read pages with its model's own
+tools, which AI Gateway passes on and the model's provider runs
+([Cloudflare's guide](https://developers.cloudflare.com/ai-gateway/usage/web-search/)): Anthropic's
+[web search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) and
+[web fetch](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) for a model
+that takes Messages, and OpenAI's [web search](https://platform.openai.com/docs/guides/tools-web-search)
+for one that takes Responses. Chat Completions has no such tools, so a Workers AI or Google model
+can't search, which the card says, its switch opening Set up Ember AI to choose another model.
+Turning it on asks the model a question it has to search the web for, and keeps the tools AI Gateway
+took, reading pages only if it took that tool too, and says what the model found; a model that
+answers without searching leaves it off. A change of model turns it off, as another model may not
+take the same tools, until it's turned on again. While it's on, @ember searches at most 5 times an
+answer and reads at most 3 pages, each cut to about 10,000 tokens: pages people link to, or that its
+searches find. Its answer is what it writes after it last searches, and a line under it links to the
+pages it cites and the pages it read, by their titles, at most 10, leaving out those the answer links
+to itself. A model that stops taking the tools is asked again without them. Its searches are written
+from the conversation, so the provider's search sees what the room was asking about. While it's off,
+@ember is told it can't search, and that an administrator can turn Search the web on.
+
 ### A preview from GitHub Actions
 
 The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
@@ -655,6 +674,9 @@ pages had them in October 2026:
   AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
+  While Search the web is on, an answer can also search up to 5 times, which Anthropic charges $10 per
+  1,000 searches for and OpenAI its own price per search, and the results and pages it reads count as
+  input, up to about 10,000 tokens a page.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),

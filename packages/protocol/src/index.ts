@@ -56,6 +56,9 @@ export type {
   AssistantSetup,
   ModelFormat,
   ThinkingLevel,
+  WebSearchChange,
+  WebSearchChanged,
+  WebTool,
   YourAnswerLevels,
 } from "./assistant.ts";
 export {

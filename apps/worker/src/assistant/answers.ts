@@ -1,18 +1,19 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, isMessageTooLong, MAX_MESSAGE_HTML_LENGTH, type Card, type CardImage, type LinkPreview, type Message, type User } from "@ember/protocol";
-import { ANSWER_WORDS, THINKING_TOKENS, type AnswerLength, type AnswerLevels } from "@ember/protocol/assistant";
+import { ANSWER_WORDS, THINKING_TOKENS, type AnswerLength, type AnswerLevels, type WebTool } from "@ember/protocol/assistant";
 import { OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody, previewContent } from "@ember/richtext";
 import { decodeHTMLStrict } from "entities/decode";
 import { Marked } from "marked";
 import { markdownHtml } from "../bots/markdown";
-import { escapeText, linkHref } from "../bots/mrkdwn";
-import type { Question, RefusalReason, Turn } from "./gateway";
+import { anchor, escapeText, linkHref } from "../bots/mrkdwn";
+import type { Question, RefusalReason, Source, Turn } from "./gateway";
 
 // What @ember asks its model when someone asks it something, and what it answers with. It reads the
 // conversation it's asked in, each message after its writer's name, and answers in Markdown, thinking
-// and writing as much as the asker's levels allow, which it posts as the rich text people write
-// (`markdownHtml`), the pictures it shows in a card under it, as bots' image cards are, and a preview of
-// its first link, as the composer adds one below a link. When it can't answer, it says why, in words
-// that say who can do something about it.
+// and writing as much as the asker's levels allow, and searching the web and reading pages while Search
+// the web lets it, which it posts as the rich text people write (`markdownHtml`), the pictures it shows
+// in a card under it, as bots' image cards are, the pages it came from after it, and a preview of its
+// first link, as the composer adds one below a link. When it can't answer, it says why, in words that
+// say who can do something about it.
 
 /** How many of the room's latest messages @ember reads when it's asked in the room, the question among them. */
 export const ROOM_MESSAGES_READ = 20;
@@ -63,24 +64,37 @@ export class AnswerError extends Error {}
 
 /**
  * What @ember asks its model about the question `conversation` ends with, which `asker` asked `where`,
- * at `now`: the conversation it can read, its writers named, how to answer, and how much to think and
- * write, at the asker's `levels`, labeled with who asked.
+ * at `now`: the conversation it can read, its writers named, how to answer, how much to think and
+ * write, at the asker's `levels`, and what it may do on the web, `webTools`, labeled with who asked.
  */
-export function questionFor(conversation: Message[], asker: User, where: AskedIn, levels: AnswerLevels, now: Date): Question {
-  const instructions = instructionsFor(asker, where, ANSWER_WORDS[levels.length], now);
-  return { instructions, turns: turnsOf(readable(conversation, where.inThread)), maxTokens: maxTokensAt(levels), thinking: levels.thinking, askerId: asker.id };
+export function questionFor(conversation: Message[], asker: User, where: AskedIn, levels: AnswerLevels, now: Date, webTools: readonly WebTool[] = []): Question {
+  const instructions = instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, webTools);
+  return { instructions, turns: turnsOf(readable(conversation, where.inThread)), maxTokens: maxTokensAt(levels), thinking: levels.thinking, askerId: asker.id, webTools };
 }
 
-/** What @ember is told before the conversation, asked to answer in about `words` words at most. */
-function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date): string {
+/** What @ember is told before the conversation, asked to answer in about `words` words at most, using the web as `webTools` lets it. */
+function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, webTools: readonly WebTool[]): string {
   const room = roomName === null ? "a direct message" : `the room "${roomName}"`;
   const today = new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeZone: "UTC" }).format(now);
   return [
     `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`,
     `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, as a helpful teammate would: plainly, and in at most about ${words.toLocaleString("en-US")} words.`,
     "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer. Don't begin with your name.",
+    webInstructionsFor(webTools),
     `Today is ${today}, in UTC.`,
   ].join("\n\n");
+}
+
+/** What @ember is told it may do on the web with `webTools`, or, with none, that it can't, and who could let it. */
+function webInstructionsFor(webTools: readonly WebTool[]): string {
+  if (!webTools.includes("search")) {
+    return `You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web under ${SETTINGS}.`;
+  }
+  const reading = webTools.includes("read") ? ", and read the pages people link to or your searches find," : "";
+  return [
+    `You can search the web${reading} when a question needs what's current, or what you don't know.`,
+    "Only what you write after you last search or read is posted, so write all of your answer then. The chat lists the pages you cite after it, so don't list them yourself.",
+  ].join(" ");
 }
 
 /**
@@ -124,31 +138,63 @@ export interface Answer {
 
 const markdown = new Marked({ gfm: true });
 
+/** The most characters of a page's title that its link among an answer's sources shows. */
+const MAX_SOURCE_TITLE_LENGTH = 80;
+
 /**
  * `text`, the model's answer in Markdown, as @ember posts it, without its name in front, where the
- * conversation's form leads some models to write it, and cut to what one message holds.
+ * conversation's form leads some models to write it, then the `sources` it came from, all cut to what
+ * one message holds, which cuts the answer, as its sources are what it says it came from.
  */
-export function answerOf(text: string): Answer {
+export function answerOf(text: string, sources: readonly Source[] = []): Answer {
   const answer = text.replace(/^\s*(?:ember:|\*\*ember:\*\*|\*\*ember\*\*:)\s*(?=\S)/i, "");
-  const whole = answerIn(answer);
-  return fits(whole) ? whole : cutToFit(answer);
+  const named = sourcesHtml(answer, sources);
+  const whole = answerIn(answer, named);
+  return fits(whole) ? whole : cutToFit(answer, named);
 }
 
-/** The answer `text`, in Markdown, makes: its rich text, a card of the web pictures it shows, and its first web link. */
-function answerIn(text: string): Answer {
+/**
+ * The answer `text`, in Markdown, makes, followed by `named`, the markup naming its sources: its rich
+ * text, a card of the web pictures it shows, and its first web link, which is the answer's, not a source's.
+ */
+function answerIn(text: string, named = ""): Answer {
+  const { images, links } = webPartsOf(text);
+  const cards: Card[] = images.length === 0 ? [] : [{ source: "blocks", parts: images.map((image) => ({ kind: "image", image })) }];
+  return { markup: `${markdownHtml(text)}${named}`, cards, firstLink: links[0] ?? null };
+}
+
+/** The web pictures Markdown `text` shows, and the web addresses it links to, in order. */
+function webPartsOf(text: string): { images: CardImage[]; links: string[] } {
   const images: CardImage[] = [];
-  let firstLink: string | null = null;
+  const links: string[] = [];
   markdown.walkTokens(markdown.lexer(text), (token) => {
     if (token.type === "image") {
       const url = webAddress(decodeHTMLStrict(token.href));
       if (url) images.push({ url, alt: decodeHTMLStrict(token.text) });
     } else if (token.type === "link") {
       // As `markdownHtml` reads them: an autolink's address is its text, with no character references.
-      firstLink ??= webAddress(token.autolink ? token.href : decodeHTMLStrict(token.href));
+      const url = webAddress(token.autolink ? token.href : decodeHTMLStrict(token.href));
+      if (url) links.push(url);
     }
   });
-  const cards: Card[] = images.length === 0 ? [] : [{ source: "blocks", parts: images.map((image) => ({ kind: "image", image })) }];
-  return { markup: markdownHtml(text), cards, firstLink };
+  return { images, links };
+}
+
+/**
+ * The markup naming `sources`, the pages an answer that used the web came from, as Anthropic asks of
+ * answers from its searches: a line after the answer linking to each, by its page's title, or its host
+ * without one, but for those the answer `text` links to itself, or "" when there's none left to name.
+ */
+function sourcesHtml(text: string, sources: readonly Source[]): string {
+  const linked = new Set(webPartsOf(text).links);
+  const links = sources.flatMap(({ url, title }) => {
+    const address = webAddress(url);
+    if (address === null || linked.has(address)) return [];
+    const words = title.replace(/\s+/g, " ").trim();
+    const shown = words.length > MAX_SOURCE_TITLE_LENGTH ? `${words.slice(0, MAX_SOURCE_TITLE_LENGTH - 1).trimEnd()}…` : words;
+    return [anchor(address, escapeText(shown || new URL(address).host))];
+  });
+  return links.length > 0 ? `<p>Sources: ${links.join(", ")}</p>` : "";
 }
 
 /** `address` as a web address, as a link to it goes, or null when it isn't one. */
@@ -168,20 +214,20 @@ function fits({ markup, cards }: Answer): boolean {
 }
 
 /**
- * The answer as much of `text` makes as fits in a message: its first lines, or the start of its first
- * line when even that doesn't fit, ending with an ellipsis where it's cut. Its Markdown can show more
- * than it's written in, as a numbered list counts up, or a picture's address shows for each reference to
- * it, so each cut is measured as it shows.
+ * The answer as much of `text` makes as fits in a message with `named`, its sources, after it: its
+ * first lines, or the start of its first line when even that doesn't fit, ending with an ellipsis where
+ * it's cut. Its Markdown can show more than it's written in, as a numbered list counts up, or a
+ * picture's address shows for each reference to it, so each cut is measured as it shows.
  */
-function cutToFit(text: string): Answer {
-  const cutFits = (length: number) => fits(cutAt(text, length));
+function cutToFit(text: string, named: string): Answer {
+  const cutFits = (length: number) => fits(cutAt(text, length, named));
   const lineEnds = Array.from(text.matchAll(/\n/g), ({ index }) => index);
   const lines = largest(lineEnds.length, (count) => cutFits(lineEnds[count - 1]!));
-  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits));
+  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits), named);
 }
 
-/** The answer `text`'s first `length` characters make, ending with an ellipsis to say it's cut. */
-const cutAt = (text: string, length: number) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`);
+/** The answer `text`'s first `length` characters make, ending with an ellipsis to say it's cut, and then `named`, its sources. */
+const cutAt = (text: string, length: number, named: string) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`, named);
 
 /** The largest count from 0 to `most` that `holds` is true of, as it is of every count below one it's true of. */
 function largest(most: number, holds: (count: number) => boolean): number {

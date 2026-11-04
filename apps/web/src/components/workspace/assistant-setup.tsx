@@ -12,6 +12,7 @@ import {
   modelOf,
   type AssistantField,
   type AssistantSettings,
+  type WebTool,
 } from "@ember/protocol/assistant";
 import { FIELD_INPUT, Field } from "@/components/field";
 import { Xmark } from "@/components/icons/iconoir";
@@ -27,7 +28,8 @@ import { DIALOG, DIALOG_BACKDROP, DIALOG_CLOSE, DIALOG_TITLE, MAIN_ACTION, OTHER
 // with the account Ember is deployed to when the deploy gave it, and an API token of its, which Workers
 // AI's Use REST API makes, then the model, which the Worker asks a test question through AI Gateway
 // before keeping all three, saying on the field it's about why it didn't answer, if it didn't. Then what
-// the model said. Styled as Set up Turnstile is.
+// the model said, and that Search the web is off, when a change of model turned it off. Styled as Set up
+// Turnstile is.
 
 /**
  * The page at `path` in the Cloudflare dashboard, in the account `accountId` names, or else in the one
@@ -45,6 +47,13 @@ export const MODEL_CATALOG = "https://developers.cloudflare.com/ai/models/";
 
 const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 const SELECT = cn("w-full min-w-0 border outline-none dark:bg-input/30", FIELD_INPUT);
+
+/**
+ * What the last step says once a change of model has turned Search the web off, leaving @ember doing
+ * `webTools` on the web: that the new model can try it, or that it can't search.
+ */
+export const searchTurnedOff = (webTools: WebTool[] | null) =>
+  webTools === null ? "Search the web is off, as this model can't search the web through AI Gateway." : "Search the web is off for the new model. Turn it on again to try it.";
 
 /** Where it's at: the account and its API token, the model, or done. */
 type Step = "keys" | "model" | "done";
@@ -91,6 +100,8 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
   // Asking the model a test question holds the dialog open until it's answered.
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<{ assistant: AssistantSettings; greeting: string } | null>(null);
+  // Whether @ember searched the web before, which another model may not do with the same tools, and so doesn't until it's tried.
+  const [searched] = useState(() => assistant?.webTools?.includes("search") ?? false);
   const title = useRef<HTMLHeadingElement>(null);
   const shown = useRef(step);
   const mounted = useMounted();
@@ -168,6 +179,7 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
           said:
         </DialogDescription>
         <blockquote className="border-s-2 ps-3 whitespace-pre-wrap wrap-anywhere">{saved.greeting}</blockquote>
+        {searched && !saved.assistant.webTools?.includes("search") && <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools)}</p>}
         <Actions back={null} next={onClose} nextLabel="Done" />
       </>
     ),

@@ -2,7 +2,7 @@ import { DEFAULT_LEVELS, TOP_LEVELS } from "@ember/protocol/assistant";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { administratorSession, cookieHeader, editorField, expect, SAME_ORIGIN, signInAsAdministrator, test, useOwnAddress } from "../../fixtures";
 import { AI_GATEWAY_ACCOUNT } from "../../projects/workspace-settings";
-import { HELLO, startFakeGateway, type FakeGateway } from "./fake-gateway";
+import { FOUND, HELLO, SOURCE, startFakeGateway, type FakeGateway } from "./fake-gateway";
 
 // The AI assistant tab's Ember AI card and Set up Ember AI, and @ember answering, on the second test
 // server, which asks models through the AI Gateway this spec fakes. Each test leaves the workspace as a
@@ -108,6 +108,32 @@ test.describe("Ember AI", () => {
     await expect(card).toContainText("@ember runs on Claude Sonnet 5.5 through Cloudflare AI Gateway.");
   });
 
+  test("the administrator lets @ember search the web once its model has searched for a test question", async ({ page, request }) => {
+    const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "anthropic/claude-sonnet-5.5" }, headers: await asAdministrator(request) });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const card = await openAssistant(page);
+    const webSearch = card.getByRole("switch", { name: "Search the web" });
+    await expect(webSearch).not.toBeChecked();
+    await expect(webSearch).toHaveAccessibleDescription(/^@ember answers from what its model learned in training\./);
+
+    const searching = gateway.hold();
+    await webSearch.click();
+    await expect(card.getByRole("status")).toHaveText("Asking Claude Sonnet 5.5 something it has to search the web for…");
+    await expect(webSearch).toBeDisabled();
+    searching();
+    await expect(card.getByRole("status")).toHaveText(`It searched the web and said: ${FOUND}`);
+    await expect(webSearch).toBeChecked();
+    await expect(webSearch).toHaveAccessibleDescription(/^@ember searches the web when a question needs it, at most 5 times an answer, and reads the pages/);
+    expect(gateway.asked.at(-1)).toMatchObject({
+      path: `/accounts/${AI_GATEWAY_ACCOUNT.accountId}/ai/v1/messages`,
+      body: { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }, { type: "web_fetch_20250910", name: "web_fetch", max_uses: 3 }] },
+    });
+
+    // Ember keeps it.
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Ember AI", exact: true }).getByRole("switch", { name: "Search the web" })).toBeChecked();
+  });
+
   test("the administrator turns Ember AI off, once they're sure", async ({ page, request }) => {
     const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "@cf/zai-org/glm-4.7-flash" }, headers: await asAdministrator(request) });
     expect(saved.status(), await saved.text()).toBe(200);
@@ -157,6 +183,32 @@ test.describe("@ember", () => {
     const [instructions, ...turns] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
     expect(instructions!.content).toContain(`You're asked in the room "general".`);
     expect(turns.at(-1)).toEqual({ role: "user", content: `Ada Lovelace: @Ember ${question}` });
+  });
+
+  test("someone asks @ember something it searches the web for, and reads the pages its answer came from under it", async ({ page, request }) => {
+    const headers = await asAdministrator(request);
+    const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "anthropic/claude-sonnet-5.5" }, headers });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const searching = await request.put("/api/account/assistant/web_search", { data: { on: true }, headers });
+    expect(searching.status(), await searching.text()).toBe(200);
+    await useOwnAddress(page);
+    await page.goto("/");
+    await signInAsAdministrator(page);
+    await page.getByRole("complementary", { name: "Conversations" }).getByRole("link", { name: "general" }).click();
+
+    const composer = editorField(page, "Write a message");
+    await composer.pressSequentially("@Embe");
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
+    await composer.press("Tab");
+    await composer.pressSequentially(`What's AI Gateway? ${crypto.randomUUID().slice(0, 8)}`);
+    await composer.press("Enter");
+
+    // Its answer is what it said once it had searched, then the page it cites, linked.
+    const answer = page.getByRole("article").filter({ hasText: FOUND });
+    await expect(answer).toContainText(`${FOUND}Sources: ${SOURCE.title}`);
+    await expect(answer).not.toContainText("I'll look that up.");
+    await expect(answer.getByRole("link", { name: SOURCE.title })).toHaveAttribute("href", SOURCE.url);
+    expect(gateway.asked.at(-1)!.body.system).toEqual(expect.stringContaining("You can search the web"));
   });
 
   test("someone picks how much @ember thinks and writes for them on their profile, up to the most the administrator allows, and it asks its model so", async ({

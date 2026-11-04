@@ -68,8 +68,8 @@ import {
   type WorkspaceServerFrame,
   type WorkspaceSettings,
 } from "@ember/protocol";
-import { DEFAULT_LEVELS, TOP_LEVELS, withinMost, type AnswerLevelChanges, type AnswerLevels, type YourAnswerLevels } from "@ember/protocol/assistant";
-import type { Gateway } from "./assistant/gateway";
+import { DEFAULT_LEVELS, TOP_LEVELS, withinMost, type AnswerLevelChanges, type AnswerLevels, type WebTool, type YourAnswerLevels } from "@ember/protocol/assistant";
+import { WEB_TOOLS_IN, type Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";
@@ -109,6 +109,7 @@ import {
   type ProfileEntry,
   type PushDelivery,
   type RoomEventDeliveries,
+  type SavedAssistant,
   type SavedRoomChange,
   type StoredBot,
   type StoredBotSettings,
@@ -260,7 +261,15 @@ const accountOf = ({
 
 /** Ember AI as the AI assistant tab shows `account`'s to administrators, or null while it's off. */
 const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount, "assistant" | "assistantMost">): AssistantSettings | null =>
-  assistant && { accountId: assistant.accountId, model: assistant.model, most: assistantMost };
+  assistant && {
+    accountId: assistant.accountId,
+    model: assistant.model,
+    most: assistantMost,
+    webTools: WEB_TOOLS_IN[assistant.format].length === 0 ? null : assistant.webTools,
+  };
+
+/** Whether Ember AI, as `saved`, asks the model `asked` names in the format it's asked in. */
+const isAskedAs = (saved: SavedAssistant, asked: Pick<Gateway, "model" | "format">) => saved.model === asked.model && saved.format === asked.format;
 
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
 const levelsOf = (picked: PickedLevels | null, most: AnswerLevels): AnswerLevels =>
@@ -341,13 +350,14 @@ export interface BotAccess {
 
 /**
  * @ember as a room asks Ember AI to answer a question there (`Workspace.assistantIn`): how Ember AI asks AI
- * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, and how
- * much it thinks and how long it answers whoever asked.
+ * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, how
+ * much it thinks and how long it answers whoever asked, and what it may do on the web.
  */
 export interface AssistantAccess extends BotAccess {
   gateway: Gateway | null;
   community: string;
   levels: AnswerLevels;
+  webTools: WebTool[];
 }
 
 /** The same, as the bot API has it, with Ember's custom domain, which the API's links name, or null while it has none. */
@@ -943,7 +953,8 @@ export class Workspace extends DurableObject<Env> {
    * off deactivates @ember, as deleting a bot does. Everyone's workspace sockets hear of @ember either way.
    * A change that kept the API token Ember had, as `keptToken` says, changes nothing ("changed") once
    * that's no longer Ember's token: Ember AI was turned off while the model answered, which forgot it, or
-   * set up again with another.
+   * set up again with another. What the model may do on the web stays as Search the web found it while
+   * the model and its format do, as another model may not take the same tools, which turns it off.
    */
   async changeAssistant(credentials: Credentials, gateway: Gateway | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
     return this.administerAccount(credentials, async (account) => {
@@ -954,6 +965,7 @@ export class Workspace extends DurableObject<Env> {
         sealedApiToken: await seal(this.env.SESSION_SECRET, "ai-gateway-token", gateway.apiToken),
         model: gateway.model,
         format: gateway.format,
+        webTools: account.assistant && isAskedAs(account.assistant, gateway) ? account.assistant.webTools : [],
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
@@ -971,6 +983,27 @@ export class Workspace extends DurableObject<Env> {
       if (!account.assistant) return "off";
       const assistantMost = { ...account.assistantMost, ...changes };
       const changed = await this.storeAccount({ ...account, assistantMost }, () => this.store.changeAssistantMost(assistantMost));
+      return { assistant: assistantSettingsOf(changed)! };
+    });
+  }
+
+  /**
+   * Changes what @ember may do on the web to `webTools`, as Search the web does while Ember AI is on, as
+   * the administrator `credentials` signs in, answering Ember AI as the AI assistant tab then shows it:
+   * "off" while it's off, "forbidden" for anyone else, and null without a valid session. Tools Search the
+   * web found the model `tested` took change nothing ("changed") once Ember AI asks another model, or in
+   * another format, as it was changed while the model searched.
+   */
+  async changeAssistantWebTools(
+    credentials: Credentials,
+    webTools: WebTool[],
+    tested: Pick<Gateway, "model" | "format"> | null,
+  ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      if (!account.assistant) return "off";
+      if (tested && !isAskedAs(account.assistant, tested)) return "changed";
+      const assistant = { ...account.assistant, webTools };
+      const changed = await this.storeAccount({ ...account, assistant }, () => this.store.changeAssistantWebTools(webTools));
       return { assistant: assistantSettingsOf(changed)! };
     });
   }
@@ -2780,7 +2813,8 @@ export class Workspace extends DurableObject<Env> {
     const [account, member, picked] = await Promise.all([this.joinableAccount(), this.store.isMember(roomId, ASSISTANT_ID), this.store.pickedLevels(askerId)]);
     if (!account?.assistant || !member) return null;
     const levels = levelsOf(picked, account.assistantMost);
-    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway: await this.openedAssistant(account), community: account.name, levels };
+    const gateway = await this.openedAssistant(account);
+    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, community: account.name, levels, webTools: account.assistant.webTools };
   }
 
   /**

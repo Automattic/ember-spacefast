@@ -41,7 +41,19 @@ import {
   type UserId,
   type UserStatus,
 } from "@ember/protocol";
-import { ANSWER_LENGTHS, MODEL_FORMATS, THINKING_LEVELS, TOP_LEVELS, type AnswerLength, type AnswerLevelChanges, type AnswerLevels, type ModelFormat, type ThinkingLevel } from "@ember/protocol/assistant";
+import {
+  ANSWER_LENGTHS,
+  MODEL_FORMATS,
+  THINKING_LEVELS,
+  TOP_LEVELS,
+  WEB_TOOLS,
+  type AnswerLength,
+  type AnswerLevelChanges,
+  type AnswerLevels,
+  type ModelFormat,
+  type ThinkingLevel,
+  type WebTool,
+} from "@ember/protocol/assistant";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
 import { messagePayload, type PushPayload } from "./push/payload";
@@ -131,13 +143,15 @@ export interface SavedTurnstileKeys {
 
 /**
  * How Ember AI asks AI Gateway, as the account keeps it: the Cloudflare account, its API token sealed
- * (`seal`), the model and the format the model took Set up Ember AI's test question in.
+ * (`seal`), the model, the format the model took Set up Ember AI's test question in, and what the model
+ * may do on the web, which Search the web found it could when it was turned on, or nothing while it's off.
  */
 export interface SavedAssistant {
   accountId: string;
   sealedApiToken: string;
   model: string;
   format: ModelFormat;
+  webTools: WebTool[];
 }
 
 /** The account first run creates. */
@@ -787,14 +801,16 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format }`, the API token sealed, or null while it's off.
+ * `{ account_id, api_token, model, format, web_tools }`, the API token sealed, or null while it's off.
+ * Without `web_tools`, as Ember AI was kept before Search the web, its model does nothing on the web.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format } = kept as Record<string, unknown>;
+  const { account_id: accountId, api_token: sealedApiToken, model, format, web_tools: webTools } = kept as Record<string, unknown>;
   if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string") return null;
-  return (MODEL_FORMATS as readonly unknown[]).includes(format) ? { accountId, sealedApiToken, model, format: format as ModelFormat } : null;
+  if (!(MODEL_FORMATS as readonly unknown[]).includes(format)) return null;
+  return { accountId, sealedApiToken, model, format: format as ModelFormat, webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)) };
 }
 
 /**
@@ -812,7 +828,9 @@ const levelIn = <T extends string>(levels: readonly T[], kept: unknown): T | nul
 
 /** Ember AI as the account's settings keep it (`assistantIn`), or null for off. */
 const assistantSetting = (assistant: SavedAssistant | null) =>
-  JSON.stringify(assistant && { account_id: assistant.accountId, api_token: assistant.sealedApiToken, model: assistant.model, format: assistant.format });
+  JSON.stringify(
+    assistant && { account_id: assistant.accountId, api_token: assistant.sealedApiToken, model: assistant.model, format: assistant.format, web_tools: assistant.webTools },
+  );
 
 /**
  * Whether the join link lets people in, which the account's settings keep as `join_link`: until the
@@ -1318,6 +1336,7 @@ const rememberSetting = (key: string) => `UPDATE accounts SET settings = json_se
   )`;
 const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
+const REMEMBER_ASSISTANT_WEB_TOOLS = rememberSetting("assistant.web_tools");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
 /** Navigation icon changes as the merge patch `CHANGE_NAVIGATION_ICONS` takes them: null for a slot's default. */
@@ -3027,6 +3046,11 @@ export class WorkspaceStore {
   /** Sets the most each of @ember's dials goes to for anyone's questions, without recording when, as no page's address goes by it. */
   async changeAssistantMost(most: AnswerLevels): Promise<void> {
     await this.db.run(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most));
+  }
+
+  /** Sets what Ember AI's model may do on the web, while Ember AI is on, without recording when, as no page's address goes by it. */
+  async changeAssistantWebTools(webTools: readonly WebTool[]): Promise<void> {
+    await this.db.run(REMEMBER_ASSISTANT_WEB_TOOLS, JSON.stringify(webTools));
   }
 
   /**

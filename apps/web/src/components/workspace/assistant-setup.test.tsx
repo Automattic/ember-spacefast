@@ -1,9 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNT_ID_REFUSED, API_TOKEN_REFUSED, ASSISTANT_MODELS, MODEL_REFUSED, TOP_LEVELS, type AssistantSettings } from "@ember/protocol/assistant";
 import { ApiError } from "@/lib/api";
-import { AssistantSetup, MODEL_CATALOG } from "./assistant-setup";
+import { AssistantSetup, MODEL_CATALOG, searchTurnedOff } from "./assistant-setup";
 
 /** A Cloudflare account's ID and an API token of its, as an administrator copies them from Workers AI's Use REST API. */
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
@@ -253,7 +253,7 @@ describe("Set up Ember AI", () => {
 
   it("opens on Ember AI as it is to change it, keeping the API token Ember has when none is given", async () => {
     serve();
-    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS });
+    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS, webTools: [] });
     await dialog("Set up Ember AI");
     expect(steps()).toHaveLength(2);
     expect(accountIdField()).toHaveValue(ACCOUNT_ID);
@@ -322,7 +322,7 @@ describe("Set up Ember AI", () => {
 
   it("opens on Ember AI's own account when it's on, saying only of the deployed account that Ember is there", async () => {
     serve();
-    showSetup({ accountId: OTHER_ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS }, ACCOUNT_ID);
+    showSetup({ accountId: OTHER_ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS, webTools: [] }, ACCOUNT_ID);
     await dialog("Set up Ember AI");
     expect(steps()).toHaveLength(2);
     expect(accountIdField()).toHaveValue(OTHER_ACCOUNT_ID);
@@ -332,9 +332,31 @@ describe("Set up Ember AI", () => {
 
   it("opens a model it doesn't list under Another model, with its ID", async () => {
     serve();
-    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3", most: TOP_LEVELS });
+    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3", most: TOP_LEVELS, webTools: null });
     await user.click(await screen.findByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("");
     expect(modelIdField()).toHaveValue("mistral/mistral-large-3");
+  });
+
+  it("says Search the web is off once a change of model turned it off, as the new model hasn't searched", async () => {
+    const searching: AssistantSettings = { accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", most: TOP_LEVELS, webTools: ["search", "read"] };
+    const webToolsOf = (model: string) => (model === searching.model ? searching.webTools : model.startsWith("@cf/") ? null : []);
+    serve(({ model }) => Response.json({ assistant: { ...searching, model, webTools: webToolsOf(model) }, greeting: GREETING }));
+    for (const [model, said] of [
+      ["Claude Sonnet 5.5", null],
+      ["Claude Opus 5.5", searchTurnedOff([])],
+      ["GLM-4.7 Flash", searchTurnedOff(null)],
+    ] as const) {
+      const { user, onClose } = showSetup(searching);
+      await user.click(await screen.findByRole("button", { name: "Continue" }));
+      await user.selectOptions(await screen.findByRole("combobox", { name: "Model" }), model);
+      await user.click(button("Save"));
+      const done = await dialog("Ember AI is set up");
+      if (said === null) expect(done).not.toHaveTextContent("Search the web");
+      else expect(done).toHaveTextContent(said);
+      await user.click(button("Done"));
+      expect(onClose).toHaveBeenCalledOnce();
+      cleanup();
+    }
   });
 });
