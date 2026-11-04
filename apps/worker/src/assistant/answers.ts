@@ -203,7 +203,7 @@ export function previewAttachment({ url, image, title, description }: LinkPrevie
 /** Where administrators set Ember AI up, as @ember's notes name it. */
 const SETTINGS = "AI assistant in community settings";
 
-/** Where each person picks how much @ember thinks and writes for them, as its notes name it. */
+/** Where each person picks how much @ember thinks and writes for them, and the model it answers them with, as its notes name it. */
 const YOUR_LEVELS = "Ember AI on your profile";
 
 /** What @ember says when it can't answer, for each reason it can't, and while its API token doesn't open. */
@@ -218,4 +218,10 @@ export const NOTES: Record<RefusalReason | "unopened token", string> = {
   nothing: "I couldn't answer: my model answered with nothing. Try asking again.",
   "out of room": `I couldn't answer: my model thought for as long as it may before it wrote anything. Try asking again, or choose less Thinking under ${YOUR_LEVELS}.`,
   "unopened token": `I can't answer right now: Ember AI's API token no longer opens here. An administrator can set it up again under ${SETTINGS}.`,
+};
+
+/** What @ember says instead, when it can't answer with the model whoever asked picked, for the reasons they can do something about. */
+export const PICKED_MODEL_NOTES: Partial<Record<RefusalReason, string>> = {
+  credits: `I can't answer right now: the AI Gateway credits that pay for the model you picked have run out. An administrator can top them up in AI Gateway, or you can pick another model under ${YOUR_LEVELS}.`,
+  model: `I can't answer right now: AI Gateway didn't take my question for the model you picked. Pick another model under ${YOUR_LEVELS}.`,
 };

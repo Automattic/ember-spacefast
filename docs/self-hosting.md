@@ -48,7 +48,12 @@ pnpm run deploy        # not `pnpm deploy`, which is pnpm's own command
 Either way, `pnpm run deploy` (`apps/worker/scripts/deploy.ts`) makes the Worker's `SESSION_SECRET`
 and a VAPID key pair for push notifications on its first deploy, and later deploys keep them, since
 a new secret would sign everyone out and a new pair would end every push subscription. They go up
-with the code and never appear in the deploy's output.
+with the code and never appear in the deploy's output. So does the ID of the Cloudflare account the
+Worker goes to, as `CLOUDFLARE_ACCOUNT_ID`, which a Worker can't find out by itself, for
+[Set up Ember AI](#ember-ai) to fill in: the account the `CLOUDFLARE_ACCOUNT_ID` environment
+variable names, if it's set, or else the only one your login reaches, as a Deploy to Cloudflare
+build's token does. A login that reaches several gives none, unless you set the variable, and the
+field starts blank.
 
 Whoever deployed Ember sets it up, and nobody else. After Deploy to Cloudflare, open the Worker's
 address and type the setup password you gave the form: `/first_run` asks for it before the
@@ -441,14 +446,31 @@ back together. R2 deletes the parts of an upload nobody finishes after a week.
 
 An administrator adds @ember, an AI assistant, on the AI assistant tab of community settings. Turning
 on its Ember AI card opens Set up Ember AI, which takes a Cloudflare account's ID and an API token,
-both from Workers AI's Use REST API in the Cloudflare dashboard, then a model. Ember asks models
-through the account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
+both from Workers AI's Use REST API in the Cloudflare dashboard, then a model. The account's ID
+starts as the one Ember is deployed to, when the deploy gave it, leaving only the token to copy, and
+the dialog's links open that account's pages in the dashboard. Ember asks models through the
+account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
 logs, caching and spend limits apply. Workers AI's models come with Cloudflare's free daily
 allowance, and other companies', such as Anthropic's, OpenAI's and Google's, are paid for with AI
-Gateway's credits, as [What it costs](#what-it-costs) says. The Worker asks the model a test question
-before keeping the setup. @ember then joins every room open to everyone, and turning the card off
-takes it out again and forgets the token. Nobody else can take the name Ember, though anyone who had
-it keeps it.
+Gateway's credits, as [What it costs](#what-it-costs) says. The model menu lists the text models in
+Cloudflare's [model catalog](https://developers.cloudflare.com/ai/models/), as the Worker reads it with
+the token (`GET /accounts/{id}/ai/catalog/models`) as the dialog goes on to the model, so new models
+show up as Cloudflare adds them: Workers AI's first, then other companies', with what each
+million tokens costs where the catalog says. When the catalog can't be read, the menu has the models
+Ember knows and says why, and Another model takes any model by its ID. The Worker asks the model a
+test question before keeping the setup. @ember then joins every room open to everyone, and turning the
+card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
+who had it keeps it.
+
+The Models list on the Ember AI card has the models people can pick, at most 20, starting with the
+one Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another,
+Add a model offers the catalog's text models nobody can pick yet, asking the one chosen a test
+question before adding it, and Remove takes one out. Each person picks theirs from the Model menu
+under Ember AI on their profile, which shows while there's more than one, and picking the default
+follows the administrators' choice of it. Someone whose model is removed gets the default again, and
+their pick back if it's added again. Changing the model in Set up Ember AI puts the one chosen in
+place of the old default, and turning Ember AI off forgets the list. When the model someone picked
+has run out of credits or won't take the question, @ember's note says they can pick another.
 
 Mention @ember in a room or a thread, or write to it in a DM, and it answers there: in the thread when
 it's asked in one, typing while its model answers. It reads the thread, its first message and latest
@@ -486,7 +508,8 @@ repository secrets, and skips without them:
 - `CLOUDFLARE_ACCOUNT_ID`: under Account details on the Workers & Pages overview.
 
 The first deploy makes the Worker's `SESSION_SECRET` and VAPID key pair, and later ones keep them;
-they go up with the deploy, never in its logs. A public repository's Actions logs are public too, so
+they go up with the deploy, never in its logs, as the account's ID does, for Set up Ember AI to fill
+in. A public repository's Actions logs are public too, so
 the workflow prints no setup link and makes no setup token: the Worker takes its token from an
 `EMBER_SETUP_TOKEN` repository secret, if you add one (`openssl rand -hex 32`) before the first
 deploy, and the run's log then says to open `<the preview>/first_run#token=<your token>` to set
@@ -649,6 +672,8 @@ pages had them in October 2026:
   AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
+  Each person's questions cost what the model they pick does, so add to the Models list only the
+  models you're happy to pay for.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),

@@ -570,7 +570,13 @@ export function WorkspaceSettingsPage({
                 onFailed={onFailed}
               />
               {settingUpAssistant && (
-                <AssistantSetup assistant={settings.assistant} onSaved={showAssistant} onClose={() => setSettingUpAssistant(false)} onFailed={onFailed} />
+                <AssistantSetup
+                  assistant={settings.assistant}
+                  deployedAccountId={settings.cloudflareAccountId}
+                  onSaved={showAssistant}
+                  onClose={() => setSettingUpAssistant(false)}
+                  onFailed={onFailed}
+                />
               )}
             </>
           ) : (

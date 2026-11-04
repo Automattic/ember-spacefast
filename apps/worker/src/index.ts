@@ -1,4 +1,5 @@
 import {
+  ASSISTANT_ID,
   AVATAR_PATH,
   CloseCode,
   CURRENT_PASSWORD_NEEDED,
@@ -88,7 +89,16 @@ import {
   tokenDigest,
 } from "./auth";
 import { directoryOf } from "./avatar-tokens";
-import { changeAnswerLevels, changeAssistantMost, forgetAssistant, saveAssistant } from "./assistant/settings";
+import {
+  addAssistantModel,
+  changeAssistantSettings,
+  changeYourAssistant,
+  deployedAccountIdOf,
+  forgetAssistant,
+  listAssistantModels,
+  removeAssistantModel,
+  saveAssistant,
+} from "./assistant/settings";
 import { avatarTokenOf, showAvatar, storeAvatar } from "./avatars";
 import type { BanProblem } from "./bans";
 import { BodyTooLarge, jsonBodyOf } from "./bodies";
@@ -257,16 +267,21 @@ async function me(request: Request, env: Env): Promise<Response> {
 /**
  * Workspace settings, which anyone signed in may see, read-only unless they're an administrator, with
  * the Memberful site whose members can sign in, once the deployment has its keys, whether it hears the
- * site's webhooks, and where Turnstile's keys come from, the deployment's taking the place of any an
- * administrator gave. They hold the join code, which no cache should keep, as the sidebar's invitation
- * does.
+ * site's webhooks, where Turnstile's keys come from, the deployment's taking the place of any an
+ * administrator gave, and, for administrators, the Cloudflare account Ember is deployed to. They hold
+ * the join code, which no cache should keep, as the sidebar's invitation does.
  */
 async function workspaceSettings(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
   const settings = credentials && (await workspace(env).workspaceSettings(credentials));
   if (!settings) return problem(401, "Not signed in");
   if (settings === "not set up") return problem(404, "Ember isn't set up yet");
-  const deployment = { memberfulSite: memberfulKeysOf(env)?.site ?? null, memberfulWebhooks: memberfulWebhooksOf(env) !== null, turnstile: turnstileOf(env, settings.turnstile) };
+  const deployment = {
+    memberfulSite: memberfulKeysOf(env)?.site ?? null,
+    memberfulWebhooks: memberfulWebhooksOf(env) !== null,
+    turnstile: turnstileOf(env, settings.turnstile),
+    cloudflareAccountId: settings.canAdminister ? deployedAccountIdOf(env) : null,
+  };
   return json({ ...settings, ...deployment } satisfies WorkspaceSettings, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -756,8 +771,8 @@ async function personPage(request: Request, env: Env, pathname: string, userId: 
 
 /**
  * Whom the mentions prompt offers: the first 20 by name of the active people in `room_id`, or anywhere
- * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s. A room someone
- * isn't in is 404.
+ * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s, with @ember's
+ * badged as an agent's. A room someone isn't in is 404.
  */
 async function mentionable(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
@@ -769,7 +784,7 @@ async function mentionable(request: Request, env: Env): Promise<Response> {
   const people = await workspace(env).mentionable(credentials, roomId ?? null, query);
   if (!people) return problem(401, "Not signed in");
   if (people === "not found") return problem(404, ROOM_NOT_FOUND);
-  const items = (await directoryOf(people, env.SESSION_SECRET)).map(mentionPromptItem);
+  const items = (await directoryOf(people, env.SESSION_SECRET)).map((person) => mentionPromptItem({ ...person, agent: person.id === ASSISTANT_ID }));
   return new Response(items.join(""), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -981,7 +996,10 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/turnstile_keys" && request.method === "DELETE") return () => forgetTurnstileKeys(request, env);
   if (pathname === "/api/account/assistant" && request.method === "PUT") return () => saveAssistant(request, env);
   if (pathname === "/api/account/assistant" && request.method === "DELETE") return () => forgetAssistant(request, env);
-  if (pathname === "/api/account/assistant" && request.method === "PATCH") return () => changeAssistantMost(request, env);
+  if (pathname === "/api/account/assistant" && request.method === "PATCH") return () => changeAssistantSettings(request, env);
+  if (pathname === "/api/account/assistant/catalog" && request.method === "POST") return () => listAssistantModels(request, env);
+  if (pathname === "/api/account/assistant/models" && request.method === "POST") return () => addAssistantModel(request, env);
+  if (pathname === "/api/account/assistant/models" && request.method === "DELETE") return () => removeAssistantModel(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);
   if (pathname === "/api/account/custom_domain_lookups" && request.method === "POST") return () => lookUpCustomDomain(request, env);
   if (pathname === LOGO_PATH && request.method === "PUT") return () => changeLogo(request, env);
@@ -1010,7 +1028,7 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/sidebar/order" && request.method === "PUT") return () => setFavoriteOrder(request, env);
   if (pathname === "/api/users/me/profile" && request.method === "GET") return () => profile(request, env);
   if (pathname === "/api/users/me/profile" && request.method === "PATCH") return () => changeProfile(request, env);
-  if (pathname === "/api/users/me/assistant" && request.method === "PATCH") return () => changeAnswerLevels(request, env);
+  if (pathname === "/api/users/me/assistant" && request.method === "PATCH") return () => changeYourAssistant(request, env);
   if (pathname === MEMBERFUL_CONNECTIONS_PATH && request.method === "POST") return () => connectMemberful(request, env);
   if (pathname === AVATAR_PATH && request.method === "PUT") return () => changeAvatar(request, env);
   if (pathname === AVATAR_PATH && request.method === "DELETE") return () => removeAvatar(request, env);

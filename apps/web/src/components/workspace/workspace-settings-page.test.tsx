@@ -23,7 +23,7 @@ import {
   type SidebarRoom,
   type WorkspaceSettings,
 } from "@ember/protocol";
-import { TOP_LEVELS, type AnswerLevelChanges } from "@ember/protocol/assistant";
+import { ASSISTANT_MODELS, TOP_LEVELS, modelName, type AssistantChanges, type AssistantSettings, type NewAssistantModel } from "@ember/protocol/assistant";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
 import { AccountContext } from "@/hooks/use-account";
@@ -51,6 +51,7 @@ const asAdministrator: WorkspaceSettings = {
   memberfulWebhooks: false,
   turnstile: null,
   assistant: null,
+  cloudflareAccountId: null,
   email: { provider: "cloudflare", resendKey: null, cloudflare: true, from: null },
   invitations: [],
   emailDomains: [],
@@ -174,13 +175,27 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
         turnstile = null;
         return Response.json({ turnstile });
       case "PUT /api/account/assistant": {
-        const { accountId, model } = JSON.parse(String(init?.body)) as AssistantSetup;
-        assistant = { accountId, model, most: assistant?.most ?? TOP_LEVELS };
+        const { accountId, model, modelName: name } = JSON.parse(String(init?.body)) as AssistantSetup;
+        assistant = { accountId, model, models: [{ id: model, name: name ?? modelName(model), format: "chat" }], most: assistant?.most ?? TOP_LEVELS };
         return Response.json({ assistant, greeting: "Hello, team!" });
       }
-      case "PATCH /api/account/assistant":
-        assistant = assistant && { ...assistant, most: { ...assistant.most, ...(JSON.parse(String(init?.body)) as AnswerLevelChanges) } };
+      case "PATCH /api/account/assistant": {
+        const { model, ...levels } = JSON.parse(String(init?.body)) as AssistantChanges;
+        assistant = assistant && { ...assistant, model: model ?? assistant.model, most: { ...assistant.most, ...levels } };
         return Response.json({ assistant });
+      }
+      case "POST /api/account/assistant/catalog":
+        return Response.json({ models: ASSISTANT_MODELS, refusal: null });
+      case "POST /api/account/assistant/models": {
+        const { model, modelName: name } = JSON.parse(String(init?.body)) as NewAssistantModel;
+        assistant = assistant && { ...assistant, models: [...assistant.models, { id: model, name: name ?? modelName(model), format: "chat" }] };
+        return Response.json({ assistant, greeting: "Hi there!" });
+      }
+      case "DELETE /api/account/assistant/models": {
+        const { model } = JSON.parse(String(init?.body)) as { model: string };
+        assistant = assistant && { ...assistant, models: assistant.models.filter(({ id }) => id !== model) };
+        return Response.json({ assistant });
+      }
       case "DELETE /api/account/assistant":
         assistant = null;
         return Response.json({ assistant });
@@ -1649,6 +1664,13 @@ describe("Check that people are people with Cloudflare Turnstile", () => {
 
 describe("Ember AI", () => {
   showingSection("assistant-settings");
+  /** Ember AI on GLM-4.7 Flash, the only model people can pick. */
+  const ON: AssistantSettings = {
+    accountId: "0123456789abcdef0123456789abcdef",
+    model: "@cf/zai-org/glm-4.7-flash",
+    models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
+    most: TOP_LEVELS,
+  };
 
   it("gives administrators the Ember AI card, whose switch sets up Ember AI, naming the model it saved", async () => {
     const { user } = showPage();
@@ -1671,8 +1693,18 @@ describe("Ember AI", () => {
     expect(await screen.findByRole("textbox", { name: "Account ID" })).toHaveValue("0123456789abcdef0123456789abcdef");
   });
 
+  it("fills in the Cloudflare account Ember is deployed to when the switch sets up Ember AI", async () => {
+    serve({ ...asAdministrator, cloudflareAccountId: "0123456789abcdef0123456789abcdef" });
+    const { user } = showPage();
+    const card = await screen.findByRole("region", { name: "Ember AI" });
+    await user.click(within(card).getByRole("switch", { name: "Ember AI" }));
+    const accountId = await screen.findByRole("textbox", { name: "Account ID" });
+    expect(accountId).toHaveValue("0123456789abcdef0123456789abcdef");
+    expect(accountId).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
+  });
+
   it("turns Ember AI off once the administrator confirms", async () => {
-    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS } });
+    serve({ ...asAdministrator, assistant: ON });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
@@ -1684,7 +1716,7 @@ describe("Ember AI", () => {
   });
 
   it("changes the most @ember may think and write for anyone on the card, at once", async () => {
-    serve({ ...asAdministrator, assistant: { accountId: "0123456789abcdef0123456789abcdef", model: "@cf/zai-org/glm-4.7-flash", most: TOP_LEVELS } });
+    serve({ ...asAdministrator, assistant: ON });
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
     const thinking = within(card).getByRole("group", { name: "Thinking" });
@@ -1695,6 +1727,26 @@ describe("Ember AI", () => {
     expect(within(thinking).getByRole("radio", { name: "Low" })).toBeChecked();
     expect(thinking).toHaveTextContent("Thinks a little first, up to about 4,000 tokens.");
     expect(fetch).toHaveBeenCalledWith("/api/account/assistant", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ thinking: "low" }) }));
+  });
+
+  it("lets administrators add a model people can pick, choose it to answer everyone, and remove another", async () => {
+    serve({ ...asAdministrator, assistant: ON });
+    const { user } = showPage();
+    const card = await screen.findByRole("region", { name: "Ember AI" });
+    await user.click(within(card).getByRole("button", { name: "Add a model" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a model" });
+    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Model" }), "GPT-6.1 Sol");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    expect(await screen.findByText("Hi there!")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const models = within(card).getByRole("group", { name: "Models" });
+    await user.click(within(models).getByRole("radio", { name: "GPT-6.1 Sol" }));
+    await waitFor(() => expect(card).toHaveTextContent("@ember runs on GPT-6.1 Sol through Cloudflare AI Gateway, or on the model each person picks."));
+    await user.click(within(models).getByRole("button", { name: "Remove GLM-4.7 Flash" }));
+    await waitFor(() => expect(within(models).getAllByRole("radio").map((radio) => radio.closest("label")?.textContent)).toEqual(["GPT-6.1 Sol"]));
+    expect(card).toHaveTextContent("@ember runs on GPT-6.1 Sol through Cloudflare AI Gateway.");
   });
 
   it("tells members that administrators manage it, with no card", async () => {

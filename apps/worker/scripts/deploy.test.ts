@@ -20,8 +20,9 @@ type Listing = string[] | "no worker" | "error";
 
 /**
  * Stands in for `pnpm exec wrangler`, noting each command in $OUT/calls: `secret list` answers as $LISTING
- * says, and `deploy` keeps what it was given in $OUT (its options, its secrets file's path, mode and
- * contents, and the config it names), records the deploy's targets, $TARGETS, as wrangler does, in
+ * says, `whoami --json` answers $WHOAMI, the user and the accounts their credentials reach, or that nobody's
+ * signed in without it, and `deploy` keeps what it was given in $OUT (its options, its secrets file's path,
+ * mode and contents, and the config it names), records the deploy's targets, $TARGETS, as wrangler does, in
  * $WRANGLER_OUTPUT_FILE_PATH, unless $NO_URL says there's no record, and exits with $DEPLOY_STATUS. `d1`
  * commands, noted in $OUT/d1-calls too, find the account's databases in $D1_DATABASES, and the one bound
  * as DB as $D1_STATE says, "fresh", "migrated" or "set up", and apply migrations with $MIGRATIONS_STATUS.
@@ -50,6 +51,10 @@ elif [ "$1 $2" = "deployments status" ]; then
   echo '{"versions":[{"version_id":"0a1b2c3d","percentage":100}]}'
 elif [ "$1 $2" = "versions view" ]; then
   if [ -n "$BOUND_D1" ]; then echo '{"resources":{"bindings":[{"type":"d1","name":"DB","id":"'"$BOUND_D1"'"}]}}'; else echo '{"resources":{"bindings":[]}}'; fi
+elif [ "$1 $2" = "whoami --json" ]; then
+  echo "$*" > "$OUT/whoami-args"
+  if [ -z "$WHOAMI" ]; then echo; echo '{"loggedIn":false}'; exit 1; fi
+  echo; echo "$WHOAMI"
 elif [ "$1 $2" = "secret list" ]; then
   echo "$*" > "$OUT/list-args"
   case "$LISTING" in
@@ -116,6 +121,7 @@ function deploy(
     TURNSTILE_SITE_KEY: _siteKey,
     TURNSTILE_SECRET_KEY: _turnstileSecret,
     RESEND_API_KEY: _resendKey,
+    CLOUDFLARE_ACCOUNT_ID: _accountId,
     EMBER_ADOPT_D1_DATABASE: _adopted,
     ...shell
   } = process.env;
@@ -416,8 +422,12 @@ describe("Where messages live", () => {
   /** The configs the deploy wrote for wrangler and left beside Ember's own. */
   const leftConfigs = () => readdirSync(ROOT).filter((name) => name.endsWith(".deploy.json"));
 
-  /** The commands the deploy gave wrangler, in order, each by its first two words. */
-  const commands = () => (output("calls") ?? "").split("\n").map((line) => line.split(" ").slice(0, 2).join(" "));
+  /** The commands the deploy gave wrangler, in order, each by its first two words, but for `whoami`, which only finds the account's ID. */
+  const commands = () =>
+    (output("calls") ?? "")
+      .split("\n")
+      .map((line) => line.split(" ").slice(0, 2).join(" "))
+      .filter((command) => command !== "whoami --json");
 
   it("deploys a Worker on DO SQLite without the D1 database the form made, which only d1 uses, and leaves no config behind", () => {
     const { status } = deploy(EVERY_SECRET);
@@ -704,6 +714,45 @@ describe("Sending email", () => {
     expect(secrets).toEqual({ RESEND_API_KEY: "re_e2e-only-not-a-key" });
     expect(logs).toContain("Deploying with RESEND_API_KEY from the environment");
     expect(logs).not.toContain("re_e2e");
+  });
+});
+
+describe("Set up Ember AI's account", () => {
+  const ACCOUNT = "0123456789abcdef0123456789abcdef";
+  const OTHER_ACCOUNT = "fedcba9876543210fedcba9876543210";
+  /** What `wrangler whoami --json` says of credentials that reach `accounts`. */
+  const whoami = (...accounts: string[]) =>
+    JSON.stringify({ loggedIn: true, authType: "User API Token", email: "someone@example.com", accounts: accounts.map((id, at) => ({ id, name: `Account ${at + 1}` })), tokenPermissions: [] });
+
+  it("gives the Worker the account its environment names, as wrangler deploys there, and never prints it", () => {
+    const { status, secrets, logs } = deploy(EVERY_SECRET, [], { env: { CLOUDFLARE_ACCOUNT_ID: ` ${ACCOUNT.toUpperCase()} `, CI: "true", GITHUB_ACTIONS: "true" } });
+    expect(status).toBe(0);
+    expect(secrets).toEqual({ CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(logs).toContain("Deploying with CLOUDFLARE_ACCOUNT_ID, the account's ID, for Set up Ember AI");
+    expect(logs).not.toContain(ACCOUNT);
+    // wrangler isn't asked about an account the environment names.
+    expect(output("whoami-args")).toBeNull();
+  });
+
+  it("gives it the only account the deploy's credentials reach, as Workers Builds' token does, with every deploy", () => {
+    const { secrets, logs } = deploy(["SESSION_SECRET", "EMBER_SETUP_TOKEN"], [], { env: { WHOAMI: whoami(ACCOUNT), WORKERS_CI: "1", CI: "true" } });
+    expect(output("whoami-args")).toBe("whoami --json");
+    expect(secrets).toEqual({ VAPID_PUBLIC_KEY: expect.any(String), VAPID_PRIVATE_KEY: expect.any(String), CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+    expect(logs).toContain("Deploying with new VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and CLOUDFLARE_ACCOUNT_ID, the account's ID, for Set up Ember AI");
+    expect(logs).not.toContain(ACCOUNT);
+  });
+
+  it.each([
+    ["the credentials reach several accounts, of which wrangler picks one without saying which", { WHOAMI: whoami(ACCOUNT, OTHER_ACCOUNT) }],
+    ["nobody's signed in, as wrangler says", {}],
+    ["wrangler names no account", { WHOAMI: whoami() }],
+    ["wrangler's answer isn't what it should be", { WHOAMI: '{"loggedIn":true,"accounts":[{"id":"not-an-account"}]}' }],
+    ["the environment's can't be an account's ID", { CLOUDFLARE_ACCOUNT_ID: "my-account", WHOAMI: whoami(ACCOUNT) }],
+  ])("leaves it as the Worker has it when %s", (_, env) => {
+    const { status, secrets, logs } = deploy(EVERY_SECRET, [], { env });
+    expect(status).toBe(0);
+    expect(secrets).toEqual({});
+    expect(logs).toContain("Deploying with the Worker's secrets as they are");
   });
 });
 

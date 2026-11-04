@@ -98,6 +98,11 @@ export interface Env {
   /** Where Resend's API is, for the browser tests' stand-in, which only a loopback address can be. */
   RESEND_API_URL?: string;
   /**
+   * The ID of the Cloudflare account the Worker is deployed to, which a Worker can't learn by itself:
+   * `pnpm run deploy` gives it, and Set up Ember AI fills it in for administrators.
+   */
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  /**
    * Where Cloudflare's API is, which Ember AI asks AI Gateway through, for the browser tests' stand-in,
    * which only a loopback address can be: `http://127.0.0.1:8793` has Ember ask
    * `http://127.0.0.1:8793/accounts/<id>/ai/v1/...` (assistant/gateway.ts).

@@ -22,7 +22,7 @@ import {
   type UserId,
 } from "@ember/protocol";
 import { prepareBody, userIdFromSgid, userIdsIn, type PreparedBody } from "@ember/richtext";
-import { AnswerError, answerOf, NOTES, previewAttachment, questionFor, ROOM_MESSAGES_READ, THREAD_REPLIES_READ, waitFor, type Answer } from "./assistant/answers";
+import { AnswerError, answerOf, NOTES, PICKED_MODEL_NOTES, previewAttachment, questionFor, ROOM_MESSAGES_READ, THREAD_REPLIES_READ, waitFor, type Answer } from "./assistant/answers";
 import { ask } from "./assistant/gateway";
 import { JobQueue } from "./at-once";
 import { postWebhook, WebhookError, webhookPayload, type Reply } from "./bots/webhooks";
@@ -1167,18 +1167,19 @@ export class ChatRoom extends DurableObject<Env> {
 
   /**
    * What @ember answers `message`, `question`'s message, with what it reads of the conversation, in
-   * Markdown, at the asker's levels, ending with an ellipsis when the model was cut short, or the note it
-   * posts when its model doesn't answer, saying why, which the room logs.
+   * Markdown, at the asker's levels, with the model they picked, if they did, ending with an ellipsis when
+   * the model was cut short, or the note it posts when its model doesn't answer, saying why, which the
+   * room logs.
    */
-  private async answerTo(roomId: RoomId, { gateway, community, levels }: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<string> {
+  private async answerTo(roomId: RoomId, { gateway, picked, community, levels }: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<string> {
     if (!gateway) return NOTES["unopened token"];
     const conversation = await this.conversationOf(this.storeFor(roomId), message);
     const where = { community, roomName, inThread: message.parentId !== undefined };
     const asked = questionFor(conversation, author, where, levels, new Date());
     const answered = await ask(this.env, gateway, asked, waitFor(asked));
     if (!("refusal" in answered)) return answered.cut ? `${answered.text}\n\n…` : answered.text;
-    console.error(`Ember AI's model didn't answer message ${message.id}: ${answered.refusal}`);
-    return NOTES[answered.reason];
+    console.error(`Ember AI's model ${gateway.model} didn't answer message ${message.id}: ${answered.refusal}`);
+    return (picked && PICKED_MODEL_NOTES[answered.reason]) || NOTES[answered.reason];
   }
 
   /**

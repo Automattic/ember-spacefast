@@ -68,7 +68,17 @@ import {
   type WorkspaceServerFrame,
   type WorkspaceSettings,
 } from "@ember/protocol";
-import { DEFAULT_LEVELS, TOP_LEVELS, withinMost, type AnswerLevelChanges, type AnswerLevels, type YourAnswerLevels } from "@ember/protocol/assistant";
+import {
+  DEFAULT_LEVELS,
+  MAX_ASSISTANT_MODELS,
+  modelName,
+  TOP_LEVELS,
+  withinMost,
+  type AnswerLevels,
+  type AssistantChanges,
+  type YourAssistant,
+  type YourAssistantChanges,
+} from "@ember/protocol/assistant";
 import type { Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, versionOf } from "./avatar-tokens";
@@ -99,16 +109,18 @@ import {
   type BotWebhook,
   type Client,
   type Connecting,
+  type AssistantPicks,
   type DirectoryEntry,
   type JoinableAccount,
   type LinkedPerson,
   type NewPerson,
   type OwnProfileEntry,
   type PendingRevocation,
-  type PickedLevels,
   type ProfileEntry,
   type PushDelivery,
   type RoomEventDeliveries,
+  type SavedAssistant,
+  type SavedModel,
   type SavedRoomChange,
   type StoredBot,
   type StoredBotSettings,
@@ -260,15 +272,42 @@ const accountOf = ({
 
 /** Ember AI as the AI assistant tab shows `account`'s to administrators, or null while it's off. */
 const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount, "assistant" | "assistantMost">): AssistantSettings | null =>
-  assistant && { accountId: assistant.accountId, model: assistant.model, most: assistantMost };
+  assistant && { accountId: assistant.accountId, model: assistant.model, models: assistant.models, most: assistantMost };
 
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
-const levelsOf = (picked: PickedLevels | null, most: AnswerLevels): AnswerLevels =>
+const levelsOf = (picked: AssistantPicks | null, most: AnswerLevels): AnswerLevels =>
   withinMost({ thinking: picked?.thinking ?? DEFAULT_LEVELS.thinking, length: picked?.length ?? DEFAULT_LEVELS.length }, most);
 
-/** The levels of @ember's answers to someone who `picked` them, as their profile shows them with `account`'s most, or null while Ember AI is off. */
-const yourLevelsOf = (account: Pick<JoinableAccount, "assistant" | "assistantMost"> | null, picked: PickedLevels | null): YourAnswerLevels | null =>
-  account?.assistant ? { levels: levelsOf(picked, account.assistantMost), most: account.assistantMost } : null;
+/**
+ * The model someone who `picked` one has @ember answer them with instead of the one `assistant` answers
+ * everyone with: theirs while it's one of the models people can pick, or else null.
+ */
+const pickedModelOf = (assistant: SavedAssistant, picked: AssistantPicks | null): SavedModel | null =>
+  (picked?.model !== assistant.model && assistant.models.find(({ id }) => id === picked?.model)) || null;
+
+/**
+ * @ember's answers to someone who `picked` their levels and model, as their profile shows them with
+ * `account`'s most and models, or null while Ember AI is off.
+ */
+function yourAssistantOf(account: Pick<JoinableAccount, "assistant" | "assistantMost"> | null, picked: AssistantPicks | null): YourAssistant | null {
+  if (!account?.assistant) return null;
+  const { assistant, assistantMost: most } = account;
+  return { levels: levelsOf(picked, most), most, model: pickedModelOf(assistant, picked)?.id ?? assistant.model, defaultModel: assistant.model, models: assistant.models };
+}
+
+/**
+ * The models people can pick once Set up Ember AI has chosen `chosen` to answer everyone with: those of
+ * `previous`, Ember AI as it was, with `chosen` in place of the one that answered everyone, without it
+ * twice, or `chosen` alone, as when Ember AI was off, so that the models stay as many as administrators
+ * added. `chosen` is called by the name it's given, or else as it was listed, or as Ember knows it.
+ */
+function modelsAfterSetup(previous: SavedAssistant | null, { model, format, name }: AssistantChoice): SavedModel[] {
+  const models = previous?.models ?? [];
+  const chosen = { id: model, name: name ?? models.find(({ id }) => id === model)?.name ?? modelName(model), format };
+  const others = models.filter(({ id }) => id !== previous?.model);
+  if (others.some(({ id }) => id === model)) return others.map((kept) => (kept.id === model ? chosen : kept));
+  return others.toSpliced(Math.max(0, models.findIndex(({ id }) => id === previous?.model)), 0, chosen);
+}
 
 /** The header in which the Worker passes a workspace socket's credentials on to the Workspace. */
 export const CREDENTIALS_HEADER = "X-Ember-Credentials";
@@ -346,8 +385,15 @@ export interface BotAccess {
  */
 export interface AssistantAccess extends BotAccess {
   gateway: Gateway | null;
+  /** Whether the gateway's model is one whoever asked picked, rather than the one @ember answers everyone else with. */
+  picked: boolean;
   community: string;
   levels: AnswerLevels;
+}
+
+/** How Set up Ember AI has Ember AI ask AI Gateway (`Gateway`), with the name of its model, if it was given one. */
+export interface AssistantChoice extends Gateway {
+  name?: string;
 }
 
 /** The same, as the bot API has it, with Ember's custom domain, which the API's links name, or null while it has none. */
@@ -736,11 +782,11 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Workspace settings as the person `credentials` signs in sees them: "not set up" before first run, or
-   * null without a valid session. The Worker adds what it knows of the Memberful site from its keys, and
-   * has the deployment's Turnstile keys take the place of any an administrator gave, and the Workspace
-   * says how it sends email, since it's what sends it.
+   * null without a valid session. The Worker adds what it knows of the Memberful site from its keys and
+   * the Cloudflare account it's deployed to, and has the deployment's Turnstile keys take the place of
+   * any an administrator gave, and the Workspace says how it sends email, since it's what sends it.
    */
-  async workspaceSettings(credentials: Credentials): Promise<Omit<WorkspaceSettings, "memberfulSite" | "memberfulWebhooks"> | "not set up" | null> {
+  async workspaceSettings(credentials: Credentials): Promise<Omit<WorkspaceSettings, "memberfulSite" | "memberfulWebhooks" | "cloudflareAccountId"> | "not set up" | null> {
     const user = await this.authenticate(credentials);
     if (!user) return null;
     const [account, canAdminister] = await Promise.all([this.joinableAccount(), this.store.isAdministrator(user.id)]);
@@ -935,25 +981,26 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * Turns Ember AI on as the person `credentials` signs in, asking AI Gateway as `gateway` says, which the
+   * Turns Ember AI on as the person `credentials` signs in, asking AI Gateway as `chosen` says, which the
    * Worker has had the model answer a test question with, its API token sealed under SESSION_SECRET
    * (`seal`), or changes it while it's on, or turns it off with null, answering Ember AI as the AI
    * assistant tab then shows it: "forbidden" unless they're an administrator, or null without a valid
    * session. Turning it on adds @ember, or lets it back as it was, in every open room, and turning it
-   * off deactivates @ember, as deleting a bot does. Everyone's workspace sockets hear of @ember either way.
-   * A change that kept the API token Ember had, as `keptToken` says, changes nothing ("changed") once
-   * that's no longer Ember's token: Ember AI was turned off while the model answered, which forgot it, or
-   * set up again with another.
+   * off deactivates @ember, as deleting a bot does, and forgets the models people could pick. Everyone's
+   * workspace sockets hear of @ember either way. A change that kept the API token Ember had, as
+   * `keptToken` says, changes nothing ("changed") once that's no longer Ember's token: Ember AI was turned
+   * off while the model answered, which forgot it, or set up again with another.
    */
-  async changeAssistant(credentials: Credentials, gateway: Gateway | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
+  async changeAssistant(credentials: Credentials, chosen: AssistantChoice | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
     return this.administerAccount(credentials, async (account) => {
-      if (gateway === null && account.assistant === null) return { assistant: null };
-      if (gateway && keptToken && (await this.openedAssistant(account))?.apiToken !== gateway.apiToken) return "changed";
-      const assistant = gateway && {
-        accountId: gateway.accountId,
-        sealedApiToken: await seal(this.env.SESSION_SECRET, "ai-gateway-token", gateway.apiToken),
-        model: gateway.model,
-        format: gateway.format,
+      if (chosen === null && account.assistant === null) return { assistant: null };
+      if (chosen && keptToken && (await this.openedAssistant(account))?.apiToken !== chosen.apiToken) return "changed";
+      const assistant = chosen && {
+        accountId: chosen.accountId,
+        sealedApiToken: await seal(this.env.SESSION_SECRET, "ai-gateway-token", chosen.apiToken),
+        model: chosen.model,
+        format: chosen.format,
+        models: modelsAfterSetup(account.assistant, chosen),
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
@@ -962,29 +1009,90 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * Changes the most each of @ember's dials goes to for anyone's questions by `changes`, as the
-   * administrator `credentials` signs in, answering Ember AI as the AI assistant tab then shows it:
-   * "off" while it's off, "forbidden" for anyone else, and null without a valid session.
+   * Changes the most each of @ember's dials goes to for anyone's questions, and which of the models
+   * people can pick it answers everyone else with, by `changes`, as the administrator `credentials` signs
+   * in, answering Ember AI as the AI assistant tab then shows it: "off" while it's off, "not listed" for a
+   * model people can't pick, "forbidden" for anyone else, and null without a valid session.
    */
-  async changeAssistantMost(credentials: Credentials, changes: AnswerLevelChanges): Promise<{ assistant: AssistantSettings } | "off" | "forbidden" | null> {
+  async changeAssistantSettings(
+    credentials: Credentials,
+    { model, ...levels }: AssistantChanges,
+  ): Promise<{ assistant: AssistantSettings } | "off" | "not listed" | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       if (!account.assistant) return "off";
-      const assistantMost = { ...account.assistantMost, ...changes };
-      const changed = await this.storeAccount({ ...account, assistantMost }, () => this.store.changeAssistantMost(assistantMost));
-      return { assistant: assistantSettingsOf(changed)! };
+      const chosen = model === undefined ? null : account.assistant.models.find(({ id }) => id === model);
+      if (chosen === undefined) return "not listed";
+      const assistant = chosen ? { ...account.assistant, model: chosen.id, format: chosen.format } : account.assistant;
+      return this.storeAssistant(account, assistant, { ...account.assistantMost, ...levels });
     });
   }
 
   /**
-   * Changes how much @ember thinks and how long it answers the person `credentials` signs in by
-   * `changes`, answering their levels as their profile then shows them, or null without a valid session.
+   * Adds `model`, which the Worker has had answer a test question through Ember AI as `tested` asks AI
+   * Gateway, to the models people can pick, or changes it there, as the administrator `credentials` signs
+   * in, answering Ember AI as the AI assistant tab then shows it: "off" while it's off, "changed" once it
+   * asks with another account or API token than `tested`'s, as after it was turned off and set up again
+   * while the model answered, "full" when people can pick as many as they can already, "forbidden" for
+   * anyone else, and null without a valid session.
    */
-  async changeAnswerLevels(credentials: Credentials, changes: AnswerLevelChanges): Promise<{ assistant: YourAnswerLevels | null } | null> {
+  async addAssistantModel(
+    credentials: Credentials,
+    model: SavedModel,
+    tested: Pick<Gateway, "accountId" | "apiToken">,
+  ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "full" | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      const { assistant } = account;
+      if (!assistant) return "off";
+      const opened = await this.openedAssistant(account);
+      if (!opened || opened.accountId !== tested.accountId || opened.apiToken !== tested.apiToken) return "changed";
+      const listed = assistant.models.some(({ id }) => id === model.id);
+      if (!listed && assistant.models.length >= MAX_ASSISTANT_MODELS) return "full";
+      const models = listed ? assistant.models.map((kept) => (kept.id === model.id ? model : kept)) : [...assistant.models, model];
+      // The one that answers everyone took its test question in this format now.
+      return this.storeAssistant(account, { ...assistant, models, ...(model.id === assistant.model && { format: model.format }) });
+    });
+  }
+
+  /**
+   * Takes model `modelId` out of the models people can pick, as the administrator `credentials` signs in,
+   * answering Ember AI as the AI assistant tab then shows it: "off" while it's off, "everyone's" for the
+   * one @ember answers everyone else with, which stays, "forbidden" for anyone else, and null without a
+   * valid session. Whoever picked it has @ember answer them with that one then.
+   */
+  async removeAssistantModel(credentials: Credentials, modelId: string): Promise<{ assistant: AssistantSettings } | "off" | "everyone's" | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      const { assistant } = account;
+      if (!assistant) return "off";
+      if (modelId === assistant.model) return "everyone's";
+      const models = assistant.models.filter(({ id }) => id !== modelId);
+      if (models.length === assistant.models.length) return { assistant: assistantSettingsOf(account)! };
+      return this.storeAssistant(account, { ...assistant, models });
+    });
+  }
+
+  /** Stores Ember AI as `assistant` has it, while it's on, and the most of each dial as `most`, answering Ember AI as the AI assistant tab then shows it. */
+  private async storeAssistant(account: JoinableAccount, assistant: SavedAssistant, most = account.assistantMost): Promise<{ assistant: AssistantSettings }> {
+    const changed = await this.storeAccount({ ...account, assistant, assistantMost: most }, () => this.store.changeAssistant(assistant, most));
+    return { assistant: assistantSettingsOf(changed)! };
+  }
+
+  /**
+   * Changes how much @ember thinks and how long it answers the person `credentials` signs in, and the
+   * model it answers them with, by `changes`, answering @ember's answers to them as their profile then
+   * shows them: "not listed" for a model people can't pick, which changes nothing, or null without a
+   * valid session. Picking the model @ember answers everyone with leaves theirs to administrators, and a
+   * model is kept only while Ember AI is on, when there are models to pick.
+   */
+  async changeYourAssistant(credentials: Credentials, changes: YourAssistantChanges): Promise<{ assistant: YourAssistant | null } | "not listed" | null> {
     const session = await this.session(credentials);
     if (!session) return null;
-    await this.store.changePickedLevels(session.user.id, changes);
-    const [account, picked] = await Promise.all([this.joinableAccount(), this.store.pickedLevels(session.user.id)]);
-    return { assistant: yourLevelsOf(account, picked) };
+    const { model, ...levels } = changes;
+    const assistant = (await this.joinableAccount())?.assistant;
+    if (typeof model === "string" && assistant && !assistant.models.some(({ id }) => id === model)) return "not listed";
+    const picked = model === undefined || !assistant ? levels : { ...levels, model: model === assistant.model ? null : model };
+    await this.store.changeAssistantPicks(session.user.id, picked);
+    const [account, picks] = await Promise.all([this.joinableAccount(), this.store.assistantPicks(session.user.id)]);
+    return { assistant: yourAssistantOf(account, picks) };
   }
 
   /**
@@ -2417,7 +2525,7 @@ export class Workspace extends DurableObject<Env> {
     const connected = account?.memberfulSignIn && !session.guest ? person.issuers : null;
     return {
       transfer: { userId: person.id, sessionId: session.id },
-      profile: { name, emailAddress, bio, avatarUrl, avatar: avatar !== null, password, membershipNeeded, assistant: yourLevelsOf(account, person.levels) },
+      profile: { name, emailAddress, bio, avatarUrl, avatar: avatar !== null, password, membershipNeeded, assistant: yourAssistantOf(account, person.picks) },
       connected,
     };
   }
@@ -2771,16 +2879,20 @@ export class Workspace extends DurableObject<Env> {
   /**
    * @ember in room `roomId`, as a question for it finds it when its turn comes and again before its answer
    * is posted, with when this checked, how it asks AI Gateway, or null while its API token doesn't open
-   * (`assistantGateway`), and the community's name: null once Ember AI is off or @ember isn't in the room,
-   * so that turning Ember AI off, or taking @ember out of a room, stops what's on its way there.
+   * (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can pick it, and
+   * the community's name: null once Ember AI is off or @ember isn't in the room, so that turning Ember AI
+   * off, or taking @ember out of a room, stops what's on its way there.
    */
   async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
     // Before anything is read, as `roomAccess` takes it.
     const authorizedAt = Date.now();
-    const [account, member, picked] = await Promise.all([this.joinableAccount(), this.store.isMember(roomId, ASSISTANT_ID), this.store.pickedLevels(askerId)]);
+    const [account, member, picks] = await Promise.all([this.joinableAccount(), this.store.isMember(roomId, ASSISTANT_ID), this.store.assistantPicks(askerId)]);
     if (!account?.assistant || !member) return null;
-    const levels = levelsOf(picked, account.assistantMost);
-    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway: await this.openedAssistant(account), community: account.name, levels };
+    const opened = await this.openedAssistant(account);
+    const picked = pickedModelOf(account.assistant, picks);
+    const gateway = opened && picked ? { ...opened, model: picked.id, format: picked.format } : opened;
+    const levels = levelsOf(picks, account.assistantMost);
+    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels };
   }
 
   /**

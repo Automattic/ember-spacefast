@@ -4,19 +4,21 @@ import { administratorSession, cookieHeader, editorField, expect, SAME_ORIGIN, s
 import { AI_GATEWAY_ACCOUNT } from "../../projects/workspace-settings";
 import { HELLO, startFakeGateway, type FakeGateway } from "./fake-gateway";
 
-// The AI assistant tab's Ember AI card and Set up Ember AI, and @ember answering, on the second test
-// server, which asks models through the AI Gateway this spec fakes. Each test leaves the workspace as a
-// new one is: Ember AI off, and its dials where they start.
+// The AI assistant tab's Ember AI card, Set up Ember AI and Add a model, and @ember answering, on the
+// second test server, which lists Cloudflare's model catalog and asks models through the AI Gateway this
+// spec fakes. Each test leaves the workspace as a new one is: Ember AI off, and its dials where they
+// start, with no model picked.
 
 let gateway: FakeGateway;
 test.beforeAll(async () => void (gateway = await startFakeGateway()));
 test.afterAll(() => gateway.close());
 test.afterEach(async ({ request }) => {
   const headers = await asAdministrator(request);
-  // Ember keeps the dials while Ember AI is off, so they go back first, the most only while it's on.
+  // Ember keeps the dials and the model someone picked while Ember AI is off, so they go back first, the
+  // most and the model only while it's on.
   const unlimited = await request.patch("/api/account/assistant", { data: TOP_LEVELS, headers });
   expect([200, 409], await unlimited.text()).toContain(unlimited.status());
-  const unpicked = await request.patch("/api/users/me/assistant", { data: DEFAULT_LEVELS, headers });
+  const unpicked = await request.patch("/api/users/me/assistant", { data: { ...DEFAULT_LEVELS, model: null }, headers });
   expect(unpicked.status(), await unpicked.text()).toBe(200);
   const forgotten = await request.delete("/api/account/assistant", { headers });
   expect(forgotten.status(), await forgotten.text()).toBe(200);
@@ -33,6 +35,22 @@ async function openAssistant(page: Page) {
   return page.getByRole("region", { name: "Ember AI", exact: true });
 }
 
+/** Mentions @ember in general, as the administrator, and waits for its answer, which `gateway` then holds what it asked for. */
+async function askEmber(page: Page, question: string) {
+  await page.goto("/");
+  await page.getByRole("complementary", { name: "Conversations" }).getByRole("link", { name: "general" }).click();
+  const composer = editorField(page, "Write a message");
+  await composer.pressSequentially("@Embe");
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember Agent"]);
+  await composer.press("Tab");
+  await composer.pressSequentially(`${question} ${crypto.randomUUID().slice(0, 8)}`);
+  const answering = gateway.hold();
+  await composer.press("Enter");
+  await expect(page.locator(".spinner")).toHaveText("Ember");
+  answering();
+  await expect(page.locator(".spinner")).toHaveText("");
+}
+
 /** Chooses `level` on `dial`, a group of radio buttons, by its name, as someone clicks it. */
 async function choose(dial: Locator, level: string) {
   await dial.getByText(level, { exact: true }).click();
@@ -47,11 +65,19 @@ test.describe("Ember AI", () => {
 
     const setup = page.getByRole("dialog");
     await expect(setup).toHaveAccessibleName("Set up Ember AI");
-    await expect(setup.getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" })).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/ai/workers-ai");
-    await setup.getByRole("textbox", { name: "Account ID" }).fill(AI_GATEWAY_ACCOUNT.accountId);
+    // It fills in the account the server was deployed to, as the deploy said, opening its pages in the dashboard.
+    const accountId = setup.getByRole("textbox", { name: "Account ID" });
+    await expect(accountId).toHaveValue(AI_GATEWAY_ACCOUNT.accountId);
+    await expect(accountId).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
+    await expect(setup.getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" })).toHaveAttribute(
+      "href",
+      `https://dash.cloudflare.com/${AI_GATEWAY_ACCOUNT.accountId}/ai/workers-ai`,
+    );
     await setup.getByRole("textbox", { name: "API token" }).fill("e2e-only-not-the-accounts-token");
     await setup.getByRole("button", { name: "Continue" }).click();
     await expect(setup).toHaveAccessibleName("Choose a model");
+    // Cloudflare's catalog doesn't take the token either, so the menu has the models Ember knows.
+    await expect(setup).toContainText("Ember couldn't read Cloudflare's model catalog, so these are the models it knows. Cloudflare didn't take that API token");
     await expect(setup.getByRole("combobox", { name: "Model" })).toHaveValue("@cf/zai-org/glm-4.7-flash");
     await setup.getByRole("button", { name: "Save" }).click();
 
@@ -60,6 +86,14 @@ test.describe("Ember AI", () => {
     await expect(setup.getByRole("alert")).toContainText("Cloudflare didn't take that API token for this account.");
     await setup.getByRole("textbox", { name: "API token" }).fill(AI_GATEWAY_ACCOUNT.apiToken);
     await setup.getByRole("button", { name: "Continue" }).click();
+    // With the account's token, the menu has the catalog's text models by name, Workers AI's first, with what other companies' cost.
+    const menu = setup.getByRole("combobox", { name: "Model" });
+    await expect(menu.getByRole("option")).toHaveText(["Gemma 4 26B", "GLM-4.7 Flash", "Claude Sonnet 5.5 · $3 / $15", "GPT-6.1 Sol · $2 / $10", "Another model…"]);
+    await expect(menu).toHaveValue("@cf/zai-org/glm-4.7-flash");
+    expect(gateway.asked.findLast(({ path }) => path.includes("/ai/catalog/"))).toMatchObject({
+      path: `/accounts/${AI_GATEWAY_ACCOUNT.accountId}/ai/catalog/models?page=1&per_page=100`,
+      authorization: `Bearer ${AI_GATEWAY_ACCOUNT.apiToken}`,
+    });
     await setup.getByRole("button", { name: "Save" }).click();
     await expect(setup).toHaveAccessibleName("Ember AI is set up");
     await expect(setup).toContainText(HELLO);
@@ -90,7 +124,7 @@ test.describe("Ember AI", () => {
     await expect(setup.getByRole("textbox", { name: "Account ID" })).toHaveValue(AI_GATEWAY_ACCOUNT.accountId);
     await expect(setup.getByRole("textbox", { name: "API token" })).toHaveValue("");
     await setup.getByRole("button", { name: "Continue" }).click();
-    await setup.getByRole("combobox", { name: "Model" }).selectOption({ label: "Claude Sonnet 5.5" });
+    await setup.getByRole("combobox", { name: "Model" }).selectOption("anthropic/claude-sonnet-5.5");
     await setup.getByRole("button", { name: "Save" }).click();
     await expect(setup).toHaveAccessibleName("Ember AI is set up");
     expect(gateway.asked.at(-1)).toMatchObject({
@@ -100,6 +134,44 @@ test.describe("Ember AI", () => {
     });
     await setup.getByRole("button", { name: "Done" }).click();
     await expect(card).toContainText("@ember runs on Claude Sonnet 5.5 through Cloudflare AI Gateway.");
+  });
+
+  test("the administrator lets people pick another model, which someone picks on their profile, and @ember answers them with it", async ({ page, request }) => {
+    const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "@cf/zai-org/glm-4.7-flash" }, headers: await asAdministrator(request) });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const card = await openAssistant(page);
+    const models = card.getByRole("group", { name: "Models" });
+    await expect(models.getByRole("radio")).toHaveCount(1);
+    await card.getByRole("button", { name: "Add a model" }).click();
+
+    // It offers the catalog's text models people can't pick yet, asking the one chosen a test question.
+    const adding = page.getByRole("dialog");
+    await expect(adding).toHaveAccessibleName("Add a model");
+    const menu = adding.getByRole("combobox", { name: "Model" });
+    await expect(menu.getByRole("option")).toHaveText(["Gemma 4 26B", "Claude Sonnet 5.5 · $3 / $15", "GPT-6.1 Sol · $2 / $10", "Another model…"]);
+    await menu.selectOption("anthropic/claude-sonnet-5.5");
+    await adding.getByRole("button", { name: "Add" }).click();
+    await expect(adding).toHaveAccessibleName("Model added");
+    await expect(adding).toContainText(HELLO);
+    expect(gateway.asked.at(-1)).toMatchObject({ path: `/accounts/${AI_GATEWAY_ACCOUNT.accountId}/ai/v1/messages`, body: { model: "anthropic/claude-sonnet-5.5" } });
+    await adding.getByRole("button", { name: "Done" }).click();
+    await expect(adding).toBeHidden();
+    await expect(models.getByRole("radio", { name: "GLM-4.7 Flash" })).toBeChecked();
+    await expect(models.getByRole("radio", { name: "Claude Sonnet 5.5" })).not.toBeChecked();
+    await expect(card).toContainText("@ember runs on GLM-4.7 Flash through Cloudflare AI Gateway, or on the model each person picks.");
+
+    // On their profile, they pick it, which Ember keeps.
+    await page.goto("/users/me/profile");
+    const yours = page.getByRole("region", { name: "Ember AI", exact: true }).getByRole("combobox", { name: "Model" });
+    await expect(yours.getByRole("option")).toHaveText(["GLM-4.7 Flash (default)", "Claude Sonnet 5.5"]);
+    await expect(yours).toHaveValue("@cf/zai-org/glm-4.7-flash");
+    await yours.selectOption("anthropic/claude-sonnet-5.5");
+    await expect(yours).toBeEnabled();
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Ember AI", exact: true }).getByRole("combobox", { name: "Model" })).toHaveValue("anthropic/claude-sonnet-5.5");
+
+    await askEmber(page, "Which model are you?");
+    expect(gateway.asked.at(-1)).toMatchObject({ path: `/accounts/${AI_GATEWAY_ACCOUNT.accountId}/ai/v1/messages`, body: { model: "anthropic/claude-sonnet-5.5" } });
   });
 
   test("the administrator turns Ember AI off, once they're sure", async ({ page, request }) => {
@@ -116,7 +188,7 @@ test.describe("Ember AI", () => {
     // Turned off, Ember forgot the API token, so setting it up again needs one.
     await assistantSwitch.click();
     const setup = page.getByRole("dialog");
-    await setup.getByRole("textbox", { name: "Account ID" }).fill(AI_GATEWAY_ACCOUNT.accountId);
+    await expect(setup.getByRole("textbox", { name: "Account ID" })).toHaveValue(AI_GATEWAY_ACCOUNT.accountId);
     await expect(setup.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 });
@@ -133,7 +205,8 @@ test.describe("@ember", () => {
     const question = `What's our logo? ${crypto.randomUUID().slice(0, 8)}`;
     const composer = editorField(page, "Write a message");
     await composer.pressSequentially("@Embe");
-    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
+    // The prompt badges it as an agent, as its messages do.
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember Agent"]);
     await composer.press("Tab");
     await expect(page.getByRole("listbox")).toBeHidden();
     await composer.pressSequentially(question);
@@ -146,7 +219,7 @@ test.describe("@ember", () => {
     await expect(page.locator(".spinner")).toHaveText("Ember");
     answering();
     const answer = page.getByRole("article").filter({ hasText: HELLO });
-    await expect(answer).toContainText("Ember");
+    await expect(answer.getByRole("heading", { level: 3 })).toHaveText(/^Ember Agent/);
     await expect(page.locator(".spinner")).toHaveText("");
     const [instructions, ...turns] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
     expect(instructions!.content).toContain(`You're asked in the room "general".`);
@@ -184,18 +257,7 @@ test.describe("@ember", () => {
     await page.reload();
     await expect(page.getByRole("region", { name: "Ember AI", exact: true }).getByRole("group", { name: "Thinking" }).getByRole("radio", { name: "Medium" })).toBeChecked();
 
-    await page.goto("/");
-    await page.getByRole("complementary", { name: "Conversations" }).getByRole("link", { name: "general" }).click();
-    const composer = editorField(page, "Write a message");
-    await composer.pressSequentially("@Embe");
-    await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["Ember"]);
-    await composer.press("Tab");
-    await composer.pressSequentially(`How long is a fortnight? ${crypto.randomUUID().slice(0, 8)}`);
-    const answering = gateway.hold();
-    await composer.press("Enter");
-    await expect(page.locator(".spinner")).toHaveText("Ember");
-    answering();
-    await expect(page.locator(".spinner")).toHaveText("");
+    await askEmber(page, "How long is a fortnight?");
     const { body } = gateway.asked.at(-1)!;
     expect(body).toMatchObject({ model: "@cf/zai-org/glm-4.7-flash", reasoning_effort: "medium" });
     const [instructions] = body.messages as Array<{ role: string; content: string }>;
