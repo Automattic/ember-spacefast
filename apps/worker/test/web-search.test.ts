@@ -491,4 +491,12 @@ describe("An answer's sources", () => {
     const { markup } = answerOf(Array.from({ length: 20 }, () => paragraph).join("\n\n"), [DOCS]);
     expect(markup).toMatch(new RegExp(`<p>…</p><p>Sources: <a href="${DOCS.url}">${DOCS.title}</a></p>$`));
   });
+
+  it("name a page the answer links to only past where it's cut", () => {
+    const paragraph = `${"word ".repeat(199)}word`;
+    const text = [...Array.from({ length: 20 }, () => paragraph), `See [the docs](${DOCS.url}).`].join("\n\n");
+    const { markup } = answerOf(text, [DOCS]);
+    expect(markup).not.toContain("See ");
+    expect(markup).toMatch(new RegExp(`<p>…</p><p>Sources: <a href="${DOCS.url}">${DOCS.title}</a></p>$`));
+  });
 });

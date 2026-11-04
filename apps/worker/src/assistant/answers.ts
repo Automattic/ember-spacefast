@@ -148,19 +148,19 @@ const MAX_SOURCE_TITLE_LENGTH = 80;
  */
 export function answerOf(text: string, sources: readonly Source[] = []): Answer {
   const answer = text.replace(/^\s*(?:ember:|\*\*ember:\*\*|\*\*ember\*\*:)\s*(?=\S)/i, "");
-  const named = sourcesHtml(answer, sources);
-  const whole = answerIn(answer, named);
-  return fits(whole) ? whole : cutToFit(answer, named);
+  const whole = answerIn(answer, sources);
+  return fits(whole) ? whole : cutToFit(answer, sources);
 }
 
 /**
- * The answer `text`, in Markdown, makes, followed by `named`, the markup naming its sources: its rich
- * text, a card of the web pictures it shows, and its first web link, which is the answer's, not a source's.
+ * The answer `text`, in Markdown, makes, followed by the `sources` it came from that it doesn't link to
+ * itself: its rich text, a card of the web pictures it shows, and its first web link, which is the
+ * answer's, not a source's.
  */
-function answerIn(text: string, named = ""): Answer {
+function answerIn(text: string, sources: readonly Source[] = []): Answer {
   const { images, links } = webPartsOf(text);
   const cards: Card[] = images.length === 0 ? [] : [{ source: "blocks", parts: images.map((image) => ({ kind: "image", image })) }];
-  return { markup: `${markdownHtml(text)}${named}`, cards, firstLink: links[0] ?? null };
+  return { markup: `${markdownHtml(text)}${sourcesHtml(sources, links)}`, cards, firstLink: links[0] ?? null };
 }
 
 /** The web pictures Markdown `text` shows, and the web addresses it links to, in order. */
@@ -183,13 +183,12 @@ function webPartsOf(text: string): { images: CardImage[]; links: string[] } {
 /**
  * The markup naming `sources`, the pages an answer that used the web came from, as Anthropic asks of
  * answers from its searches: a line after the answer linking to each, by its page's title, or its host
- * without one, but for those the answer `text` links to itself, or "" when there's none left to name.
+ * without one, but for those the answer links to itself, `linked`, or "" when there's none left to name.
  */
-function sourcesHtml(text: string, sources: readonly Source[]): string {
-  const linked = new Set(webPartsOf(text).links);
+function sourcesHtml(sources: readonly Source[], linked: readonly string[]): string {
   const links = sources.flatMap(({ url, title }) => {
     const address = webAddress(url);
-    if (address === null || linked.has(address)) return [];
+    if (address === null || linked.includes(address)) return [];
     const words = title.replace(/\s+/g, " ").trim();
     const shown = words.length > MAX_SOURCE_TITLE_LENGTH ? `${words.slice(0, MAX_SOURCE_TITLE_LENGTH - 1).trimEnd()}…` : words;
     return [anchor(address, escapeText(shown || new URL(address).host))];
@@ -214,20 +213,21 @@ function fits({ markup, cards }: Answer): boolean {
 }
 
 /**
- * The answer as much of `text` makes as fits in a message with `named`, its sources, after it: its
+ * The answer as much of `text` makes as fits in a message with the `sources` it came from after it: its
  * first lines, or the start of its first line when even that doesn't fit, ending with an ellipsis where
  * it's cut. Its Markdown can show more than it's written in, as a numbered list counts up, or a
- * picture's address shows for each reference to it, so each cut is measured as it shows.
+ * picture's address shows for each reference to it, and a source whose link the cut leaves out is
+ * named after it, so each cut is measured as it shows.
  */
-function cutToFit(text: string, named: string): Answer {
-  const cutFits = (length: number) => fits(cutAt(text, length, named));
+function cutToFit(text: string, sources: readonly Source[]): Answer {
+  const cutFits = (length: number) => fits(cutAt(text, length, sources));
   const lineEnds = Array.from(text.matchAll(/\n/g), ({ index }) => index);
   const lines = largest(lineEnds.length, (count) => cutFits(lineEnds[count - 1]!));
-  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits), named);
+  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits), sources);
 }
 
-/** The answer `text`'s first `length` characters make, ending with an ellipsis to say it's cut, and then `named`, its sources. */
-const cutAt = (text: string, length: number, named: string) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`, named);
+/** The answer `text`'s first `length` characters make, ending with an ellipsis to say it's cut, and then the `sources` they don't link to. */
+const cutAt = (text: string, length: number, sources: readonly Source[]) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`, sources);
 
 /** The largest count from 0 to `most` that `holds` is true of, as it is of every count below one it's true of. */
 function largest(most: number, holds: (count: number) => boolean): number {
