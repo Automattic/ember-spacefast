@@ -450,10 +450,25 @@ the dialog's links open that account's pages in the dashboard. Ember asks models
 account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
 logs, caching and spend limits apply. Workers AI's models come with Cloudflare's free daily
 allowance, and other companies', such as Anthropic's, OpenAI's and Google's, are paid for with AI
-Gateway's credits, as [What it costs](#what-it-costs) says. The Worker asks the model a test question
-before keeping the setup. @ember then joins every room open to everyone, and turning the card off
-takes it out again and forgets the token. Nobody else can take the name Ember, though anyone who had
-it keeps it.
+Gateway's credits, as [What it costs](#what-it-costs) says. The model menu lists the text models in
+Cloudflare's [model catalog](https://developers.cloudflare.com/ai/models/), as the Worker reads it with
+the token (`GET /accounts/{id}/ai/catalog/models`) as the dialog goes on to the model, so new models
+show up as Cloudflare adds them: Workers AI's first, then other companies', with what each
+million tokens costs where the catalog says. When the catalog can't be read, the menu has the models
+Ember knows and says why, and Another model takes any model by its ID. The Worker asks the model a
+test question before keeping the setup. @ember then joins every room open to everyone, and turning the
+card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
+who had it keeps it.
+
+The Models list on the Ember AI card has the models people can pick, at most 20, starting with the
+one Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another,
+Add a model offers the catalog's text models nobody can pick yet, asking the one chosen a test
+question before adding it, and Remove takes one out. Each person picks theirs from the Model menu
+under Ember AI on their profile, which shows while there's more than one, and picking the default
+follows the administrators' choice of it. Someone whose model is removed gets the default again, and
+their pick back if it's added again. Changing the model in Set up Ember AI puts the one chosen in
+place of the old default, and turning Ember AI off forgets the list. When the model someone picked
+has run out of credits or won't take the question, @ember's note says they can pick another.
 
 Mention @ember in a room or a thread, or write to it in a DM, and it answers there: in the thread when
 it's asked in one, typing while its model answers. It reads the thread, its first message and latest
@@ -655,6 +670,8 @@ pages had them in October 2026:
   AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
+  Each person's questions cost what the model they pick does, so add to the Models list only the
+  models you're happy to pay for.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),

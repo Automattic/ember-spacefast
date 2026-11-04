@@ -14,7 +14,7 @@ import {
   type ProfileChanges,
   type SidebarRoom,
 } from "@ember/protocol";
-import type { AnswerLevelChanges, AnswerLevelsAnswer, YourAnswerLevels } from "@ember/protocol/assistant";
+import { MODEL_NOT_LISTED, type YourAssistant, type YourAssistantChanged, type YourAssistantChanges } from "@ember/protocol/assistant";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
 import { AccountContext } from "@/hooks/use-account";
@@ -23,6 +23,7 @@ import { PushContext } from "@/hooks/use-push";
 import { navigate } from "@/hooks/use-route";
 import { CHROME_MAC, SAFARI_MAC } from "@/test-platforms";
 import { PUSH_ON } from "@/test-push";
+import { DEFAULT_MODEL_EXPLAINED } from "./answer-levels";
 import { AVATAR_CHANGED, ProfilePage } from "./profile-page";
 
 vi.mock("@/lib/previews", () => ({ avatarVariantOf: vi.fn(async () => new Blob(["variant"], { type: "image/webp" })) }));
@@ -31,8 +32,14 @@ const ada = { id: "u1", name: "Ada Lovelace", administrator: false };
 /** Ada's avatar as the profile loads it: her initials, until she uploads one. */
 const INITIALS = "/users/t0k3n/avatar?v=1";
 const profile: Profile = { name: "Ada Lovelace", emailAddress: "ada@example.com", bio: "Wrote the first program", avatarUrl: INITIALS, avatar: false, password: true, membershipNeeded: true, memberful: null, assistant: null };
-/** Ada's levels of @ember's dials while Ember AI is on: where they start, up to Medium thinking. */
-const LEVELS: YourAnswerLevels = { levels: { thinking: "low", length: "medium" }, most: { thinking: "medium", length: "long" } };
+/** Ada's levels of @ember's dials while Ember AI is on: where they start, up to Medium thinking, with the one model people can pick. */
+const LEVELS: YourAssistant = {
+  levels: { thinking: "low", length: "medium" },
+  most: { thinking: "medium", length: "long" },
+  model: "@cf/zai-org/glm-4.7-flash",
+  defaultModel: "@cf/zai-org/glm-4.7-flash",
+  models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
+};
 const account: Account = { name: "Analytical Engines", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {} };
 /** The sign-in links loading and saving the profile give. */
 const [LOADED_LINK, SAVED_LINK] = ["u1.mgk3x2a9.loaded", "u1.mgk3x2b0.saved"];
@@ -44,8 +51,8 @@ interface Answers {
   saved?: () => Response | Promise<Response>;
   /** What saving an avatar answers, rather than the profile with an avatar. */
   uploaded?: () => Response | Promise<Response>;
-  /** What changing your levels of @ember's dials answers, rather than `LEVELS` with the changes sent. */
-  leveled?: () => Response | Promise<Response>;
+  /** What changing your model or levels of @ember's dials answers, rather than `LEVELS` with the changes sent. */
+  leveled?: (changes: YourAssistantChanges) => Response | Promise<Response>;
 }
 
 /** Ada's avatar once she has uploaded one. */
@@ -70,8 +77,8 @@ function serve({
       case `PUT ${AVATAR_PATH}`:
         return uploaded();
       case "PATCH /api/users/me/assistant": {
-        const changes = JSON.parse(String(init?.body)) as AnswerLevelChanges;
-        return leveled ? leveled() : Response.json({ assistant: { ...LEVELS, levels: { ...LEVELS.levels, ...changes } } } satisfies AnswerLevelsAnswer);
+        const changes = JSON.parse(String(init?.body)) as YourAssistantChanges;
+        return leveled ? leveled(changes) : Response.json({ assistant: { ...LEVELS, levels: { ...LEVELS.levels, ...changes } } } satisfies YourAssistantChanged);
       }
       case `DELETE ${AVATAR_PATH}`:
         return Response.json({ profile: { ...profile, avatarUrl: "/users/t0k3n/avatar?v=3" }, transferId: SAVED_LINK } satisfies ProfileAnswer);
@@ -526,7 +533,7 @@ describe("Ember AI on your profile", () => {
   it("has none once Ember AI is turned off, as a save says", async () => {
     serve({
       loaded: () => Response.json({ profile: { ...profile, assistant: LEVELS }, transferId: LOADED_LINK } satisfies ProfileAnswer),
-      leveled: () => Response.json({ assistant: null } satisfies AnswerLevelsAnswer),
+      leveled: () => Response.json({ assistant: null } satisfies YourAssistantChanged),
     });
     const { user } = showPage();
     await loaded();
@@ -538,6 +545,71 @@ describe("Ember AI on your profile", () => {
     showPage();
     await loaded();
     expect(section()).not.toBeInTheDocument();
+  });
+
+  it("has no Model menu while people can pick only the one model", async () => {
+    withLevels();
+    showPage();
+    await loaded();
+    expect(within(section()!).queryByRole("combobox")).not.toBeInTheDocument();
+  });
+});
+
+describe("Your model on your profile", () => {
+  const section = () => screen.getByRole("region", { name: "Ember AI" });
+  const menu = () => within(section()).getByRole("combobox", { name: "Model" });
+  /** Ada's model and levels while administrators let people pick from three models, Claude Sonnet 5.5 hers. */
+  const PICKING: YourAssistant = {
+    ...LEVELS,
+    model: "anthropic/claude-sonnet-5.5",
+    models: [
+      { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
+      { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages" },
+      { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses" },
+    ],
+  };
+  const picking = (leveled?: Answers["leveled"]) =>
+    serve({
+      loaded: () => Response.json({ profile: { ...profile, assistant: PICKING }, transferId: LOADED_LINK } satisfies ProfileAnswer),
+      leveled:
+        leveled ?? (({ model, ...levels }) => Response.json({ assistant: { ...PICKING, model: model ?? PICKING.defaultModel, levels: { ...PICKING.levels, ...levels } } })),
+    });
+
+  it("has a Model menu of the models administrators let people pick, set at yours, the default named so", async () => {
+    picking();
+    showPage();
+    await loaded();
+    expect(section()).toHaveTextContent(
+      "Which model @ember answers you with, how much it thinks first, and how long its answers are, up to the most an administrator allows.",
+    );
+    expect(within(menu()).getAllByRole("option").map((option) => option.textContent)).toEqual(["GLM-4.7 Flash (default)", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
+    expect(menu()).toHaveValue("anthropic/claude-sonnet-5.5");
+    expect(menu()).toHaveAccessibleDescription(DEFAULT_MODEL_EXPLAINED);
+    expect(menu().compareDocumentPosition(within(section()).getByRole("group", { name: "Thinking" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("saves a model as soon as it's picked, the default as following the administrators' choice", async () => {
+    picking();
+    const { user } = showPage();
+    await loaded();
+    await user.selectOptions(menu(), "GPT-6.1 Sol");
+    expect(menu()).toHaveValue("openai/gpt-6.1-sol");
+    await waitFor(() => expect(menu()).toBeEnabled());
+    await user.selectOptions(menu(), "GLM-4.7 Flash (default)");
+    await waitFor(() => expect(menu()).toBeEnabled());
+    expect(menu()).toHaveValue("@cf/zai-org/glm-4.7-flash");
+    const sent = vi.mocked(fetch).mock.calls.filter(([path]) => path === "/api/users/me/assistant").map(([, init]) => JSON.parse(String(init?.body)));
+    expect(sent).toEqual([{ model: "openai/gpt-6.1-sol" }, { model: null }]);
+  });
+
+  it("says why a model wasn't saved, showing yours as it was", async () => {
+    picking(() => Response.json({ error: MODEL_NOT_LISTED }, { status: 422 }));
+    const { user, onFailed } = showPage();
+    await loaded();
+    await user.selectOptions(menu(), "GPT-6.1 Sol");
+    await waitFor(() => expect(onFailed).toHaveBeenCalledOnce());
+    expect(menu()).toHaveValue("anthropic/claude-sonnet-5.5");
+    expect(menu()).toBeEnabled();
   });
 });
 
