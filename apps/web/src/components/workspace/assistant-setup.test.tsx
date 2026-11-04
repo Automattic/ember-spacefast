@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,7 +14,7 @@ import {
   type AssistantSetup as Setup,
 } from "@ember/protocol/assistant";
 import { ApiError } from "@/lib/api";
-import { AssistantSetup } from "./assistant-setup";
+import { AssistantSetup, searchTurnedOff } from "./assistant-setup";
 import { CATALOG_UNREAD, MODEL_CATALOG } from "./model-picker";
 
 /** A Cloudflare account's ID and an API token of its, as an administrator copies them from Workers AI's Use REST API. */
@@ -24,12 +25,11 @@ const API_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab";
 const GREETING = "Hello, team! I'm Ember, here whenever you mention @ember.";
 
 /** Ember AI as the server saves it from `setup`: on the model sent, the only one people can pick. */
-const savedOf = ({ accountId, model, modelName: name }: Pick<Setup, "accountId" | "model" | "modelName">): AssistantSettings => ({
-  accountId,
-  model,
-  models: [{ id: model, name: name ?? modelName(model), format: ASSISTANT_MODELS.find(({ id }) => id === model)?.format ?? "chat" }],
-  most: TOP_LEVELS,
-});
+const savedOf = ({ accountId, model, modelName: name }: Pick<Setup, "accountId" | "model" | "modelName">): AssistantSettings => {
+  const format = ASSISTANT_MODELS.find(({ id }) => id === model)?.format ?? "chat";
+  // Searching the web waits for Search the web to be turned on, for a model that can.
+  return { accountId, model, models: [{ id: model, name: name ?? modelName(model), format }], most: TOP_LEVELS, webTools: format === "chat" ? null : [] };
+};
 
 /** What Cloudflare's catalog lists when it can't be read, as the server answers: the models Ember knows. */
 const KNOWN: AssistantCatalog = { models: [...ASSISTANT_MODELS], refusal: null };
@@ -64,10 +64,22 @@ function held(response: () => Response) {
   return { answered: () => answered, answer: () => act(async () => answer()) };
 }
 
-/** Set up Ember AI, open on a workspace whose Ember AI is `assistant`, deployed to the Cloudflare account `deployedAccountId` names, if the deploy said. */
+/**
+ * Set up Ember AI, open on a workspace whose Ember AI is `assistant`, deployed to the Cloudflare account
+ * `deployedAccountId` names, if the deploy said, as the settings page opens it: on Ember AI as it's saved,
+ * once it is.
+ */
 function showSetup(assistant: AssistantSettings | null = null, deployedAccountId: string | null = null) {
   const callbacks = { onSaved: vi.fn(), onClose: vi.fn(), onFailed: vi.fn() };
-  render(<AssistantSetup assistant={assistant} deployedAccountId={deployedAccountId} {...callbacks} />);
+  function SettingsPage() {
+    const [shown, setShown] = useState(assistant);
+    const onSaved = (saved: AssistantSettings) => {
+      setShown(saved);
+      callbacks.onSaved(saved);
+    };
+    return <AssistantSetup assistant={shown} deployedAccountId={deployedAccountId} {...callbacks} onSaved={onSaved} />;
+  }
+  render(<SettingsPage />);
   return { ...callbacks, user: userEvent.setup() };
 }
 
@@ -376,6 +388,43 @@ describe("Set up Ember AI", () => {
     await user.click(await screen.findByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("");
     expect(modelIdField()).toHaveValue("mistral/mistral-large-3");
+  });
+
+  it("says Search the web is off once a change of model turned it off, as the new model hasn't searched", async () => {
+    const searching: AssistantSettings = { ...savedOf({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }), webTools: ["search", "read"] };
+    serve((setup) => Response.json({ assistant: setup.model === searching.model ? searching : savedOf(setup), greeting: GREETING }));
+    for (const [model, said] of [
+      ["Claude Sonnet 5.5", null],
+      ["Claude Opus 5.5", searchTurnedOff([])],
+      ["GLM-4.7 Flash", searchTurnedOff(null)],
+    ] as const) {
+      const { user, onClose } = showSetup(searching);
+      await user.click(await screen.findByRole("button", { name: "Continue" }));
+      await user.selectOptions(await screen.findByRole("combobox", { name: "Model" }), model);
+      await user.click(button("Save"));
+      const done = await dialog("Ember AI is set up");
+      if (said === null) expect(done).not.toHaveTextContent("Search the web");
+      else expect(done).toHaveTextContent(said);
+      await user.click(button("Done"));
+      expect(onClose).toHaveBeenCalledOnce();
+      cleanup();
+    }
+  });
+
+  it("says Search the web is off for the new account once moving the same model to another turned it off", async () => {
+    const searching: AssistantSettings = { ...savedOf({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }), webTools: ["search", "read"] };
+    // The server turns it off, as the other account's AI Gateway may not take the same tools.
+    serve();
+    const { user } = showSetup(searching);
+    await dialog("Set up Ember AI");
+    await user.clear(accountIdField());
+    await user.type(accountIdField(), OTHER_ACCOUNT_ID);
+    await user.type(apiTokenField(), API_TOKEN);
+    await user.click(button("Continue"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    expect(await dialog("Ember AI is set up")).toHaveTextContent("Search the web is off for the new account. Turn it on again to try it.");
+    const setup = { accountId: OTHER_ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", modelName: "Claude Sonnet 5.5", apiToken: API_TOKEN };
+    expect(asked().at(-1)).toEqual(["PUT /api/account/assistant", setup]);
   });
 });
 

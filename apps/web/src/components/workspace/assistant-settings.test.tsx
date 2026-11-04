@@ -1,10 +1,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSettings } from "@ember/protocol";
 import {
   ASSISTANT_MODELS,
   ASSISTANT_OFF,
+  cannotSearchWith,
   DEFAULT_MODEL_KEPT,
   MAX_ASSISTANT_MODELS,
   MODELS_FULL,
@@ -15,9 +17,12 @@ import {
   type AssistantModel,
   type AssistantSettings as Assistant,
   type NewAssistantModel,
+  type WebSearchChanged,
+  type WebTool,
 } from "@ember/protocol/assistant";
 import { ApiError } from "@/lib/api";
-import { AssistantSettings, CONFIRM_STOP_ASSISTANT, LIMITS_EXPLAINED, MODELS_EXPLAINED, WHAT_EMBER_SENDS } from "./assistant-settings";
+import { AssistantSettings, CONFIRM_STOP_ASSISTANT, LIMITS_EXPLAINED, MODELS_EXPLAINED, searchingWith, WEB_SEARCH_OFF, webSearchOn, WHAT_EMBER_SENDS } from "./assistant-settings";
+import { searchTurnedOff } from "./assistant-setup";
 import { CATALOG_UNREAD } from "./model-picker";
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
@@ -28,12 +33,17 @@ function known(id: string): AssistantModel {
   return { id, name, format };
 }
 
-/** Ember AI on, running on `model`, with `most` the most its dials go to, and people able to pick `others` too. */
-const on = (model: string, most: AnswerLevels = TOP_LEVELS, others: string[] = []): Assistant => ({
+/**
+ * Ember AI on, running on `model`, with `most` the most its dials go to, people able to pick `others` too,
+ * and doing `webTools` on the web: nothing yet for Anthropic's and OpenAI's models, which can search, and
+ * null for the rest, which can't.
+ */
+const on = (model: string, most: AnswerLevels = TOP_LEVELS, others: string[] = [], webTools: WebTool[] | null = /^(?:anthropic|openai)\//.test(model) ? [] : null): Assistant => ({
   accountId: ACCOUNT_ID,
   model,
   models: [model, ...others].map(known),
   most,
+  webTools,
 });
 
 type Answer<T = void> = (given: T) => Response | Promise<Response>;
@@ -365,5 +375,186 @@ describe("Limits", () => {
     await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(409, ASSISTANT_OFF)));
     expect(onChanged.mock.calls).toEqual([[{ ...shown, most: { thinking: "high", length: "short" } }], [shown]]);
     expect(level("Short")).toBeEnabled();
+  });
+});
+
+describe("Search the web", () => {
+  const SONNET = "anthropic/claude-sonnet-5.5";
+  const FOUND = "AI Gateway is Cloudflare's proxy for requests to AI models.";
+  const webSwitch = () => within(card()).getByRole("switch", { name: "Search the web" });
+
+  /** Answers turning Search the web on or off as `changed` says, keeping what the card sent. */
+  function serveWebSearch(changed: (on: boolean) => Response | Promise<Response>) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (`${init?.method} ${String(input)}` !== "PUT /api/account/assistant/web_search") throw new Error(`Unexpected request for ${init?.method} ${String(input)}`);
+      return changed((JSON.parse(String(init?.body)) as { on: boolean }).on);
+    });
+  }
+
+  /** What the server answers once it has turned Search the web `on` with `webTools`, or off. */
+  const turned = (on_: boolean, webTools: WebTool[] = ["search", "read"]) =>
+    Response.json({ assistant: on(SONNET, TOP_LEVELS, [], on_ ? webTools : []), found: on_ ? FOUND : null } satisfies WebSearchChanged);
+
+  /** The card, showing Ember AI as each change to it leaves it, as the settings page does. */
+  function showLiveCard(assistant: Assistant) {
+    const callbacks = { onSetUp: vi.fn(), onStopped: vi.fn(), onFailed: vi.fn() };
+    function Live() {
+      const [shown, setShown] = useState(assistant);
+      return <AssistantSettings assistant={shown} onChanged={setShown} {...callbacks} />;
+    }
+    render(<Live />);
+    return { ...callbacks, user: userEvent.setup() };
+  }
+
+  it("is off for a model that can search until it's turned on, saying what turning it on lets @ember do", () => {
+    serveWebSearch(() => turned(true));
+    showLiveCard(on(SONNET));
+    expect(webSwitch()).not.toBeChecked();
+    expect(webSwitch()).toBeEnabled();
+    expect(webSwitch()).toHaveAccessibleDescription(WEB_SEARCH_OFF);
+    expect(within(card()).getByRole("status")).toHaveTextContent("");
+  });
+
+  it("turns on once the model has searched the web, saying what it found, with everything else held meanwhile", async () => {
+    const answer = held(() => turned(true));
+    const fetch = serveWebSearch(answer.answered);
+    const { user } = showLiveCard(on(SONNET));
+
+    await user.click(webSwitch());
+    expect(fetch).toHaveBeenCalledWith("/api/account/assistant/web_search", expect.objectContaining({ method: "PUT", body: JSON.stringify({ on: true }) }));
+    expect(webSwitch()).toBeChecked();
+    expect(webSwitch()).toBeDisabled();
+    expect(within(card()).getByRole("status")).toHaveTextContent(searchingWith("Claude Sonnet 5.5"));
+    expect(assistantSwitch()).toBeDisabled();
+    expect(within(card()).getByRole("button", { name: "Change" })).toBeDisabled();
+    expect(within(card()).getByRole("button", { name: "Add a model" })).toBeDisabled();
+    expect(within(card()).getByRole("radio", { name: "Claude Sonnet 5.5" })).toBeDisabled();
+    expect(within(card()).getByRole("radio", { name: "Low" })).toBeDisabled();
+
+    await answer.answer();
+    expect(webSwitch()).toBeChecked();
+    expect(webSwitch()).toBeEnabled();
+    expect(webSwitch()).toHaveAccessibleDescription(webSearchOn(["search", "read"], [known(SONNET)]));
+    expect(webSearchOn(["search", "read"], [known(SONNET)])).toContain("reads the pages people link to or its searches find, at most 3");
+    expect(within(card()).getByRole("status")).toHaveTextContent(`It searched the web and said: ${FOUND}`);
+    expect(assistantSwitch()).toBeEnabled();
+  });
+
+  it("says when it only searches, as AI Gateway didn't take the model's tool for reading pages", async () => {
+    serveWebSearch(() => turned(true, ["search"]));
+    const { user } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(webSwitch()).toBeEnabled());
+    expect(webSwitch()).toHaveAccessibleDescription(webSearchOn(["search"], [known(SONNET)]));
+    expect(webSearchOn(["search"], [known(SONNET)])).not.toContain("reads");
+  });
+
+  it("says, while people can pick other models, that a model someone picks searches too, if it's Anthropic's or OpenAI's", () => {
+    serveWebSearch(() => turned(false));
+    showLiveCard(on(SONNET, TOP_LEVELS, ["openai/gpt-6.1-sol", "@cf/zai-org/glm-4.7-flash"], ["search", "read"]));
+    expect(webSwitch()).toBeChecked();
+    expect(webSwitch()).toHaveAccessibleDescription(webSearchOn(["search", "read"], [SONNET, "openai/gpt-6.1-sol", "@cf/zai-org/glm-4.7-flash"].map(known)));
+    expect(webSearchOn(["search"], [known(SONNET), known("openai/gpt-6.1-sol")])).toContain("A model someone picks searches too, if it's Anthropic's or OpenAI's.");
+    expect(webSearchOn(["search"], [known(SONNET)])).not.toContain("picks");
+  });
+
+  it("says why it didn't turn on, its switch back off", async () => {
+    const refusal = "Claude Sonnet 5.5 answered without searching the web, so Search the web is still off. Try again, or choose another model under Models or Change.";
+    serveWebSearch(() => Response.json({ error: refusal }, { status: 422 }));
+    const { user, onFailed } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(refusal));
+    expect(webSwitch()).not.toBeChecked();
+    expect(webSwitch()).toBeEnabled();
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("turns off without searching, saying nothing more", async () => {
+    const answer = held(() => turned(false));
+    const fetch = serveWebSearch(answer.answered);
+    const { user } = showLiveCard(on(SONNET, TOP_LEVELS, [], ["search", "read"]));
+    expect(webSwitch()).toBeChecked();
+
+    await user.click(webSwitch());
+    expect(fetch).toHaveBeenCalledWith("/api/account/assistant/web_search", expect.objectContaining({ body: JSON.stringify({ on: false }) }));
+    expect(webSwitch()).not.toBeChecked();
+    expect(within(card()).getByRole("status")).toHaveTextContent("");
+    await answer.answer();
+    expect(webSwitch()).not.toBeChecked();
+    expect(webSwitch()).toHaveAccessibleDescription(WEB_SEARCH_OFF);
+  });
+
+  it("says a model that can't search can't, its switch opening Set up Ember AI to choose another", async () => {
+    const fetch = serveWebSearch(() => turned(true));
+    const { user, onSetUp } = showLiveCard(on("@cf/zai-org/glm-4.7-flash"));
+    expect(webSwitch()).toHaveAccessibleDescription(cannotSearchWith("GLM-4.7 Flash"));
+    await user.click(webSwitch());
+    expect(onSetUp).toHaveBeenCalledOnce();
+    expect(webSwitch()).not.toBeChecked();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("leaves a failure it can't say itself to the page's alerts", async () => {
+    serveWebSearch(() => Response.json({ error: "Only administrators can set up Ember AI" }, { status: 403 }));
+    const { user, onFailed } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(403, "Only administrators can set up Ember AI")));
+    expect(within(card()).getByRole("status")).toHaveTextContent("");
+    expect(webSwitch()).not.toBeChecked();
+  });
+
+  it("says choosing another model to answer everyone turned it off, as the new model may not take the same tools", async () => {
+    const answer = held(() => Response.json({ assistant: on("openai/gpt-6.1-sol", TOP_LEVELS, [SONNET]) }));
+    const fetch = serve({ changed: answer.answered });
+    const { user } = showLiveCard(on(SONNET, TOP_LEVELS, ["openai/gpt-6.1-sol"], ["search", "read"]));
+    expect(webSwitch()).toBeChecked();
+
+    await user.click(within(card()).getByRole("radio", { name: "GPT-6.1 Sol" }));
+    expect(fetch).toHaveBeenCalledWith("/api/account/assistant", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ model: "openai/gpt-6.1-sol" }) }));
+    expect(webSwitch()).toBeDisabled();
+    await answer.answer();
+    expect(webSwitch()).not.toBeChecked();
+    expect(webSwitch()).toBeEnabled();
+    expect(webSwitch()).toHaveAccessibleDescription(WEB_SEARCH_OFF);
+    expect(within(card()).getByRole("status")).toHaveTextContent(searchTurnedOff([]));
+  });
+
+  it("forgets what the model said of searching once another model answers everyone", async () => {
+    const refusal = "AI Gateway didn't let Claude Sonnet 5.5 search the web.";
+    serveWebSearch(() => Response.json({ error: refusal }, { status: 422 }));
+    const { user } = showLiveCard(on(SONNET, TOP_LEVELS, ["@cf/zai-org/glm-4.7-flash"]));
+    await user.click(webSwitch());
+    await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(refusal));
+
+    vi.restoreAllMocks();
+    serve({ changed: () => Response.json({ assistant: on("@cf/zai-org/glm-4.7-flash", TOP_LEVELS, [SONNET]) }) });
+    await user.click(within(card()).getByRole("radio", { name: "GLM-4.7 Flash" }));
+    await waitFor(() => expect(webSwitch()).toHaveAccessibleDescription(cannotSearchWith("GLM-4.7 Flash")));
+    expect(within(card()).getByRole("status")).toHaveTextContent("");
+  });
+
+  it("forgets what the model said of searching once Set up Ember AI opens, which may choose another", async () => {
+    serveWebSearch(() => turned(true));
+    const { user, onSetUp } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(`It searched the web and said: ${FOUND}`));
+
+    await user.click(within(card()).getByRole("button", { name: "Change" }));
+    expect(onSetUp).toHaveBeenCalledOnce();
+    expect(within(card()).getByRole("status")).toHaveTextContent("");
+  });
+
+  it("keeps saying what the model found through a change to the dials", async () => {
+    serveWebSearch(() => turned(true));
+    const { user } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(`It searched the web and said: ${FOUND}`));
+
+    vi.restoreAllMocks();
+    serve({ changed: ({ model: _, ...levels }) => Response.json({ assistant: on(SONNET, { ...TOP_LEVELS, ...levels }, [], ["search", "read"]) }) });
+    await user.click(within(card()).getByRole("radio", { name: "Low" }));
+    await waitFor(() => expect(within(card()).getByRole("radio", { name: "Low" })).toBeEnabled());
+    expect(within(card()).getByRole("status")).toHaveTextContent(`It searched the web and said: ${FOUND}`);
+    expect(webSwitch()).toBeChecked();
   });
 });

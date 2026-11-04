@@ -6,19 +6,25 @@ import {
   DEFAULT_MODEL_KEPT,
   MODEL_NOT_LISTED,
   MODELS_FULL,
+  WEB_SEARCH_CHANGED,
+  WEB_SEARCH_REFUSED,
   accountIdOf,
+  cannotSearchWith,
   modelName,
   modelOf,
   parseAssistantChanges,
   parseAssistantKeys,
   parseAssistantSetup,
   parseNewAssistantModel,
+  parseWebSearchChange,
   parseYourAssistantChanges,
   type AssistantCatalog,
   type AssistantChanged,
   type AssistantForgotten,
   type AssistantSaved,
   type ModelFormat,
+  type WebSearchChanged,
+  type WebTool,
   type YourAssistantChanged,
 } from "@ember/protocol/assistant";
 import { credentialsOf } from "../auth";
@@ -27,12 +33,13 @@ import type { Env } from "../env";
 import { formAnswer } from "../pages";
 import { workspace, type Credentials } from "../workspace";
 import { catalogOf } from "./catalog";
-import { ask, formatsFor, type Gateway, type GatewayRefusal, type Question } from "./gateway";
+import { ask, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefusal, type Question } from "./gateway";
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
 // workspace settings, the models people can pick, which administrators add there from Cloudflare's
-// catalog, and @ember's answers to each person, which they set the most of there, and each person picks
-// the levels and model of on their profile. They answer JSON for the card, its dialogs and the profile.
+// catalog, what @ember may do on the web, and @ember's answers to each person, which they set the most
+// of there, and each person picks the levels and model of on their profile. They answer JSON for the
+// card, its dialogs and the profile.
 
 const problem = (status: number, message: string) => Response.json({ error: message }, { status });
 
@@ -58,8 +65,27 @@ const TEST_QUESTION: Question = {
 /** How long Set up Ember AI waits for each answer to its test question. */
 const TEST_TIMEOUT_MS = 30_000;
 
-/** The most of the model's hello the dialog shows. */
-const MAX_GREETING_LENGTH = 500;
+/** What turning on Search the web asks the model, which it has to search the web to answer, so that it's known to. */
+const WEB_TEST_QUESTION: Question = {
+  instructions: `You are ${ASSISTANT_NAME}, the AI assistant in a team's chat. An administrator has just let you search the web.`,
+  turns: [{ role: "user", text: "Search the web for what Cloudflare's AI Gateway is, then say it in one short sentence." }],
+  // Room for a model that thinks before it searches and again once it has, however short the answer.
+  maxTokens: 4_000,
+};
+
+/** How long turning on Search the web waits for the model to search and answer, which takes it longer than a hello. */
+const WEB_TEST_TIMEOUT_MS = 60_000;
+
+/** The most of what the model says to a test question that the dialog, or the card, shows. */
+const MAX_SHOWN_ANSWER_LENGTH = 500;
+
+/** Why Search the web didn't turn on for the model called `name`: AI Gateway refused its tools for the web, as `cloudflareSays`, when it says why. */
+export const webToolsRefused = (name: string, cloudflareSays?: string) =>
+  `AI Gateway didn't let ${name} search the web.${cloudflareSays ? ` Cloudflare says: ${cloudflareSays}` : ""}`;
+
+/** Why Search the web didn't turn on for the model called `name`, whose tools AI Gateway took: it answered without searching. */
+export const answeredUnsearched = (name: string) =>
+  `${name} answered without searching the web, so Search the web is still off. Try again, or choose another model under Models or Change.`;
 
 /**
  * The ID of the Cloudflare account the Worker is deployed to, which Set up Ember AI fills in, as the
@@ -202,6 +228,56 @@ export async function changeAssistantSettings(request: Request, env: Env): Promi
 }
 
 /**
+ * `PUT /api/account/assistant/web_search`, `{ on }`: turns Search the web on or off while Ember AI is on,
+ * as the Ember AI card's switch does, answering Ember AI as it is then, and, once it's on, what the model
+ * that answers everyone said when it searched (`searchedBy`). The models people pick are given their
+ * format's tools for the web then too. Someone who isn't an administrator hears so before anything they
+ * sent is read, and turning it on for a model whose format has no tools for the web, that it can't
+ * search. The model, or the Cloudflare account, being changed while it searched turns nothing on, as it's
+ * the model that was asked, through that account, that searched, and nor does Search the web being
+ * turned off meanwhile, or on again, as the latest change asked for is the one that stays.
+ */
+export async function changeWebSearch(request: Request, env: Env): Promise<Response> {
+  const askedAt = new Date().toISOString();
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  const ember = workspace(env);
+  const change = parseWebSearchChange(await jsonBodyOf(request));
+  if (!change) return problem(422, WEB_SEARCH_REFUSED);
+  const gateway = change.on ? await ember.assistantGateway() : null;
+  if (change.on && !gateway) return problem(409, ASSISTANT_OFF);
+  if (gateway && WEB_TOOLS_IN[gateway.format].length === 0) return problem(422, cannotSearchWith(gateway.name));
+  const searched = gateway ? await searchedBy(env, gateway) : { webTools: [], found: null };
+  if ("refusal" in searched) return problem(searched.status, searched.refusal);
+  const changed = await ember.changeAssistantWebTools(credentials, searched.webTools, gateway && { accountId: gateway.accountId, model: gateway.model, format: gateway.format }, askedAt);
+  if (!changed) return problem(401, NOT_SIGNED_IN);
+  if (changed === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
+  if (changed === "off") return problem(409, ASSISTANT_OFF);
+  if (changed === "changed") return problem(409, WEB_SEARCH_CHANGED);
+  return Response.json({ assistant: changed.assistant, found: searched.found } satisfies WebSearchChanged, { headers: PRIVATE });
+}
+
+/**
+ * What the model `gateway` names, called `name`, may do on the web, as it answers the web's test question
+ * given its format's tools for it, and what it said, or why it can't: AI Gateway refused the tools, even
+ * without the one for reading pages, which it may not have for every model, the model answered without
+ * searching, which shows in the pages it cites, or it didn't answer at all.
+ */
+async function searchedBy(env: Env, gateway: Gateway & { name: string }): Promise<{ webTools: WebTool[]; found: string } | GatewayRefusal> {
+  const signal = AbortSignal.timeout(WEB_TEST_TIMEOUT_MS);
+  let webTools = WEB_TOOLS_IN[gateway.format];
+  let answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
+  if ("refusal" in answered && answered.wrongFormat && webTools.includes("read")) {
+    console.error(`Asking ${gateway.model} to search again without reading pages, as AI Gateway didn't take that: ${answered.refusal}`);
+    webTools = webTools.filter((tool) => tool !== "read");
+    answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
+  }
+  if ("refusal" in answered) return answered.wrongFormat ? { ...answered, refusal: webToolsRefused(gateway.name, answered.cloudflareSays) } : answered;
+  if (!answered.sources) return { status: 422, reason: "model", refusal: answeredUnsearched(gateway.name) };
+  return { webTools: [...webTools], found: shownOf(answered.text) };
+}
+
+/**
  * `PATCH /api/users/me/assistant`, `{ thinking?, length?, model? }`: changes how much @ember thinks and how
  * long it answers you, as your profile's dials do, and the model it answers you with, as its Model menu
  * does, of those administrators let people pick, or theirs with null, answering @ember's answers to you
@@ -230,12 +306,12 @@ async function greetingFrom(env: Env, gateway: Omit<Gateway, "format">): Promise
   let first: GatewayRefusal | null = null;
   for (const format of formatsFor(gateway.model)) {
     const answer = await ask(env, { ...gateway, format }, TEST_QUESTION, TEST_TIMEOUT_MS);
-    if (!("refusal" in answer)) return { format, greeting: greetingOf(answer.text) };
+    if (!("refusal" in answer)) return { format, greeting: shownOf(answer.text) };
     if (!answer.wrongFormat) return answer;
     first ??= answer;
   }
   return first!;
 }
 
-/** `text` cut to what the dialog shows. */
-const greetingOf = (text: string) => (text.length > MAX_GREETING_LENGTH ? `${text.slice(0, MAX_GREETING_LENGTH - 1).trimEnd()}…` : text);
+/** `text` cut to what the dialog, or the card, shows. */
+const shownOf = (text: string) => (text.length > MAX_SHOWN_ANSWER_LENGTH ? `${text.slice(0, MAX_SHOWN_ANSWER_LENGTH - 1).trimEnd()}…` : text);

@@ -12,6 +12,7 @@ import {
   type AssistantKeys,
   type AssistantModel,
   type AssistantSettings,
+  type WebTool,
 } from "@ember/protocol/assistant";
 import { FIELD_INPUT, Field } from "@/components/field";
 import { Xmark } from "@/components/icons/iconoir";
@@ -29,10 +30,22 @@ import { DIALOG, DIALOG_BACKDROP, DIALOG_CLOSE, DIALOG_TITLE, MAIN_ACTION, OTHER
 // AI's Use REST API makes, and with which the Worker lists the text models in Cloudflare's catalog. Then
 // the model, which the Worker asks a test question through AI Gateway before keeping all three, saying on
 // the field it's about why it didn't answer, if it didn't, and which answers everyone who hasn't picked
-// another. Then what the model said. Styled as Set up Turnstile is.
+// another. Then what the model said, and that Search the web is off, when a change of model turned it
+// off. Styled as Set up Turnstile is.
 
 /** Where Workers AI's Use REST API makes an API token and shows the account's ID, in the Cloudflare dashboard. */
 const workersAiDashboard = (accountId: string | null) => dashboard(accountId, "ai/workers-ai");
+
+/**
+ * What the last step says once a change of model, or of the Cloudflare account it's asked through, has
+ * turned Search the web off, leaving @ember doing `webTools` on the web: that it can try it again, or that
+ * the model can't search.
+ */
+export const searchTurnedOff = (webTools: WebTool[] | null, changed: "model" | "account" = "model") =>
+  webTools === null ? "Search the web is off, as this model can't search the web through AI Gateway." : `Search the web is off for the new ${changed}. Turn it on again to try it.`;
+
+/** What Set up Ember AI changed of `before` in saving `after`, which turns Search the web off: the account, if only that. */
+const changeOf = (before: AssistantSettings, after: AssistantSettings) => (before.accountId !== after.accountId && before.model === after.model ? "account" : "model");
 
 /** Where it's at: the account and its API token, the model, or done. */
 type Step = "keys" | "model" | "done";
@@ -73,6 +86,9 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
   // Asking the model a test question holds the dialog open until it's answered.
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<{ assistant: AssistantSettings; greeting: string } | null>(null);
+  // Ember AI as it was when the dialog opened, which saving it replaces: whether @ember searched the web then,
+  // which another model or account may not do with the same tools, and so doesn't until it's tried.
+  const [opened] = useState(assistant);
   const title = useRef<HTMLHeadingElement>(null);
   const shown = useRef(step);
   const mounted = useMounted();
@@ -183,6 +199,9 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
           Asked to say hello, it said:
         </DialogDescription>
         <blockquote className="border-s-2 ps-3 whitespace-pre-wrap wrap-anywhere">{saved.greeting}</blockquote>
+        {opened?.webTools?.includes("search") && !saved.assistant.webTools?.includes("search") && (
+          <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools, changeOf(opened, saved.assistant))}</p>
+        )}
         <Actions back={null} next={onClose} nextLabel="Done" />
       </>
     ),

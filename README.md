@@ -83,8 +83,9 @@ one, or DM it, and Ember sends the message to the bot's own webhook and posts it
 Turn on Ember AI and choose a model, from Workers AI's free ones to Claude, GPT or Gemini, through
 [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/). Then mention @ember in a room
 or a thread, or DM it, and it reads the conversation and answers right there, with links, lists, code
-and pictures, as a teammate would. Administrators set how long it may think and write, and each person
-picks their own levels on their profile.
+and pictures, as a teammate would. On Claude or GPT it can search the web too, listing the pages its
+answer came from. Administrators set how long it may think and write, and each person picks their own
+levels on their profile.
 
 ### Find anything
 

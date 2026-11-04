@@ -92,6 +92,7 @@ import { directoryOf } from "./avatar-tokens";
 import {
   addAssistantModel,
   changeAssistantSettings,
+  changeWebSearch,
   changeYourAssistant,
   deployedAccountIdOf,
   forgetAssistant,
@@ -1000,6 +1001,7 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/assistant/catalog" && request.method === "POST") return () => listAssistantModels(request, env);
   if (pathname === "/api/account/assistant/models" && request.method === "POST") return () => addAssistantModel(request, env);
   if (pathname === "/api/account/assistant/models" && request.method === "DELETE") return () => removeAssistantModel(request, env);
+  if (pathname === "/api/account/assistant/web_search" && request.method === "PUT") return () => changeWebSearch(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);
   if (pathname === "/api/account/custom_domain_lookups" && request.method === "POST") return () => lookUpCustomDomain(request, env);
   if (pathname === LOGO_PATH && request.method === "PUT") return () => changeLogo(request, env);

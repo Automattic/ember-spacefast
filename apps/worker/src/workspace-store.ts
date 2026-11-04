@@ -49,11 +49,13 @@ import {
   modelOf,
   THINKING_LEVELS,
   TOP_LEVELS,
+  WEB_TOOLS,
   type AnswerLength,
   type AnswerLevels,
   type AssistantModel,
   type ModelFormat,
   type ThinkingLevel,
+  type WebTool,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
 import { statement, type Db, type Statement } from "./db";
@@ -146,8 +148,10 @@ export interface SavedTurnstileKeys {
 /**
  * How Ember AI asks AI Gateway, as the account keeps it: the Cloudflare account, its API token sealed
  * (`seal`), the model it answers anyone with who hasn't picked another, and the format the model took
- * its test question in, and the models people can pick from, that one among them, in the order they
- * were added.
+ * its test question in, the models people can pick from, that one among them, in the order they were
+ * added, what @ember may do on the web, which Search the web found the model that answers everyone could
+ * when it was turned on, or nothing while it's off, and when that was asked for, if Search the web has
+ * been turned on or off for that model.
  */
 export interface SavedAssistant {
   accountId: string;
@@ -155,6 +159,8 @@ export interface SavedAssistant {
   model: string;
   format: ModelFormat;
   models: SavedModel[];
+  webTools: WebTool[];
+  webToolsAskedAt: string | null;
 }
 
 /** A model people can pick, as the account keeps it: its ID, its name, and the format it took its test question in. */
@@ -811,18 +817,27 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format, models }`, the API token sealed, or null while it's off. Its
- * models are `[{ id, name, format }]`, which Ember AI set up before people could pick has none of: it
- * then has its own model alone, as it does when they leave it out.
+ * `{ account_id, api_token, model, format, models, web_tools, web_tools_asked_at }`, the API token sealed,
+ * or null while it's off. Its models are `[{ id, name, format }]`, which Ember AI set up before people
+ * could pick has none of: it then has its own model alone, as it does when they leave it out. Without
+ * `web_tools`, as Ember AI was kept before Search the web, @ember does nothing on the web.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format, models } = kept as Record<string, unknown>;
+  const { account_id: accountId, api_token: sealedApiToken, model, format, models, web_tools: webTools, web_tools_asked_at: webToolsAskedAt } = kept as Record<string, unknown>;
   if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string" || !isModelFormat(format)) return null;
   const listed = savedModelsIn(models);
   const own = listed.some(({ id }) => id === model) ? listed : [{ id: model, name: modelName(model), format }, ...listed];
-  return { accountId, sealedApiToken, model, format, models: own };
+  return {
+    accountId,
+    sealedApiToken,
+    model,
+    format,
+    models: own,
+    webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)),
+    webToolsAskedAt: typeof webToolsAskedAt === "string" ? webToolsAskedAt : null,
+  };
 }
 
 /** The models people can pick that `kept` lists, as `assistantIn` reads them, once each, leaving out what can't be one. */
@@ -860,6 +875,8 @@ const assistantSetting = (assistant: SavedAssistant | null) =>
       model: assistant.model,
       format: assistant.format,
       models: assistant.models.map(({ id, name, format }) => ({ id, name, format })),
+      web_tools: assistant.webTools,
+      web_tools_asked_at: assistant.webToolsAskedAt,
     },
   );
 

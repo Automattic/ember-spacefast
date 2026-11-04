@@ -164,16 +164,32 @@ function levelChangesIn(given: Record<string, unknown>): AnswerLevelChanges | { 
 const objectIn = (data: unknown): Record<string, unknown> => (typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {});
 
 /**
+ * What @ember may do on the web while Search the web is on: search it, and read pages, the ones people
+ * link to and its searches find, where AI Gateway takes its model's tool for that too.
+ */
+export const WEB_TOOLS = ["search", "read"] as const;
+export type WebTool = (typeof WEB_TOOLS)[number];
+
+/** The most times @ember searches the web for one answer, as each of Anthropic's searches costs a cent. */
+export const WEB_SEARCHES_PER_ANSWER = 5;
+
+/** The most pages @ember reads for one answer, as what it reads is paid for as the conversation is. */
+export const PAGES_READ_PER_ANSWER = 3;
+
+/**
  * Ember AI as the AI assistant tab shows it to administrators while it's on: the Cloudflare account it
  * asks through, the model it answers anyone with who hasn't picked another, the models people can pick
- * from, that one among them, in the order they were added, and the most each dial goes to for anyone's
- * questions.
+ * from, that one among them, in the order they were added, the most each dial goes to for anyone's
+ * questions, and what @ember does on the web: what it may while Search the web is on, nothing while it's
+ * off, or null when the model that answers everyone can't, as only Anthropic's and OpenAI's models have
+ * tools for it that AI Gateway passes on.
  */
 export interface AssistantSettings {
   accountId: string;
   model: string;
   models: AssistantModel[];
   most: AnswerLevels;
+  webTools: WebTool[] | null;
 }
 
 /** What `PATCH /api/account/assistant` answers once it has saved a change, and `DELETE /api/account/assistant/models` a model's removal: Ember AI as it is then. */
@@ -202,6 +218,36 @@ export interface YourAssistantChanged {
 
 /** What the AI assistant tab says when a change to the most each dial goes to comes while Ember AI is off. */
 export const ASSISTANT_OFF = "Ember AI is off. Turn it on first.";
+
+/** What `PUT /api/account/assistant/web_search` takes: whether @ember searches the web, as the Search the web switch says. */
+export interface WebSearchChange {
+  on: boolean;
+}
+
+/** The change `data` gives, as the switch sends it, or null when it doesn't say on or off. */
+export function parseWebSearchChange(data: unknown): WebSearchChange | null {
+  const on = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>).on : undefined;
+  return typeof on === "boolean" ? { on } : null;
+}
+
+/**
+ * What `PUT /api/account/assistant/web_search` answers once it has changed Search the web: Ember AI as
+ * it is then, and, once it's turned on, what its model said when it searched, or else null.
+ */
+export interface WebSearchChanged {
+  assistant: AssistantSettings;
+  found: string | null;
+}
+
+/** Why a change to Search the web is refused before anything's asked. */
+export const WEB_SEARCH_REFUSED = "Say whether @ember searches the web.";
+
+/** Why Search the web can't turn on for the model called `name`, which has no tool for it that AI Gateway passes on. */
+export const cannotSearchWith = (name: string) =>
+  `${name} can't search the web through AI Gateway, but Anthropic's and OpenAI's models can. Choose one under Models or Change.`;
+
+/** Why it didn't turn on once the model was asked: Ember AI was changed or turned off meanwhile, or Search the web was. */
+export const WEB_SEARCH_CHANGED = "Ember AI changed while its model searched. Try again.";
 
 /**
  * The Cloudflare account Ember AI asks through, as Set up Ember AI gives it: its ID, and an API token of

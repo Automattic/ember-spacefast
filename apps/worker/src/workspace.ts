@@ -76,10 +76,11 @@ import {
   withinMost,
   type AnswerLevels,
   type AssistantChanges,
+  type WebTool,
   type YourAssistant,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
-import type { Gateway } from "./assistant/gateway";
+import { WEB_TOOLS_IN, type Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";
@@ -272,7 +273,32 @@ const accountOf = ({
 
 /** Ember AI as the AI assistant tab shows `account`'s to administrators, or null while it's off. */
 const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount, "assistant" | "assistantMost">): AssistantSettings | null =>
-  assistant && { accountId: assistant.accountId, model: assistant.model, models: assistant.models, most: assistantMost };
+  assistant && {
+    accountId: assistant.accountId,
+    model: assistant.model,
+    models: assistant.models,
+    most: assistantMost,
+    webTools: WEB_TOOLS_IN[assistant.format].length === 0 ? null : assistant.webTools,
+  };
+
+/**
+ * How AI Gateway is asked, as far as the tools it passes on go: through which Cloudflare account, whose
+ * gateway settings and provider keys it uses, and the model and format, but whichever of the account's
+ * API tokens asks.
+ */
+type AskedAs = Pick<Gateway, "accountId" | "model" | "format">;
+
+/** Whether Ember AI, as `saved`, answers everyone as `asked` says: through its account, with its model, in its format. */
+const isAskedAs = (saved: SavedAssistant, asked: AskedAs) => saved.accountId === asked.accountId && saved.model === asked.model && saved.format === asked.format;
+
+/**
+ * What @ember may do on the web, and when that was asked for, once Ember AI, `saved`, or off for null,
+ * changes at `changedAt` to answer everyone as `asked` says: as they were, for the same account and model
+ * in the same format, and else nothing, as of then, as another account or model may not take the same
+ * tools, so that a test Search the web began before then can't turn it on.
+ */
+const webToolsKept = (saved: SavedAssistant | null, asked: AskedAs, changedAt: string): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
+  saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: changedAt };
 
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
 const levelsOf = (picked: AssistantPicks | null, most: AnswerLevels): AnswerLevels =>
@@ -380,8 +406,8 @@ export interface BotAccess {
 
 /**
  * @ember as a room asks Ember AI to answer a question there (`Workspace.assistantIn`): how Ember AI asks AI
- * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, and how
- * much it thinks and how long it answers whoever asked.
+ * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, how
+ * much it thinks and how long it answers whoever asked, and what it may do on the web.
  */
 export interface AssistantAccess extends BotAccess {
   gateway: Gateway | null;
@@ -389,6 +415,10 @@ export interface AssistantAccess extends BotAccess {
   picked: boolean;
   community: string;
   levels: AnswerLevels;
+  /** What the gateway's model may do on the web: what Search the web lets @ember do, of what that model's format has tools for. */
+  webTools: WebTool[];
+  /** Whether Search the web is on, which `webTools` doesn't show for a model that can't search. */
+  webSearchOn: boolean;
 }
 
 /** How Set up Ember AI has Ember AI ask AI Gateway (`Gateway`), with the name of its model, if it was given one. */
@@ -989,7 +1019,9 @@ export class Workspace extends DurableObject<Env> {
    * off deactivates @ember, as deleting a bot does, and forgets the models people could pick. Everyone's
    * workspace sockets hear of @ember either way. A change that kept the API token Ember had, as
    * `keptToken` says, changes nothing ("changed") once that's no longer Ember's token: Ember AI was turned
-   * off while the model answered, which forgot it, or set up again with another.
+   * off while the model answered, which forgot it, or set up again with another. What @ember may do on
+   * the web stays as Search the web found it while the account, the model that answers everyone and its
+   * format do (`webToolsKept`), and turns off otherwise, as setting Ember AI up after it was off does.
    */
   async changeAssistant(credentials: Credentials, chosen: AssistantChoice | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
     return this.administerAccount(credentials, async (account) => {
@@ -1001,6 +1033,7 @@ export class Workspace extends DurableObject<Env> {
         model: chosen.model,
         format: chosen.format,
         models: modelsAfterSetup(account.assistant, chosen),
+        ...webToolsKept(account.assistant, chosen, new Date().toISOString()),
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
@@ -1012,7 +1045,8 @@ export class Workspace extends DurableObject<Env> {
    * Changes the most each of @ember's dials goes to for anyone's questions, and which of the models
    * people can pick it answers everyone else with, by `changes`, as the administrator `credentials` signs
    * in, answering Ember AI as the AI assistant tab then shows it: "off" while it's off, "not listed" for a
-   * model people can't pick, "forbidden" for anyone else, and null without a valid session.
+   * model people can't pick, "forbidden" for anyone else, and null without a valid session. Choosing
+   * another model turns Search the web off, as Set up Ember AI choosing one does (`webToolsKept`).
    */
   async changeAssistantSettings(
     credentials: Credentials,
@@ -1022,8 +1056,32 @@ export class Workspace extends DurableObject<Env> {
       if (!account.assistant) return "off";
       const chosen = model === undefined ? null : account.assistant.models.find(({ id }) => id === model);
       if (chosen === undefined) return "not listed";
-      const assistant = chosen ? { ...account.assistant, model: chosen.id, format: chosen.format } : account.assistant;
+      const asked = chosen && { accountId: account.assistant.accountId, model: chosen.id, format: chosen.format };
+      const assistant = asked ? { ...account.assistant, ...asked, ...webToolsKept(account.assistant, asked, new Date().toISOString()) } : account.assistant;
       return this.storeAssistant(account, assistant, { ...account.assistantMost, ...levels });
+    });
+  }
+
+  /**
+   * Changes what @ember may do on the web to `webTools`, as Search the web was asked to at `askedAt` while
+   * Ember AI is on, as the administrator `credentials` signs in, answering Ember AI as the AI assistant tab
+   * then shows it: "off" while it's off, "forbidden" for anyone else, and null without a valid session.
+   * The change, whose tools Search the web found the model `tested` took, changes nothing ("changed") once
+   * Ember AI answers everyone through another account or with another model, or in another format, or
+   * once a change to Search the web asked for after it has been saved, as when it's turned off while the
+   * model searched, which this change doesn't undo.
+   */
+  async changeAssistantWebTools(
+    credentials: Credentials,
+    webTools: WebTool[],
+    tested: AskedAs | null,
+    askedAt: string,
+  ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      if (!account.assistant) return "off";
+      if (tested && !isAskedAs(account.assistant, tested)) return "changed";
+      if (account.assistant.webToolsAskedAt !== null && account.assistant.webToolsAskedAt > askedAt) return "changed";
+      return this.storeAssistant(account, { ...account.assistant, webTools, webToolsAskedAt: askedAt });
     });
   }
 
@@ -1048,8 +1106,10 @@ export class Workspace extends DurableObject<Env> {
       const listed = assistant.models.some(({ id }) => id === model.id);
       if (!listed && assistant.models.length >= MAX_ASSISTANT_MODELS) return "full";
       const models = listed ? assistant.models.map((kept) => (kept.id === model.id ? model : kept)) : [...assistant.models, model];
-      // The one that answers everyone took its test question in this format now.
-      return this.storeAssistant(account, { ...assistant, models, ...(model.id === assistant.model && { format: model.format }) });
+      // The one that answers everyone took its test question in this format now, which Search the web may not have tried.
+      const asked = { accountId: assistant.accountId, model: model.id, format: model.format };
+      const everyone = model.id === assistant.model && { format: model.format, ...webToolsKept(assistant, asked, new Date().toISOString()) };
+      return this.storeAssistant(account, { ...assistant, models, ...everyone });
     });
   }
 
@@ -1096,12 +1156,15 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * How Ember AI asks AI Gateway, its API token opened, while it's on, or else null, as when the token
-   * doesn't open under SESSION_SECRET, once that's changed, until an administrator sets it up again.
+   * How Ember AI asks AI Gateway, its API token opened, with what the model that answers everyone is
+   * called, while it's on, or else null, as when the token doesn't open under SESSION_SECRET, once that's
+   * changed, until an administrator sets it up again.
    */
-  async assistantGateway(): Promise<Gateway | null> {
-    const account = await this.joinableAccount();
-    return account && this.openedAssistant(account);
+  async assistantGateway(): Promise<(Gateway & { name: string }) | null> {
+    const assistant = (await this.joinableAccount())?.assistant;
+    if (!assistant) return null;
+    const gateway = await this.openedAssistant({ assistant });
+    return gateway && { ...gateway, name: modelName(gateway.model, assistant.models) };
   }
 
   /** How Ember AI asks AI Gateway as `account` keeps it, as `assistantGateway` answers it. */
@@ -2879,9 +2942,10 @@ export class Workspace extends DurableObject<Env> {
   /**
    * @ember in room `roomId`, as a question for it finds it when its turn comes and again before its answer
    * is posted, with when this checked, how it asks AI Gateway, or null while its API token doesn't open
-   * (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can pick it, and
-   * the community's name: null once Ember AI is off or @ember isn't in the room, so that turning Ember AI
-   * off, or taking @ember out of a room, stops what's on its way there.
+   * (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can pick it, the
+   * community's name, and what @ember may do on the web, with whichever model answers, of what its format
+   * has tools for: null once Ember AI is off or @ember isn't in the room, so that turning Ember AI off, or
+   * taking @ember out of a room, stops what's on its way there.
    */
   async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
     // Before anything is read, as `roomAccess` takes it.
@@ -2892,7 +2956,10 @@ export class Workspace extends DurableObject<Env> {
     const picked = pickedModelOf(account.assistant, picks);
     const gateway = opened && picked ? { ...opened, model: picked.id, format: picked.format } : opened;
     const levels = levelsOf(picks, account.assistantMost);
-    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels };
+    const { format } = picked ?? account.assistant;
+    const webTools = account.assistant.webTools.filter((tool) => WEB_TOOLS_IN[format].includes(tool));
+    const webSearchOn = account.assistant.webTools.includes("search");
+    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels, webTools, webSearchOn };
   }
 
   /**
