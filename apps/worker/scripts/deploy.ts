@@ -23,6 +23,10 @@
 // CLOUDFLARE_ACCOUNT_ID, which a Worker can't learn by itself, for Set up Ember AI to fill in. Deploy
 // to Cloudflare's copy of Ember leaves out the .github folder, and with it the Update Ember workflow
 // that offers the copy Ember's releases, so a deploy without that workflow ends by saying how to add it.
+// Where STORAGE_BACKEND keeps messages in D1, the deploy makes the database the config names if the
+// account has none, refuses one in which an Ember the Worker isn't bound to is set up, and applies
+// Ember's migrations to it before the Worker that reads it deploys; on DO SQLite, it deploys without the
+// D1 database that Deploy to Cloudflare's form makes for every copy.
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -30,6 +34,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { dataOf } from "./jsonc.ts";
 import { vapidKeys } from "./vapid-keys.ts";
 
 /** The repository's root, where wrangler.jsonc is. */
@@ -271,23 +276,202 @@ function tellUpdateWorkflow(): void {
   }
 }
 
+/** Where the Worker may keep messages, as STORAGE_BACKEND says (apps/worker/src/env.ts). */
+const BACKENDS = ["do-sqlite", "d1"];
+/** The binding of the D1 database the Worker keeps its tables in on D1 (apps/worker/src/db.ts). */
+const D1_BINDING = "DB";
 /**
- * Deploys with `args`, the missing secrets and the account's ID, where it's known, says how to set Ember
- * up, and answers wrangler's exit status.
+ * The deploy environment's word that a D1 database it names, by name or id, is this Ember's own, though an
+ * Ember is set up in it and the Worker isn't bound to it: after a time on DO SQLite, or with its Worker made again.
+ */
+const ADOPT_D1 = "EMBER_ADOPT_D1_DATABASE";
+
+/** A wrangler config's settings, as much of them as the deploy reads. */
+interface Settings {
+  vars?: Record<string, unknown>;
+  d1_databases?: { binding: string; database_name?: string; database_id?: string }[];
+  [setting: string]: unknown;
+}
+
+/** The config wrangler deploys from: the one `args` name, from the root, as wrangler runs there, else the root's wrangler.jsonc. */
+function configFileOf(args: string[]): string {
+  const at = args.findIndex((arg) => isOption(arg, "--config") || isOption(arg, "-c"));
+  if (at === -1) return path.join(ROOT, "wrangler.jsonc");
+  const arg = args[at]!;
+  return path.resolve(ROOT, arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : (args[at + 1] ?? ""));
+}
+
+/** `args` without the config they name, for the deploy to name its own. */
+function withoutConfig(args: string[]): string[] {
+  return args.filter((arg, at) => !(isOption(arg, "--config") || isOption(arg, "-c")) && !["--config", "-c"].includes(args[at - 1]!));
+}
+
+/**
+ * The settings in `file`, or none where the deploy can't read it and so deploys it as it is: where there's
+ * no such file, which wrangler goes on to say, or where it's TOML, which leaves D1's migrations to the deployer.
+ */
+function settingsOf(file: string): Settings | undefined {
+  if (!existsSync(file)) return undefined;
+  if (path.extname(file) === ".toml") {
+    const config = path.relative(ROOT, file);
+    console.log(
+      `The deploy reads JSON and JSONC configs, not TOML, so it deploys ${config} as it is. Where it keeps messages in D1, apply Ember's migrations to the database with pnpm exec wrangler d1 migrations apply ${D1_BINDING} --remote --config ${config}`,
+    );
+    return undefined;
+  }
+  return dataOf(readFileSync(file, "utf8")) as Settings;
+}
+
+/** Whether `args` ask wrangler deploy for a dry run, which changes nothing: `--dry-run`, unless they give it as false. */
+function isDryRun(args: string[]): boolean {
+  const at = args.findLastIndex((arg) => isOption(arg, "--dry-run"));
+  if (at === -1) return false;
+  return (args[at] === "--dry-run" ? args[at + 1] : args[at]!.slice("--dry-run=".length)) !== "false";
+}
+
+/** The vars `args` give, as wrangler deploy takes them, `--var NAME:value` and then any more values after it, by name. */
+function varsGiven(args: string[]): Map<string, string> {
+  const vars = new Map<string, string>();
+  let listing = false;
+  for (const arg of args) {
+    const value: string | undefined = arg.startsWith("--var=") ? arg.slice("--var=".length) : listing && !arg.startsWith("-") ? arg : undefined;
+    listing = arg === "--var" || (listing && value !== undefined);
+    if (value?.includes(":")) vars.set(value.slice(0, value.indexOf(":")), value.slice(value.indexOf(":") + 1));
+  }
+  return vars;
+}
+
+/**
+ * Where the deployed Worker keeps its messages: STORAGE_BACKEND as a `--var` gives it, else as the config's
+ * vars do. Anything else stops the deploy, since the Worker would take a misspelled `d1` for `do-sqlite`.
+ */
+function backendOf(settings: Settings, args: string[]): string {
+  const backend = varsGiven(args).get("STORAGE_BACKEND") ?? settings.vars?.STORAGE_BACKEND ?? "do-sqlite";
+  if (typeof backend !== "string" || !BACKENDS.includes(backend)) {
+    throw new Error(`STORAGE_BACKEND must be "do-sqlite" or "d1", not ${JSON.stringify(backend)}: set it in wrangler.jsonc's vars.`);
+  }
+  return backend;
+}
+
+/**
+ * The config to deploy a Worker on DO SQLite from: `file` without its D1 databases, written beside it so its
+ * paths mean what they did, under a name of this deploy's own, as another may run beside it, or `file` itself
+ * where it binds none. Deploy to Cloudflare's form makes the
+ * database for every deploy, as it can't make one only for D1, and only D1 uses it; bound, it would have
+ * wrangler look for it by name, or make it, with a token that may not touch D1, as Workers Builds' own may not.
+ */
+function withoutD1(file: string, settings: Settings): string {
+  if (!settings.d1_databases?.length) return file;
+  const { d1_databases: _, ...rest } = settings;
+  const deployed = path.join(path.dirname(file), `${path.parse(file).name}.${process.pid}.deploy.json`);
+  writeFileSync(deployed, `${JSON.stringify(rest, null, 2)}\n`);
+  return deployed;
+}
+
+/** Runs `wrangler d1` with `args`, and stops the deploy where it fails, saying what D1 takes. */
+function d1(args: string[], capture: boolean, env: Record<string, string> = {}) {
+  const result = wrangler(["d1", ...args], capture, env);
+  if (result.status === 0) return result;
+  throw new Error(
+    `${capture ? `${result.stdout}${result.stderr}\n` : ""}wrangler d1 ${args[0]} failed. Keeping messages in D1 takes a Cloudflare API token that may edit D1, as Workers Builds' token may not: its permissions are in the dashboard, under My Profile, API Tokens.`,
+  );
+}
+
+/** The id of the D1 database named `name` in the account that `file` deploys to, if it has one. */
+const idOfDatabaseNamed = (file: string, name: string) =>
+  (JSON.parse(d1(["list", "--json", "--config", file], true).stdout) as { uuid: string; name: string }[]).find((database) => database.name === name)?.uuid;
+
+/** The rows `sql` reads from the D1 database bound as DB in `file`. */
+function queryD1(file: string, sql: string): Record<string, unknown>[] {
+  const answered = d1(["execute", D1_BINDING, "--remote", "--json", "--yes", "--command", sql, "--config", file], true);
+  return (JSON.parse(answered.stdout) as { results: Record<string, unknown>[] }[])[0]?.results ?? [];
+}
+
+/** Whether an Ember is set up in the D1 database bound as DB in `file`: setting up makes its one account. */
+function isSetUpIn(file: string): boolean {
+  if (queryD1(file, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts'").length === 0) return false;
+  return queryD1(file, "SELECT EXISTS (SELECT 1 FROM accounts) AS set_up")[0]?.set_up === 1;
+}
+
+/** Runs `wrangler` with `args` for the Worker the deploy's `target` options pick, and reads its JSON answer. */
+function workerJson<T>(args: string[], target: string[]): T {
+  const answered = wrangler([...args, "--json", ...target], true);
+  if (answered.status !== 0) throw new Error(`Couldn't tell which D1 database the Worker uses:\n${answered.stdout}${answered.stderr}`);
+  return JSON.parse(answered.stdout) as T;
+}
+
+/** The ids of the D1 databases the Worker's current deployment binds as DB: none on DO SQLite, whose deploys bind none. */
+function databasesBound(target: string[]): string[] {
+  const { versions } = workerJson<{ versions: { version_id: string }[] }>(["deployments", "status"], target);
+  return versions.flatMap(({ version_id: version }) => {
+    const { resources } = workerJson<{ resources: { bindings: { type: string; name: string; id?: string }[] } }>(["versions", "view", version], target);
+    return resources.bindings.flatMap(({ type, name, id }) => (type === "d1" && name === D1_BINDING && id ? [id] : []));
+  });
+}
+
+/**
+ * Stops the deploy where an Ember is set up in the D1 database `id` and the Worker isn't bound to it, as it
+ * wouldn't be to another Ember's, which the form may pick or a config may name: a new Worker is bound to none,
+ * and one deployed before to what its current deployment binds. The deploy's environment may say it's this Ember's own.
+ */
+function refuseAnotherEmbers(file: string, database: { id: string; name?: string }, newWorker: boolean, target: string[]): void {
+  const adopted = process.env[ADOPT_D1]?.trim();
+  if (adopted && (adopted === database.id || adopted === database.name)) return;
+  if (!newWorker && databasesBound(target).includes(database.id)) return;
+  if (!isSetUpIn(file)) return;
+  throw new Error(
+    `An Ember is already set up in the D1 database ${database.name ?? database.id}, which this Worker isn't bound to. Two Embers can't share a database, as each would let in the other's people: give this one its own in ${path.relative(ROOT, file)}, a new database_name without a database_id, which the next deploy makes. If that database is this Ember's own, from before it was on DO SQLite or before its Worker was made again, set ${ADOPT_D1} to its name in the deploy's environment, and deploy again.`,
+  );
+}
+
+/**
+ * Readies the D1 database bound as DB in `file` for a Worker on D1, before the version that reads it deploys:
+ * makes it where `file` names one the account doesn't have yet, refuses one another Ember may be set up in,
+ * and applies Ember's migrations to it.
+ */
+function readyD1(file: string, settings: Settings, newWorker: boolean, target: string[]): void {
+  const database = settings.d1_databases?.find(({ binding }) => binding === D1_BINDING);
+  const name = database?.database_name;
+  if (!database || (!database.database_id && !name)) {
+    throw new Error(`STORAGE_BACKEND is "d1", but ${path.relative(ROOT, file)} binds no D1 database as ${D1_BINDING}.`);
+  }
+  const id = database.database_id ?? idOfDatabaseNamed(file, name!);
+  if (id === undefined) {
+    console.log(`Making the D1 database ${name}, which keeps this Ember's messages`);
+    d1(["create", name!, "--no-update-config", "--config", file], false);
+  } else {
+    refuseAnotherEmbers(file, { id, name }, newWorker, target);
+  }
+  // CI answers yes to wrangler's question before it applies them.
+  d1(["migrations", "apply", D1_BINDING, "--remote", "--config", file], false, { CI: "true" });
+}
+
+/**
+ * Deploys with `args`, the missing secrets and the account's ID, where it's known, on the storage
+ * STORAGE_BACKEND names, says how to set Ember up, and answers wrangler's exit status.
  */
 async function deploy(args: string[]): Promise<number> {
   const target = targetOptions(args);
-  const { secrets, setupToken } = await missingSecrets(secretNames(target));
+  const configFile = configFileOf(args);
+  const settings = settingsOf(configFile);
+  const backend = backendOf(settings ?? {}, args);
+  const names = secretNames(target);
+  const { secrets, setupToken } = await missingSecrets(names);
   const given = givenSecrets();
   const accountId = deployAccountId();
   const dir = mkdtempSync(path.join(tmpdir(), "ember-deploy-"));
+  let config = configFile;
   try {
+    // A Worker without a session secret has never deployed, so it's bound to no database.
+    if (settings && backend === "d1" && !isDryRun(args)) readyD1(configFile, settings, !names.includes("SESSION_SECRET"), target);
+    if (settings && backend !== "d1") config = withoutD1(configFile, settings);
     const file = path.join(dir, "secrets.json");
     writeFileSync(file, JSON.stringify({ ...secrets, ...given, ...(accountId && { CLOUDFLARE_ACCOUNT_ID: accountId }) }), { mode: 0o600 });
     console.log(uploading(Object.keys(secrets), Object.keys(given), accountId !== null));
     // wrangler records what it deployed, the Worker's address among it, in the file the environment names, else one of this deploy's own.
     const output = process.env.WRANGLER_OUTPUT_FILE_PATH || path.join(dir, "wrangler-output.json");
-    const status = wrangler(["deploy", "--secrets-file", file, ...args], false, { WRANGLER_OUTPUT_FILE_PATH: output }).status ?? 1;
+    const options = config === configFile ? args : [...withoutConfig(args), "--config", path.relative(ROOT, config)];
+    const status = wrangler(["deploy", "--secrets-file", file, ...options], false, { WRANGLER_OUTPUT_FILE_PATH: output }).status ?? 1;
     if (status === 0) {
       tellSetupLink(setupToken, secrets.EMBER_SETUP_TOKEN, deployedUrl(output), target);
       tellUpdateWorkflow();
@@ -295,6 +479,7 @@ async function deploy(args: string[]): Promise<number> {
     return status;
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    if (config !== configFile) rmSync(config, { force: true });
   }
 }
 

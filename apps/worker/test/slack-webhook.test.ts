@@ -6,7 +6,7 @@ import { slackMessage } from "../src/bots/slack";
 import { keptCards } from "../src/cards";
 import type { Env } from "../src/env";
 import slackPayloads from "./fixtures/slack_payloads.json";
-import { api, apiWith, connect, cookieOf, createRoom, freshDeploy, objectSql, roomSql, roomStub, shown, workspaceSql, type Session } from "./support";
+import { api, apiWith, connect, cookieOf, createRoom, freshDeploy, objectSql, roomSql, roomStub, sharedD1, shown, workspaceSql, type Session } from "./support";
 
 // What a Slack incoming webhook is sent, posted to a room at /rooms/<room id>/<bot key>/slack (bots/slack.ts),
 // so tools that post to Slack can post to Ember, answered as Slack's webhooks answer.
@@ -41,7 +41,7 @@ const refused = (status: number, error: string) => [status, "text/plain; charset
 /** The bodies of the messages `room` has, oldest first: on DO SQLite, none until its object has opened its database. */
 async function bodiesIn(room: RoomId): Promise<string[]> {
   const opened = (await objectSql(roomStub(room), "SELECT name FROM sqlite_master WHERE name = 'messages'")).length > 0;
-  if (!(env as { DB?: D1Database }).DB && !opened) return [];
+  if (!sharedD1() && !opened) return [];
   return ((await roomSql(room, "SELECT body FROM messages WHERE room_id = ? ORDER BY id", room)) as { body: string }[]).map(({ body }) => body);
 }
 
