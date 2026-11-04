@@ -244,7 +244,9 @@ test.describe("@ember", () => {
     // It's typing while its model answers, and its answer is a message of its own.
     await expect(page.locator(".spinner")).toHaveText("Ember");
     answering();
-    const answer = page.getByRole("article").filter({ hasText: HELLO });
+    // The room's last message, as an earlier test's answer in general says the same.
+    const answer = page.getByRole("article").last();
+    await expect(answer).toContainText(HELLO);
     await expect(answer.getByRole("heading", { level: 3 })).toHaveText(/^Ember Agent/);
     await expect(page.locator(".spinner")).toHaveText("");
     const [instructions, ...turns] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
