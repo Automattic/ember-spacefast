@@ -8,7 +8,7 @@ import {
   type AssistantSaved,
   type AssistantSetup,
 } from "@ember/protocol/assistant";
-import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
+import { MENTION_CONTENT_TYPE, mentionPromptItem, mentionSgid } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_UNANSWERED, NOTHING_ANSWERED } from "../src/assistant/gateway";
 import { API_TOKEN_CHANGED, API_TOKEN_NEEDED } from "../src/assistant/settings";
@@ -192,6 +192,21 @@ describe("Ember AI", () => {
       // Its answer is the model's hello (answers.test.ts follows what it answers).
       expect((await client.next("message.created")).message).toMatchObject({ creator: { id: ASSISTANT_ID, name: "Ember" }, plainText: HELLO });
       client.close();
+    });
+
+    it("is offered in the mentions prompt badged as an agent, as nobody else is", async () => {
+      const administrator = await setUp();
+      fakeGateway();
+      await saved(administrator);
+      const [room] = await openRooms();
+      const response = await api(`/api/autocompletable/users?room_id=${room}`, { headers: as(administrator) });
+      expect(response.status, await response.clone().text()).toBe(200);
+      const { users } = (await (await api("/api/users", { headers: as(administrator) })).json()) as Directory;
+      const card = (userId: string) => {
+        const { id, name, avatarUrl } = users.find((user) => user.id === userId)!;
+        return { id, name, avatarUrl };
+      };
+      expect(await response.text()).toBe(mentionPromptItem(card(administrator.user.id)) + mentionPromptItem({ ...card(ASSISTANT_ID), agent: true }));
     });
 
     it("keeps the API token it has when a change gives none, and needs one when it has none", async () => {
