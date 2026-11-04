@@ -46,7 +46,12 @@ pnpm run deploy        # not `pnpm deploy`, which is pnpm's own command
 Either way, `pnpm run deploy` (`apps/worker/scripts/deploy.ts`) makes the Worker's `SESSION_SECRET`
 and a VAPID key pair for push notifications on its first deploy, and later deploys keep them, since
 a new secret would sign everyone out and a new pair would end every push subscription. They go up
-with the code and never appear in the deploy's output.
+with the code and never appear in the deploy's output. So does the ID of the Cloudflare account the
+Worker goes to, as `CLOUDFLARE_ACCOUNT_ID`, which a Worker can't find out by itself, for
+[Set up Ember AI](#ember-ai) to fill in: the account the `CLOUDFLARE_ACCOUNT_ID` environment
+variable names, if it's set, or else the only one your login reaches, as a Deploy to Cloudflare
+build's token does. A login that reaches several gives none, unless you set the variable, and the
+field starts blank.
 
 Whoever deployed Ember sets it up, and nobody else. After Deploy to Cloudflare, open the Worker's
 address and type the setup password you gave the form: `/first_run` asks for it before the
@@ -439,8 +444,10 @@ back together. R2 deletes the parts of an upload nobody finishes after a week.
 
 An administrator adds @ember, an AI assistant, on the AI assistant tab of community settings. Turning
 on its Ember AI card opens Set up Ember AI, which takes a Cloudflare account's ID and an API token,
-both from Workers AI's Use REST API in the Cloudflare dashboard, then a model. Ember asks models
-through the account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
+both from Workers AI's Use REST API in the Cloudflare dashboard, then a model. The account's ID
+starts as the one Ember is deployed to, when the deploy gave it, leaving only the token to copy, and
+the dialog's links open that account's pages in the dashboard. Ember asks models through the
+account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
 logs, caching and spend limits apply. Workers AI's models come with Cloudflare's free daily
 allowance, and other companies', such as Anthropic's, OpenAI's and Google's, are paid for with AI
 Gateway's credits, as [What it costs](#what-it-costs) says. The Worker asks the model a test question
@@ -484,7 +491,8 @@ repository secrets, and skips without them:
 - `CLOUDFLARE_ACCOUNT_ID`: under Account details on the Workers & Pages overview.
 
 The first deploy makes the Worker's `SESSION_SECRET` and VAPID key pair, and later ones keep them;
-they go up with the deploy, never in its logs. A public repository's Actions logs are public too, so
+they go up with the deploy, never in its logs, as the account's ID does, for Set up Ember AI to fill
+in. A public repository's Actions logs are public too, so
 the workflow prints no setup link and makes no setup token: the Worker takes its token from an
 `EMBER_SETUP_TOKEN` repository secret, if you add one (`openssl rand -hex 32`) before the first
 deploy, and the run's log then says to open `<the preview>/first_run#token=<your token>` to set

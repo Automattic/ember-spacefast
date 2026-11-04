@@ -23,15 +23,23 @@ import { cn } from "@/lib/utils";
 import { DIALOG, DIALOG_BACKDROP, DIALOG_CLOSE, DIALOG_TITLE, MAIN_ACTION, OTHER_ACTION } from "./unsaved-changes";
 
 // Set up Ember AI, for administrators: the steps to give @ember a model through Cloudflare AI Gateway, in
-// a dialog that the AI assistant tab's Ember AI card opens. First the Cloudflare account's ID and an API
-// token of its, which Workers AI's Use REST API makes, then the model, which the Worker asks a test
-// question through AI Gateway before keeping all three, saying on the field it's about why it didn't
-// answer, if it didn't. Then what the model said. Styled as Set up Turnstile is.
+// a dialog that the AI assistant tab's Ember AI card opens. First the Cloudflare account's ID, filled in
+// with the account Ember is deployed to when the deploy gave it, and an API token of its, which Workers
+// AI's Use REST API makes, then the model, which the Worker asks a test question through AI Gateway
+// before keeping all three, saying on the field it's about why it didn't answer, if it didn't. Then what
+// the model said. Styled as Set up Turnstile is.
+
+/**
+ * The page at `path` in the Cloudflare dashboard, in the account `accountId` names, or else in the one
+ * the dashboard picks, asking someone with several accounts which.
+ */
+const dashboard = (accountId: string | null, path: string) =>
+  accountId === null ? `https://dash.cloudflare.com/?to=/:account/${path}` : `https://dash.cloudflare.com/${accountId}/${path}`;
 
 /** Where Workers AI's Use REST API makes an API token and shows the account's ID, in the Cloudflare dashboard. */
-export const WORKERS_AI_DASHBOARD = "https://dash.cloudflare.com/?to=/:account/ai/workers-ai";
+const workersAiDashboard = (accountId: string | null) => dashboard(accountId, "ai/workers-ai");
 /** Where AI Gateway's credits are topped up, under Credits Available, in the Cloudflare dashboard. */
-export const AI_GATEWAY_DASHBOARD = "https://dash.cloudflare.com/?to=/:account/ai/ai-gateway";
+const aiGatewayDashboard = (accountId: string | null) => dashboard(accountId, "ai/ai-gateway");
 /** Cloudflare's catalog of the models AI Gateway takes. */
 export const MODEL_CATALOG = "https://developers.cloudflare.com/ai/models/";
 
@@ -63,6 +71,8 @@ type KeyField = Exclude<AssistantField, "model">;
 
 interface Props {
   assistant: AssistantSettings | null;
+  /** The Cloudflare account Ember is deployed to, which the account's ID starts as while Ember AI is off, if the deploy gave it. */
+  deployedAccountId: string | null;
   /** Shows Ember AI as it's saved. */
   onSaved: (assistant: AssistantSettings) => void;
   onClose: () => void;
@@ -71,9 +81,11 @@ interface Props {
 }
 
 /** Set up Ember AI: the account and its API token, then the model, which saves them once it answers a test question. */
-export function AssistantSetup({ assistant, onSaved, onClose, onFailed }: Props) {
+export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose, onFailed }: Props) {
   const [step, setStep] = useState<Step>("keys");
-  const [typed, setTyped] = useState<Record<KeyField, string>>({ accountId: assistant?.accountId ?? "", apiToken: "" });
+  // The account's ID as Ember AI has it, or else as the deploy gave it, which the steps then needn't say where to copy from.
+  const [filledIn] = useState(() => assistant?.accountId ?? deployedAccountId);
+  const [typed, setTyped] = useState<Record<KeyField, string>>({ accountId: filledIn ?? "", apiToken: "" });
   const [model, setModel] = useState(() => modelChoiceOf(assistant));
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   // Asking the model a test question holds the dialog open until it's answered.
@@ -121,6 +133,8 @@ export function AssistantSetup({ assistant, onSaved, onClose, onFailed }: Props)
     keys: (
       <KeysStep
         hasToken={assistant !== null}
+        filledIn={filledIn !== null}
+        deployedAccountId={deployedAccountId}
         typed={typed}
         onType={(field, text) => {
           setTyped((typed) => ({ ...typed, [field]: text }));
@@ -134,6 +148,7 @@ export function AssistantSetup({ assistant, onSaved, onClose, onFailed }: Props)
     ),
     model: (
       <ModelStep
+        accountId={accountIdOf(typed.accountId)}
         model={model}
         onChoose={(model) => {
           setModel(model);
@@ -248,9 +263,12 @@ function FieldRefusal({ id, field, refusal }: { id: string; field: AssistantFiel
 /**
  * The first step: the Cloudflare account's ID and an API token of its, from Workers AI's Use REST API,
  * which go on to the model once they can be an account's, a token left blank keeping the one Ember has.
+ * The dashboard opens at the account typed, once it can be one.
  */
 function KeysStep({
   hasToken,
+  filledIn,
+  deployedAccountId,
   typed,
   onType,
   refusal,
@@ -259,6 +277,9 @@ function KeysStep({
   onCancel,
 }: {
   hasToken: boolean;
+  /** Whether the account's ID was filled in, so that the steps needn't say where to copy it from. */
+  filledIn: boolean;
+  deployedAccountId: string | null;
   typed: Record<KeyField, string>;
   onType: (field: KeyField, text: string) => void;
   refusal: Refusal | null;
@@ -272,6 +293,9 @@ function KeysStep({
     if (typed.apiToken.trim() !== "" && apiTokenOf(typed.apiToken) === null) return onRefuse("apiToken", API_TOKEN_REFUSED);
     onContinue();
   };
+  const accountId = accountIdOf(typed.accountId);
+  const accountRefused = refusal?.field === "accountId";
+  const deployedTo = !accountRefused && deployedAccountId !== null && accountId === deployedAccountId;
   const tokenRefused = refusal?.field === "apiToken";
 
   return (
@@ -282,14 +306,16 @@ function KeysStep({
       </DialogDescription>
       <ol aria-label="Steps to make a Workers AI API token" className="mb-4 flex list-decimal flex-col gap-2 ps-5">
         <li>
-          In the Cloudflare dashboard, open <em>Workers AI</em> and choose <em>Use REST API</em>. <Out href={WORKERS_AI_DASHBOARD}>Open Workers AI in the Cloudflare dashboard</Out>
+          In the Cloudflare dashboard, open <em>Workers AI</em> and choose <em>Use REST API</em>. <Out href={workersAiDashboard(accountId)}>Open Workers AI in the Cloudflare dashboard</Out>
         </li>
         <li>
           Choose <em>Create a Workers AI API Token</em>, then <em>Create API Token</em>, and copy the token here.
         </li>
-        <li>
-          Copy the <em>Account ID</em> shown there too.
-        </li>
+        {!filledIn && (
+          <li>
+            Copy the <em>Account ID</em> shown there too.
+          </li>
+        )}
       </ol>
       <div className="flex flex-col gap-4">
         <div>
@@ -300,13 +326,21 @@ function KeysStep({
               autoCapitalize="none"
               spellCheck={false}
               value={typed.accountId}
-              aria-invalid={refusal?.field === "accountId"}
-              aria-describedby={refusal?.field === "accountId" ? "assistant-account-id-refusal" : undefined}
+              aria-invalid={accountRefused}
+              aria-describedby={accountRefused ? "assistant-account-id-refusal" : deployedTo ? "assistant-account-id-description" : undefined}
               onChange={(event) => onType("accountId", event.target.value)}
               className={FIELD_INPUT}
             />
           </Field>
-          <FieldRefusal id="assistant-account-id-refusal" field="accountId" refusal={refusal} />
+          {accountRefused ? (
+            <FieldRefusal id="assistant-account-id-refusal" field="accountId" refusal={refusal} />
+          ) : (
+            deployedTo && (
+              <p id="assistant-account-id-description" className={cn(NOTE, "mt-2")}>
+                Ember is deployed to this account. To ask through another, paste that account's ID.
+              </p>
+            )
+          )}
         </div>
         <div>
           <Field id="assistant_api_token" label="API token">
@@ -340,9 +374,11 @@ function KeysStep({
 
 /**
  * The second step: the model @ember runs on, Workers AI's or another company's that Ember lists, or any
- * other in Cloudflare's catalog, by its ID, which Save asks a test question.
+ * other in Cloudflare's catalog, by its ID, which Save asks a test question. AI Gateway's credits are
+ * topped up in the account given, `accountId`.
  */
 function ModelStep({
+  accountId,
   model,
   onChoose,
   refusal,
@@ -351,6 +387,7 @@ function ModelStep({
   onSave,
   onBack,
 }: {
+  accountId: string | null;
   model: ModelChoice;
   onChoose: (model: ModelChoice) => void;
   refusal: Refusal | null;
@@ -434,7 +471,7 @@ function ModelStep({
           ) : (
             <>
               AI Gateway's credits pay for this model. Top them up under <em>Credits Available</em> in AI Gateway.{" "}
-              <Out href={AI_GATEWAY_DASHBOARD}>Open AI Gateway in the Cloudflare dashboard</Out>
+              <Out href={aiGatewayDashboard(accountId)}>Open AI Gateway in the Cloudflare dashboard</Out>
             </>
           )}
         </p>
