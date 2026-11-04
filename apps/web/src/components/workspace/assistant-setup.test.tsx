@@ -1,9 +1,20 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ACCOUNT_ID_REFUSED, API_TOKEN_REFUSED, ASSISTANT_MODELS, MODEL_REFUSED, TOP_LEVELS, type AssistantSettings } from "@ember/protocol/assistant";
+import {
+  ACCOUNT_ID_REFUSED,
+  API_TOKEN_REFUSED,
+  ASSISTANT_MODELS,
+  MODEL_REFUSED,
+  TOP_LEVELS,
+  modelName,
+  type AssistantCatalog,
+  type AssistantSettings,
+  type AssistantSetup as Setup,
+} from "@ember/protocol/assistant";
 import { ApiError } from "@/lib/api";
-import { AssistantSetup, MODEL_CATALOG, searchTurnedOff } from "./assistant-setup";
+import { AssistantSetup, searchTurnedOff } from "./assistant-setup";
+import { CATALOG_UNREAD, MODEL_CATALOG } from "./model-picker";
 
 /** A Cloudflare account's ID and an API token of its, as an administrator copies them from Workers AI's Use REST API. */
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
@@ -12,14 +23,32 @@ const OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210";
 const API_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab";
 const GREETING = "Hello, team! I'm Ember, here whenever you mention @ember.";
 
-/** Answers setting Ember AI up as the server would, with the model sent, or as `saved` says. */
-function serve(saved?: (setup: { accountId: string; model: string }) => Response | Promise<Response>) {
+/** Ember AI as the server saves it from `setup`: on the model sent, the only one people can pick. */
+const savedOf = ({ accountId, model, modelName: name }: Pick<Setup, "accountId" | "model" | "modelName">): AssistantSettings => {
+  const format = ASSISTANT_MODELS.find(({ id }) => id === model)?.format ?? "chat";
+  // Searching the web waits for Search the web to be turned on, for a model that can.
+  return { accountId, model, models: [{ id: model, name: name ?? modelName(model), format }], most: TOP_LEVELS, webTools: format === "chat" ? null : [] };
+};
+
+/** What Cloudflare's catalog lists when it can't be read, as the server answers: the models Ember knows. */
+const KNOWN: AssistantCatalog = { models: [...ASSISTANT_MODELS], refusal: null };
+
+/**
+ * Answers listing Cloudflare's catalog and setting Ember AI up as the server would, with the models Ember
+ * knows and the model sent, or as `saved` and `listed` say.
+ */
+function serve(saved?: (setup: Setup) => Response | Promise<Response>, listed: () => Response | Promise<Response> = () => Response.json(KNOWN)) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    if (`${init?.method} ${String(input)}` !== "PUT /api/account/assistant") throw new Error(`Unexpected request for ${init?.method} ${String(input)}`);
-    const setup = JSON.parse(String(init?.body)) as { accountId: string; model: string };
-    return saved ? saved(setup) : Response.json({ assistant: { accountId: setup.accountId, model: setup.model }, greeting: GREETING });
+    const request = `${init?.method} ${String(input)}`;
+    if (request === "POST /api/account/assistant/catalog") return listed();
+    if (request !== "PUT /api/account/assistant") throw new Error(`Unexpected request for ${request}`);
+    const setup = JSON.parse(String(init?.body)) as Setup;
+    return saved ? saved(setup) : Response.json({ assistant: savedOf(setup), greeting: GREETING });
   });
 }
+
+/** Listing the catalog with the account and API token the tests type. */
+const LISTED = ["POST /api/account/assistant/catalog", { accountId: ACCOUNT_ID, apiToken: API_TOKEN }];
 
 /** What the dialog asked of the server, in order, with what it sent. */
 const asked = () =>
@@ -116,7 +145,9 @@ describe("Set up Ember AI", () => {
     await giveKeys(user);
     const step = await dialog("Choose a model");
     expect(within(step).getByRole("heading", { name: "Choose a model" })).toHaveFocus();
-    expect(step).toHaveAccessibleDescription("Choose the model @ember runs on. Ember asks it a test question through AI Gateway before keeping it.");
+    expect(step).toHaveAccessibleDescription(
+      "Choose the model @ember answers everyone with. Ember asks it a test question through AI Gateway before keeping it. You can let people pick other models later.",
+    );
     const groups = within(modelMenu()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("label"))).toEqual(["Workers AI, with a free daily allowance", "Other companies', paid for with AI Gateway's credits"]);
     expect(within(groups[0]!).getAllByRole("option").map((option) => option.textContent)).toEqual(["GLM-4.7 Flash", "Gemma 4 26B", "gpt-oss-120b"]);
@@ -140,8 +171,9 @@ describe("Set up Ember AI", () => {
     expect(within(done).getByRole("heading", { name: "Ember AI is set up" })).toHaveFocus();
     expect(done).toHaveAccessibleDescription("@ember is in every room open to everyone, running on Claude Sonnet 5.5. Asked to say hello, it said:");
     expect(done).toHaveTextContent(GREETING);
-    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "anthropic/claude-sonnet-5.5" }]]);
-    expect(onSaved).toHaveBeenCalledExactlyOnceWith({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" });
+    const setup = { accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", modelName: "Claude Sonnet 5.5" };
+    expect(asked()).toEqual([LISTED, ["PUT /api/account/assistant", { ...setup, apiToken: API_TOKEN }]]);
+    expect(onSaved).toHaveBeenCalledExactlyOnceWith(savedOf(setup));
     await user.click(button("Done"));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -159,7 +191,7 @@ describe("Set up Ember AI", () => {
     await user.click(button("Save"));
     expect(screen.getByRole("alert")).toHaveTextContent(MODEL_REFUSED);
     expect(modelIdField()).toHaveAttribute("aria-invalid", "true");
-    expect(asked()).toEqual([]);
+    expect(asked()).toEqual([LISTED]);
 
     await user.clear(modelIdField());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -168,8 +200,8 @@ describe("Set up Ember AI", () => {
     expect(await dialog("Ember AI is set up")).toHaveAccessibleDescription(
       "@ember is in every room open to everyone, running on mistral/mistral-large-3. Asked to say hello, it said:",
     );
-    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "mistral/mistral-large-3" }]]);
-    expect(onSaved).toHaveBeenCalledExactlyOnceWith({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3" });
+    expect(asked()).toEqual([LISTED, ["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "mistral/mistral-large-3" }]]);
+    expect(onSaved).toHaveBeenCalledExactlyOnceWith(savedOf({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3" }));
   });
 
   it.each([
@@ -211,7 +243,7 @@ describe("Set up Ember AI", () => {
     ["AI Gateway not answering", 502, "AI Gateway didn't answer. Try again in a moment."],
   ])("says under the model when it couldn't be saved for %s, saving it when asked again", async (_, status, problem) => {
     let answers = 0;
-    serve((setup) => (answers++ === 0 ? Response.json({ error: problem }, { status }) : Response.json({ assistant: setup, greeting: GREETING })));
+    serve((setup) => (answers++ === 0 ? Response.json({ error: problem }, { status }) : Response.json({ assistant: savedOf(setup), greeting: GREETING })));
     const { user, onFailed } = showSetup();
     await giveKeys(user);
     await user.click(await screen.findByRole("button", { name: "Save" }));
@@ -219,11 +251,11 @@ describe("Set up Ember AI", () => {
     expect(onFailed).not.toHaveBeenCalled();
     await user.click(button("Save"));
     expect(await dialog("Ember AI is set up")).toBeInTheDocument();
-    expect(asked()).toHaveLength(2);
+    expect(asked().map(([request]) => request)).toEqual(["POST /api/account/assistant/catalog", "PUT /api/account/assistant", "PUT /api/account/assistant"]);
   });
 
   it("can't be closed while the model's asked, saying so", async () => {
-    const answer = held(() => Response.json({ assistant: { accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }, greeting: GREETING }));
+    const answer = held(() => Response.json({ assistant: savedOf({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }), greeting: GREETING }));
     serve(answer.answered);
     const { user, onClose } = showSetup();
     await giveKeys(user);
@@ -253,7 +285,7 @@ describe("Set up Ember AI", () => {
 
   it("opens on Ember AI as it is to change it, keeping the API token Ember has when none is given", async () => {
     serve();
-    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS, webTools: [] });
+    const { user } = showSetup(savedOf({ accountId: ACCOUNT_ID, model: "openai/gpt-6.1-sol" }));
     await dialog("Set up Ember AI");
     expect(steps()).toHaveLength(2);
     expect(accountIdField()).toHaveValue(ACCOUNT_ID);
@@ -266,7 +298,10 @@ describe("Set up Ember AI", () => {
     await user.selectOptions(modelMenu(), "GPT-6.1 Terra");
     await user.click(button("Save"));
     await dialog("Ember AI is set up");
-    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, model: "openai/gpt-6.1-terra" }]]);
+    expect(asked()).toEqual([
+      ["POST /api/account/assistant/catalog", { accountId: ACCOUNT_ID }],
+      ["PUT /api/account/assistant", { accountId: ACCOUNT_ID, model: "openai/gpt-6.1-terra", modelName: "GPT-6.1 Terra" }],
+    ]);
   });
 
   it("fills in the account Ember is deployed to, saying so, and opens its pages in the Cloudflare dashboard", async () => {
@@ -287,8 +322,9 @@ describe("Set up Ember AI", () => {
     expect(aiGatewayLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/ai-gateway`);
     await user.click(button("Save"));
     await dialog("Ember AI is set up");
-    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "anthropic/claude-sonnet-5.5" }]]);
-    expect(onSaved).toHaveBeenCalledExactlyOnceWith({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" });
+    const setup = { accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", modelName: "Claude Sonnet 5.5" };
+    expect(asked()).toEqual([LISTED, ["PUT /api/account/assistant", { ...setup, apiToken: API_TOKEN }]]);
+    expect(onSaved).toHaveBeenCalledExactlyOnceWith(savedOf(setup));
   });
 
   it("takes another account in place of the one Ember is deployed to, the dashboard's pages following what's typed", async () => {
@@ -305,7 +341,10 @@ describe("Set up Ember AI", () => {
     await user.click(button("Continue"));
     await user.click(await screen.findByRole("button", { name: "Save" }));
     await dialog("Ember AI is set up");
-    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: OTHER_ACCOUNT_ID, apiToken: API_TOKEN, model: ASSISTANT_MODELS[0]!.id }]]);
+    expect(asked()).toEqual([
+      ["POST /api/account/assistant/catalog", { accountId: OTHER_ACCOUNT_ID, apiToken: API_TOKEN }],
+      ["PUT /api/account/assistant", { accountId: OTHER_ACCOUNT_ID, apiToken: API_TOKEN, model: ASSISTANT_MODELS[0]!.id, modelName: ASSISTANT_MODELS[0]!.name }],
+    ]);
   });
 
   it("says why AI Gateway refused the account Ember is deployed to in place of saying it's that account", async () => {
@@ -322,7 +361,7 @@ describe("Set up Ember AI", () => {
 
   it("opens on Ember AI's own account when it's on, saying only of the deployed account that Ember is there", async () => {
     serve();
-    showSetup({ accountId: OTHER_ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS, webTools: [] }, ACCOUNT_ID);
+    showSetup(savedOf({ accountId: OTHER_ACCOUNT_ID, model: "openai/gpt-6.1-sol" }), ACCOUNT_ID);
     await dialog("Set up Ember AI");
     expect(steps()).toHaveLength(2);
     expect(accountIdField()).toHaveValue(OTHER_ACCOUNT_ID);
@@ -332,16 +371,15 @@ describe("Set up Ember AI", () => {
 
   it("opens a model it doesn't list under Another model, with its ID", async () => {
     serve();
-    const { user } = showSetup({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3", most: TOP_LEVELS, webTools: null });
+    const { user } = showSetup(savedOf({ accountId: ACCOUNT_ID, model: "mistral/mistral-large-3" }));
     await user.click(await screen.findByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("");
     expect(modelIdField()).toHaveValue("mistral/mistral-large-3");
   });
 
   it("says Search the web is off once a change of model turned it off, as the new model hasn't searched", async () => {
-    const searching: AssistantSettings = { accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", most: TOP_LEVELS, webTools: ["search", "read"] };
-    const webToolsOf = (model: string) => (model === searching.model ? searching.webTools : model.startsWith("@cf/") ? null : []);
-    serve(({ model }) => Response.json({ assistant: { ...searching, model, webTools: webToolsOf(model) }, greeting: GREETING }));
+    const searching: AssistantSettings = { ...savedOf({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }), webTools: ["search", "read"] };
+    serve((setup) => Response.json({ assistant: setup.model === searching.model ? searching : savedOf(setup), greeting: GREETING }));
     for (const [model, said] of [
       ["Claude Sonnet 5.5", null],
       ["Claude Opus 5.5", searchTurnedOff([])],
@@ -358,5 +396,115 @@ describe("Set up Ember AI", () => {
       expect(onClose).toHaveBeenCalledOnce();
       cleanup();
     }
+  });
+});
+
+describe("Cloudflare's model catalog", () => {
+  /** The catalog as the Worker lists it: Workers AI's models first, with what other companies' cost, where it says. */
+  const CATALOG: AssistantCatalog = {
+    models: [
+      { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
+      { id: "@cf/qwen/qwen3.5-coder", name: "Qwen 3.5 Coder", format: "chat" },
+      { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages", price: { input: 3, output: 15 } },
+      { id: "deepseek/deepseek-v4", name: "DeepSeek V4", format: "chat", price: { input: 0.28, output: 0.42 } },
+      { id: "xai/grok-5", name: "Grok 5", format: "chat" },
+    ],
+    refusal: null,
+  };
+
+  it("lists the account's models from it on Continue, saying so while it does, with what other companies' cost", async () => {
+    const list = held(() => Response.json(CATALOG));
+    serve(undefined, list.answered);
+    const { user } = showSetup();
+    await giveKeys(user);
+    expect(screen.getByRole("status")).toHaveTextContent("Listing the models in Cloudflare's catalog…");
+    expect(button("Listing models…")).toBeDisabled();
+    expect(button("Cancel")).toBeDisabled();
+    // The account and API token stay as they're listed for.
+    expect(accountIdField()).toBeDisabled();
+    expect(apiTokenField()).toBeDisabled();
+    expect(asked()).toEqual([LISTED]);
+
+    await list.answer();
+    await dialog("Choose a model");
+    const groups = within(modelMenu()).getAllByRole("group");
+    expect(within(groups[0]!).getAllByRole("option").map((option) => option.textContent)).toEqual(["GLM-4.7 Flash", "Qwen 3.5 Coder"]);
+    expect(within(groups[1]!).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Claude Sonnet 5.5 · $3 / $15",
+      "DeepSeek V4 · $0.28 / $0.42",
+      "Grok 5",
+    ]);
+    expect(screen.queryByText(CATALOG_UNREAD, { exact: false })).not.toBeInTheDocument();
+
+    await user.selectOptions(modelMenu(), "deepseek/deepseek-v4");
+    expect(modelMenu()).toHaveAccessibleDescription(
+      "AI Gateway's credits pay for this model, $0.28 for each million tokens it reads, and $0.42 for each million it writes. Top them up under Credits Available in AI Gateway. Open AI Gateway in the Cloudflare dashboard",
+    );
+    await user.selectOptions(modelMenu(), "xai/grok-5");
+    expect(modelMenu()).toHaveAccessibleDescription("AI Gateway's credits pay for this model. Top them up under Credits Available in AI Gateway. Open AI Gateway in the Cloudflare dashboard");
+    await user.click(button("Save"));
+    await dialog("Ember AI is set up");
+    expect(asked().at(-1)).toEqual(["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "xai/grok-5", modelName: "Grok 5" }]);
+  });
+
+  it("lists the models Ember knows when the catalog couldn't be read, saying why", async () => {
+    const refusal = "Cloudflare didn't take that API token for this account.";
+    serve(undefined, () => Response.json({ ...KNOWN, refusal }));
+    const { user } = showSetup();
+    await giveKeys(user);
+    await dialog("Choose a model");
+    expect(within(modelMenu()).getAllByRole("option")).toHaveLength(ASSISTANT_MODELS.length + 1);
+    expect(screen.getByText(`${CATALOG_UNREAD} ${refusal}`)).toBeInTheDocument();
+    expect(modelMenu()).toHaveAccessibleDescription(
+      `Workers AI's models run on Cloudflare, free up to a daily allowance, and beyond it on Workers Paid. ${CATALOG_UNREAD} ${refusal}`,
+    );
+  });
+
+  it("lists it again only for another account or API token, keeping the model chosen while it's listed", async () => {
+    serve(undefined, () => Response.json(CATALOG));
+    const { user } = showSetup();
+    await giveKeys(user);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Model" }), "anthropic/claude-sonnet-5.5");
+    await user.click(button("Back"));
+    await user.click(button("Continue"));
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("anthropic/claude-sonnet-5.5");
+    expect(asked()).toEqual([LISTED]);
+
+    await user.click(button("Back"));
+    await user.clear(apiTokenField());
+    await user.type(apiTokenField(), `${API_TOKEN}x`);
+    await user.click(button("Continue"));
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("anthropic/claude-sonnet-5.5");
+    expect(asked()).toEqual([LISTED, ["POST /api/account/assistant/catalog", { accountId: ACCOUNT_ID, apiToken: `${API_TOKEN}x` }]]);
+  });
+
+  it("starts at the first model the catalog lists when it doesn't list the one Ember knows first", async () => {
+    serve(undefined, () => Response.json({ models: CATALOG.models.slice(1), refusal: null }));
+    const { user } = showSetup();
+    await giveKeys(user);
+    expect(await screen.findByRole("combobox", { name: "Model" })).toHaveValue("@cf/qwen/qwen3.5-coder");
+  });
+
+  it("refuses a field the Worker refuses as it lists on that field, staying on the account", async () => {
+    const refusal = "Paste an API token. Ember doesn't have one yet.";
+    serve(undefined, () => Response.json({ error: refusal, field: "apiToken" }, { status: 422 }));
+    const { user, onFailed } = showSetup();
+    await giveKeys(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+    expect(apiTokenField()).toHaveAttribute("aria-invalid", "true");
+    expect(apiTokenField()).toBeEnabled();
+    expect(screen.getByRole("dialog", { name: "Set up Ember AI" })).toBeInTheDocument();
+    expect(button("Continue")).toBeEnabled();
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("leaves a listing that failed otherwise to the page's alerts, staying on the account", async () => {
+    serve(undefined, () => Response.json({ error: "Only administrators can set up Ember AI" }, { status: 403 }));
+    const { user, onFailed } = showSetup();
+    await giveKeys(user);
+    await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(403, "Only administrators can set up Ember AI")));
+    expect(screen.getByRole("dialog", { name: "Set up Ember AI" })).toBeInTheDocument();
+    expect(button("Continue")).toBeEnabled();
+    expect(accountIdField()).toBeEnabled();
   });
 });

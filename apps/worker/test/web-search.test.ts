@@ -8,6 +8,7 @@ import {
   WEB_SEARCH_REFUSED,
   WEB_SEARCHES_PER_ANSWER,
   type AssistantSaved,
+  type AssistantSettings,
   type WebSearchChanged,
 } from "@ember/protocol/assistant";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
@@ -123,10 +124,11 @@ async function setUp(model = MESSAGES_MODEL): Promise<Session> {
   return ada;
 }
 
-/** Sets Ember AI up as `administrator` with `model`, as Set up Ember AI does, answering Ember AI as it is then. */
-async function setUpAssistant(administrator: Session, model: string): Promise<AssistantSaved["assistant"]> {
+/** Sets Ember AI up as `administrator` with `model`, called `modelName`, if it's given one, as Set up Ember AI does, answering Ember AI as it is then. */
+async function setUpAssistant(administrator: Session, model: string, modelName?: string): Promise<AssistantSaved["assistant"]> {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => unsearched(new Request(input, init).url, "Hello, team!"));
-  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify({ accountId: ACCOUNT_ID, apiToken: API_TOKEN, model }) });
+  const setup = { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model, ...(modelName && { modelName }) };
+  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify(setup) });
   expect(saved.status, await saved.clone().text()).toBe(200);
   vi.restoreAllMocks();
   return ((await saved.json()) as AssistantSaved).assistant;
@@ -141,6 +143,22 @@ async function turnedWebSearch(administrator: Session, on: boolean): Promise<Web
   const response = await turnWebSearch(administrator, on);
   expect(response.status, await response.clone().text()).toBe(200);
   return (await response.json()) as WebSearchChanged;
+}
+
+/** Changes Ember AI as `administrator`, as the Ember AI card does: its dials, or which model answers everyone. */
+const changeAssistant = (administrator: Session, changes: unknown) =>
+  api("/api/account/assistant", { method: "PATCH", headers: { Cookie: administrator.cookie }, body: JSON.stringify(changes) });
+
+/** Adds `model` to those people can pick as `administrator`, as Add a model does, or takes it out, as its Remove does, which has to work. */
+async function changeModels(administrator: Session, method: "POST" | "DELETE", model: string): Promise<void> {
+  const response = await api("/api/account/assistant/models", { method, headers: { Cookie: administrator.cookie }, body: JSON.stringify({ model }) });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
+
+/** Has @ember answer `person` with `model`, as their profile's Model menu does. */
+async function pickModel(person: Session, model: string): Promise<void> {
+  const response = await api("/api/users/me/assistant", { method: "PATCH", headers: { Cookie: person.cookie }, body: JSON.stringify({ model }) });
+  expect(response.status, await response.clone().text()).toBe(200);
 }
 
 /** Ember AI as the account's settings keep it. */
@@ -219,16 +237,20 @@ describe("Search the web", () => {
     expect(requests[0]!.body).toHaveProperty("max_tool_calls", WEB_SEARCHES_PER_ANSWER);
   });
 
-  it("says a model that takes Chat Completions can't search, asking it nothing", async () => {
+  it("says a model that takes Chat Completions can't search, by its name, asking it nothing", async () => {
     const ada = await setUp(CHAT_MODEL);
     expect((await assistantSettings(ada))!.webTools).toBeNull();
     const requests = fakeGateway(searching);
 
     const response = await turnWebSearch(ada, true);
     expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ error: cannotSearchWith(CHAT_MODEL) });
+    expect(await response.json()).toEqual({ error: cannotSearchWith("GLM-4.7 Flash") });
     expect(requests).toEqual([]);
     expect(await storedWebTools()).toEqual([]);
+
+    // As Set up Ember AI named it, from Cloudflare's catalog.
+    await setUpAssistant(ada, CHAT_MODEL, "glm-4.7-flash");
+    expect(await (await turnWebSearch(ada, true)).json()).toEqual({ error: cannotSearchWith("glm-4.7-flash") });
   });
 
   it("stays off when AI Gateway refuses the model's tools for the web, saying so with Cloudflare's own words", async () => {
@@ -238,7 +260,7 @@ describe("Search the web", () => {
 
     const response = await turnWebSearch(ada, true);
     expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ error: webToolsRefused(MESSAGES_MODEL, "Web search is not enabled for this organization.") });
+    expect(await response.json()).toEqual({ error: webToolsRefused("Claude Sonnet 5.5", "Web search is not enabled for this organization.") });
     expect(requests).toHaveLength(2);
     expect(await storedWebTools()).toEqual([]);
   });
@@ -248,7 +270,7 @@ describe("Search the web", () => {
     fakeGateway(({ url }) => unsearched(url, "AI Gateway is a gateway."));
     const response = await turnWebSearch(ada, true);
     expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ error: answeredUnsearched(MESSAGES_MODEL) });
+    expect(await response.json()).toEqual({ error: answeredUnsearched("Claude Sonnet 5.5") });
 
     vi.restoreAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -282,6 +304,65 @@ describe("Search the web", () => {
     expect((await storedAssistant())!.web_tools_asked_at).toBe(turnedOnAt);
     expect((await setUpAssistant(ada, "anthropic/claude-opus-5.5")).webTools).toEqual([]);
     expect((await setUpAssistant(ada, MESSAGES_MODEL)).webTools).toEqual([]);
+    expect(await storedWebTools()).toEqual([]);
+  });
+
+  it("stays on through a change to the dials or to the models people can pick, and turns off once another of them answers everyone", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    const turnedOnAt = (await storedAssistant())!.web_tools_asked_at as string;
+
+    expect((await changeAssistant(ada, { thinking: "low" })).status).toBe(200);
+    await changeModels(ada, "POST", RESPONSES_MODEL);
+    await changeModels(ada, "POST", CHAT_MODEL);
+    await changeModels(ada, "DELETE", CHAT_MODEL);
+    // Added again, the one that answers everyone takes its test question in the format it searched in.
+    await changeModels(ada, "POST", MESSAGES_MODEL);
+    expect(await storedWebTools()).toEqual(["search", "read"]);
+    expect((await storedAssistant())!.web_tools_asked_at).toBe(turnedOnAt);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const changed = await changeAssistant(ada, { model: RESPONSES_MODEL });
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    expect(((await changed.json()) as { assistant: AssistantSettings }).assistant).toMatchObject({ model: RESPONSES_MODEL, webTools: [] });
+    expect(await storedWebTools()).toEqual([]);
+    // As of when it turned off, which nothing asked to turn on before then undoes.
+    expect((await storedAssistant())!.web_tools_asked_at as string > turnedOnAt).toBe(true);
+  });
+
+  it("turns off once the model that answers everyone, added again, takes its test question in a format it hasn't searched in", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+    fakeGateway(({ url }) => (url.endsWith("/chat/completions") ? unsearched(url, "Hello, team!") : Response.json({ error: "Not in this format." }, { status: 400 })));
+
+    await changeModels(ada, "POST", MESSAGES_MODEL);
+    expect(await storedAssistant()).toMatchObject({ format: "chat", web_tools: [] });
+    expect((await assistantSettings(ada))!.webTools).toBeNull();
+  });
+
+  it("turns nothing on once another of the models people can pick answers everyone, while the one asked searched", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await changeModels(ada, "POST", RESPONSES_MODEL);
+    vi.restoreAllMocks();
+    let asked = false;
+    let answering = false;
+    fakeGateway(async (request) => {
+      asked = true;
+      while (!answering) await new Promise((resolve) => setTimeout(resolve, 10));
+      return searching(request);
+    });
+
+    const turning = turnWebSearch(ada, true);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    expect((await changeAssistant(ada, { model: RESPONSES_MODEL })).status).toBe(200);
+    answering = true;
+    const refused = await turning;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: WEB_SEARCH_CHANGED });
     expect(await storedWebTools()).toEqual([]);
   });
 
@@ -503,6 +584,44 @@ describe("@ember on the web", () => {
     client.close();
   });
 
+  it("searches with the model someone picked, with what its format has tools for, or tells them that one can't", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    await changeModels(ada, "POST", RESPONSES_MODEL);
+    await changeModels(ada, "POST", CHAT_MODEL);
+    vi.restoreAllMocks();
+    const client = await connect(await generalRoom(), ada);
+    /** The requests for @ember's answer to Ada asking it `question` with `model`, and what it said. */
+    const askedWith = async (model: string, question: string): Promise<[Asked[], string]> => {
+      await pickModel(ada, model);
+      const requests = fakeGateway(searching);
+      await post(client, askEmber(question));
+      const { plainText } = await nextAnswer(client);
+      vi.restoreAllMocks();
+      return [requests, plainText];
+    };
+
+    const [searched, found] = await askedWith(RESPONSES_MODEL, "what's AI Gateway?");
+    expect(found).toMatch(new RegExp(`\\n\\nSources: ${BLOG.title}$`));
+    expect(searched.map(({ url, body }) => [url.split("/ai/v1/")[1], body.tools])).toEqual([["responses", [{ type: "web_search" }]]]);
+    expect(searched[0]!.body).toHaveProperty("max_tool_calls", WEB_SEARCHES_PER_ANSWER);
+    expect(searched[0]!.body.instructions).toContain("You can search the web when a question needs what's current");
+
+    const [unsearchable, said] = await askedWith(CHAT_MODEL, "what's the news?");
+    expect(said).toBe("I can't search the web.");
+    expect(unsearchable.map(({ url, body }) => [url.split("/ai/v1/")[1], body.tools])).toEqual([["chat/completions", undefined]]);
+    const instructions = unsearchable[0]!.body.messages![0]!.content;
+    expect(instructions).toContain("You can't search the web or open links with the model Ada Lovelace picked for your answers to them.");
+    expect(instructions).toContain("they can pick one that can, Anthropic's or OpenAI's, under Ember AI on their profile.");
+    expect(instructions).not.toContain("an administrator can turn on Search the web");
+
+    // And with the one that answers everyone again, once they pick that one.
+    const [anthropic] = await askedWith(MESSAGES_MODEL, "what's AI Gateway?");
+    expect(anthropic[0]!.body.tools).toEqual([SEARCH_TOOL, READ_TOOL]);
+    client.close();
+  });
+
   it("is given no tools, and told it can't search and who can let it, while Search the web is off", async () => {
     const ada = await setUp();
     const requests = fakeGateway(searching);
@@ -535,12 +654,20 @@ const QUESTION: Message = {
 
 describe("What @ember is told of the web", () => {
   it("says what it may do there, and that it writes its answer after it last searches, as the chat lists its sources", () => {
-    const told = (webTools: Array<"search" | "read">) => questionFor([QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools).instructions;
+    const told = (webTools: Array<"search" | "read">, webSearchOn?: boolean) =>
+      questionFor([QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools, webSearchOn).instructions;
     expect(told(["search", "read"])).toContain("You can search the web, and read the pages people link to or your searches find, when a question needs what's current");
     expect(told(["search"])).toContain("You can search the web when a question needs what's current");
     expect(told(["search"])).toContain("Only what you write after you last search or read is posted");
     expect(told(["search"])).toContain("so don't list them yourself.");
-    expect(told([])).toContain("You can't search the web or open links.");
+    expect(told([])).toContain("You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web");
+  });
+
+  it("says, while Search the web is on, that the model the asker picked can't search, and that they can pick one that can", () => {
+    const told = questionFor([QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), [], true).instructions;
+    expect(told).toContain("You can't search the web or open links with the model Ada Lovelace picked for your answers to them.");
+    expect(told).toContain("When they ask you to, say so, and that they can pick one that can, Anthropic's or OpenAI's, under Ember AI on their profile.");
+    expect(told).not.toContain("an administrator");
   });
 });
 

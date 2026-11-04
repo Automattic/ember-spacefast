@@ -1,35 +1,45 @@
 import { ASSISTANT_NAME } from "@ember/protocol";
 import {
   ASSISTANT_FORBIDDEN,
+  ASSISTANT_MODELS,
   ASSISTANT_OFF,
-  LEVELS_REFUSED,
+  DEFAULT_MODEL_KEPT,
+  MODEL_NOT_LISTED,
+  MODELS_FULL,
   WEB_SEARCH_CHANGED,
   WEB_SEARCH_REFUSED,
   accountIdOf,
   cannotSearchWith,
   modelName,
+  modelOf,
+  parseAssistantChanges,
+  parseAssistantKeys,
   parseAssistantSetup,
-  parseLevelChanges,
+  parseNewAssistantModel,
   parseWebSearchChange,
-  type AnswerLevelsAnswer,
+  parseYourAssistantChanges,
+  type AssistantCatalog,
   type AssistantChanged,
   type AssistantForgotten,
   type AssistantSaved,
   type ModelFormat,
   type WebSearchChanged,
   type WebTool,
+  type YourAssistantChanged,
 } from "@ember/protocol/assistant";
 import { credentialsOf } from "../auth";
 import { jsonBodyOf } from "../bodies";
 import type { Env } from "../env";
 import { formAnswer } from "../pages";
-import { workspace } from "../workspace";
+import { workspace, type Credentials } from "../workspace";
+import { catalogOf } from "./catalog";
 import { ask, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefusal, type Question } from "./gateway";
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
-// workspace settings, and what @ember may do on the web, and the levels of @ember's answers, which they
-// set the most of there, and each person picks on their profile. They answer JSON for the card, its
-// dialog and the profile's dials.
+// workspace settings, the models people can pick, which administrators add there from Cloudflare's
+// catalog, what @ember may do on the web, and @ember's answers to each person, which they set the most
+// of there, and each person picks the levels and model of on their profile. They answer JSON for the
+// card, its dialogs and the profile.
 
 const problem = (status: number, message: string) => Response.json({ error: message }, { status });
 
@@ -41,6 +51,8 @@ const PRIVATE = { "Cache-Control": "no-store" };
 export const API_TOKEN_NEEDED = "Paste an API token. Ember doesn't have one yet.";
 /** Why it needs one after the model answered: Ember AI was turned off meanwhile, or set up with another token. */
 export const API_TOKEN_CHANGED = "Ember AI changed while the model answered, so Ember no longer has that API token. Paste an API token.";
+/** Why Add a model didn't add one: Ember AI was set up again, with another account or API token, while the model answered. */
+export const SETUP_CHANGED = "Ember AI was set up again while the model answered, so it wasn't added. Add it again.";
 
 /** What Set up Ember AI asks the model before Ember keeps it, so that it's known to answer. */
 const TEST_QUESTION: Question = {
@@ -67,13 +79,13 @@ const WEB_TEST_TIMEOUT_MS = 60_000;
 /** The most of what the model says to a test question that the dialog, or the card, shows. */
 const MAX_SHOWN_ANSWER_LENGTH = 500;
 
-/** Why Search the web didn't turn on for `model`: AI Gateway refused its tools for the web, as `cloudflareSays`, when it says why. */
-export const webToolsRefused = (model: string, cloudflareSays?: string) =>
-  `AI Gateway didn't let ${modelName(model)} search the web.${cloudflareSays ? ` Cloudflare says: ${cloudflareSays}` : ""}`;
+/** Why Search the web didn't turn on for the model called `name`: AI Gateway refused its tools for the web, as `cloudflareSays`, when it says why. */
+export const webToolsRefused = (name: string, cloudflareSays?: string) =>
+  `AI Gateway didn't let ${name} search the web.${cloudflareSays ? ` Cloudflare says: ${cloudflareSays}` : ""}`;
 
-/** Why Search the web didn't turn on for `model`, whose tools AI Gateway took: it answered without searching. */
-export const answeredUnsearched = (model: string) =>
-  `${modelName(model)} answered without searching the web, so Search the web is still off. Try again, or choose another model under Change.`;
+/** Why Search the web didn't turn on for the model called `name`, whose tools AI Gateway took: it answered without searching. */
+export const answeredUnsearched = (name: string) =>
+  `${name} answered without searching the web, so Search the web is still off. Try again, or choose another model under Models or Change.`;
 
 /**
  * The ID of the Cloudflare account the Worker is deployed to, which Set up Ember AI fills in, as the
@@ -82,31 +94,109 @@ export const answeredUnsearched = (model: string) =>
 export const deployedAccountIdOf = (env: Env): string | null => accountIdOf(env.CLOUDFLARE_ACCOUNT_ID ?? "");
 
 /**
- * `PUT /api/account/assistant`, `{ accountId, apiToken, model }`: turns Ember AI on, or changes it, once
- * the model has answered a test question through AI Gateway with the account and API token given, or the
- * API token Ember has, when none is, answering Ember AI as it is then and what the model said. Someone who
- * isn't an administrator hears so before anything they sent is read. A field that can't be what it's for,
- * or that AI Gateway refuses, is refused on that field, as is the API token Ember had once it no longer
- * has it, so that turning Ember AI off while the model answers stays done.
+ * Who `request` signs in, if they're an administrator, or else what to answer them: that they aren't
+ * signed in, or aren't one, before anything they sent is read.
+ */
+async function administratorOf(request: Request, env: Env): Promise<Credentials | Response> {
+  const credentials = await credentialsOf(request, env);
+  const administrator = credentials && (await workspace(env).canAdminister(credentials));
+  if (!credentials || administrator === null) return problem(401, NOT_SIGNED_IN);
+  return administrator ? credentials : problem(403, ASSISTANT_FORBIDDEN);
+}
+
+/**
+ * `POST /api/account/assistant/catalog`, `{ accountId, apiToken? }`: the text models Cloudflare's catalog
+ * lists for the account given, with the API token given, or the one Ember has, when none is, as Set up
+ * Ember AI and Add a model list them, or else, when the catalog can't be read, the models Ember knows, and
+ * why it can't. Someone who isn't an administrator hears so before anything they sent is read, and a field
+ * that can't be what it's for is refused on that field.
+ */
+export async function listAssistantModels(request: Request, env: Env): Promise<Response> {
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  const keys = parseAssistantKeys(await jsonBodyOf(request));
+  if ("error" in keys) return formAnswer(keys, 422);
+  const apiToken = keys.apiToken ?? (await workspace(env).assistantGateway())?.apiToken;
+  if (!apiToken) return formAnswer({ error: API_TOKEN_NEEDED, field: "apiToken" }, 422);
+  const catalog = await catalogOf(env, { accountId: keys.accountId, apiToken });
+  if ("refusal" in catalog) console.error(`Listing Ember's own models, as Cloudflare's catalog wasn't read: ${catalog.refusal}`);
+  const answer: AssistantCatalog = "refusal" in catalog ? { models: [...ASSISTANT_MODELS], refusal: catalog.refusal } : { models: catalog, refusal: null };
+  return Response.json(answer, { headers: PRIVATE });
+}
+
+/**
+ * `PUT /api/account/assistant`, `{ accountId, apiToken, model, modelName? }`: turns Ember AI on, or
+ * changes it, once the model has answered a test question through AI Gateway with the account and API
+ * token given, or the API token Ember has, when none is, answering Ember AI as it is then and what the
+ * model said. The model answers anyone who hasn't picked another, in place of the one that did among the
+ * models people can pick. Someone who isn't an administrator hears so before anything they sent is read.
+ * A field that can't be what it's for, or that AI Gateway refuses, is refused on that field, as is the
+ * API token Ember had once it no longer has it, so that turning Ember AI off while the model answers
+ * stays done.
  */
 export async function saveAssistant(request: Request, env: Env): Promise<Response> {
-  const credentials = await credentialsOf(request, env);
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
   const ember = workspace(env);
-  const administrator = credentials && (await ember.canAdminister(credentials));
-  if (!credentials || administrator === null) return problem(401, NOT_SIGNED_IN);
-  if (!administrator) return problem(403, ASSISTANT_FORBIDDEN);
   const setup = parseAssistantSetup(await jsonBodyOf(request));
   if ("error" in setup) return formAnswer(setup, 422);
   const kept = setup.apiToken === undefined ? (await ember.assistantGateway())?.apiToken : undefined;
   const apiToken = setup.apiToken ?? kept;
   if (!apiToken) return formAnswer({ error: API_TOKEN_NEEDED, field: "apiToken" }, 422);
   const answered = await greetingFrom(env, { accountId: setup.accountId, apiToken, model: setup.model });
-  if ("refusal" in answered) return formAnswer({ error: answered.refusal, ...(answered.field && { field: answered.field }) }, answered.status);
-  const saved = await ember.changeAssistant(credentials, { accountId: setup.accountId, apiToken, model: setup.model, format: answered.format }, kept !== undefined);
+  if ("refusal" in answered) return refused(answered);
+  const chosen = { accountId: setup.accountId, apiToken, model: setup.model, format: answered.format, ...(setup.modelName && { name: setup.modelName }) };
+  const saved = await ember.changeAssistant(credentials, chosen, kept !== undefined);
   if (!saved) return problem(401, NOT_SIGNED_IN);
   if (saved === "changed") return formAnswer({ error: API_TOKEN_CHANGED, field: "apiToken" }, 422);
   if (saved === "forbidden" || !saved.assistant) return problem(403, ASSISTANT_FORBIDDEN);
   return Response.json({ assistant: saved.assistant, greeting: answered.greeting } satisfies AssistantSaved, { headers: PRIVATE });
+}
+
+/**
+ * `POST /api/account/assistant/models`, `{ model, modelName? }`: adds the model to those people can pick,
+ * as Add a model on the Ember AI card does, once it has answered a test question through Ember AI's
+ * account, answering Ember AI as it is then and what the model said. Someone who isn't an administrator
+ * hears so before anything they sent is read. A model that can't be one, or that AI Gateway refuses, is
+ * refused on its field, and one that answered through Ember AI as it was before it was set up again isn't
+ * added.
+ */
+export async function addAssistantModel(request: Request, env: Env): Promise<Response> {
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  const ember = workspace(env);
+  const added = parseNewAssistantModel(await jsonBodyOf(request));
+  if ("error" in added) return formAnswer(added, 422);
+  const gateway = await ember.assistantGateway();
+  if (!gateway) return problem(409, ASSISTANT_OFF);
+  const answered = await greetingFrom(env, { accountId: gateway.accountId, apiToken: gateway.apiToken, model: added.model });
+  if ("refusal" in answered) return refused(answered);
+  const saved = await ember.addAssistantModel(credentials, { id: added.model, name: added.modelName ?? modelName(added.model), format: answered.format }, gateway);
+  if (!saved) return problem(401, NOT_SIGNED_IN);
+  if (saved === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
+  if (saved === "off") return problem(409, ASSISTANT_OFF);
+  if (saved === "changed") return problem(409, SETUP_CHANGED);
+  if (saved === "full") return formAnswer({ error: MODELS_FULL, field: "model" }, 422);
+  return Response.json({ assistant: saved.assistant, greeting: answered.greeting } satisfies AssistantSaved, { headers: PRIVATE });
+}
+
+/**
+ * `DELETE /api/account/assistant/models`, `{ model }`: takes the model out of those people can pick, as its
+ * Remove on the Ember AI card does, answering Ember AI as it is then, but for the model @ember answers
+ * everyone with. Someone who isn't an administrator hears so before anything they sent is read.
+ */
+export async function removeAssistantModel(request: Request, env: Env): Promise<Response> {
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  const body = await jsonBodyOf(request);
+  const model = typeof body === "object" && body !== null && "model" in body && typeof body.model === "string" ? modelOf(body.model) : null;
+  if (model === null) return problem(422, MODEL_NOT_LISTED);
+  const removed = await workspace(env).removeAssistantModel(credentials, model);
+  if (!removed) return problem(401, NOT_SIGNED_IN);
+  if (removed === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
+  if (removed === "off") return problem(409, ASSISTANT_OFF);
+  if (removed === "everyone's") return problem(409, DEFAULT_MODEL_KEPT);
+  return Response.json(removed satisfies AssistantChanged, { headers: PRIVATE });
 }
 
 /** `DELETE /api/account/assistant`: turns Ember AI off, as turning off its card's switch does, forgetting its API token. */
@@ -119,46 +209,44 @@ export async function forgetAssistant(request: Request, env: Env): Promise<Respo
 }
 
 /**
- * `PATCH /api/account/assistant`, `{ thinking?, length? }`: changes the most each of @ember's dials goes
- * to for anyone's questions, as the Ember AI card's dials do while it's on, answering Ember AI as it is
+ * `PATCH /api/account/assistant`, `{ thinking?, length?, model? }`: changes the most each of @ember's dials
+ * goes to for anyone's questions, as the Ember AI card's dials do while it's on, and which of the models
+ * people can pick it answers everyone else with, as the card's Models do, answering Ember AI as it is
  * then. Someone who isn't an administrator hears so before anything they sent is read.
  */
-export async function changeAssistantMost(request: Request, env: Env): Promise<Response> {
-  const credentials = await credentialsOf(request, env);
-  const ember = workspace(env);
-  const administrator = credentials && (await ember.canAdminister(credentials));
-  if (!credentials || administrator === null) return problem(401, NOT_SIGNED_IN);
-  if (!administrator) return problem(403, ASSISTANT_FORBIDDEN);
-  const changes = parseLevelChanges(await jsonBodyOf(request));
-  if (!changes) return problem(422, LEVELS_REFUSED);
-  const changed = await ember.changeAssistantMost(credentials, changes);
+export async function changeAssistantSettings(request: Request, env: Env): Promise<Response> {
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  const changes = parseAssistantChanges(await jsonBodyOf(request));
+  if ("error" in changes) return problem(422, changes.error);
+  const changed = await workspace(env).changeAssistantSettings(credentials, changes);
   if (!changed) return problem(401, NOT_SIGNED_IN);
   if (changed === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
   if (changed === "off") return problem(409, ASSISTANT_OFF);
+  if (changed === "not listed") return problem(422, MODEL_NOT_LISTED);
   return Response.json(changed satisfies AssistantChanged, { headers: PRIVATE });
 }
 
 /**
  * `PUT /api/account/assistant/web_search`, `{ on }`: turns Search the web on or off while Ember AI is on,
- * as the Ember AI card's switch does, answering Ember AI as it is then, and, once it's on, what the
- * model said when it searched (`searchedBy`). Someone who isn't an administrator hears so before
- * anything they sent is read, and turning it on for a model whose format has no tools for the web, that
- * it can't search. The model being changed while it searched turns nothing on, as it's the model that
- * was asked that searched, and nor does Search the web being turned off meanwhile, or on again, as the
- * latest change asked for is the one that stays.
+ * as the Ember AI card's switch does, answering Ember AI as it is then, and, once it's on, what the model
+ * that answers everyone said when it searched (`searchedBy`). The models people pick are given their
+ * format's tools for the web then too. Someone who isn't an administrator hears so before anything they
+ * sent is read, and turning it on for a model whose format has no tools for the web, that it can't
+ * search. The model being changed while it searched turns nothing on, as it's the model that was asked
+ * that searched, and nor does Search the web being turned off meanwhile, or on again, as the latest
+ * change asked for is the one that stays.
  */
 export async function changeWebSearch(request: Request, env: Env): Promise<Response> {
   const askedAt = new Date().toISOString();
-  const credentials = await credentialsOf(request, env);
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
   const ember = workspace(env);
-  const administrator = credentials && (await ember.canAdminister(credentials));
-  if (!credentials || administrator === null) return problem(401, NOT_SIGNED_IN);
-  if (!administrator) return problem(403, ASSISTANT_FORBIDDEN);
   const change = parseWebSearchChange(await jsonBodyOf(request));
   if (!change) return problem(422, WEB_SEARCH_REFUSED);
   const gateway = change.on ? await ember.assistantGateway() : null;
   if (change.on && !gateway) return problem(409, ASSISTANT_OFF);
-  if (gateway && WEB_TOOLS_IN[gateway.format].length === 0) return problem(422, cannotSearchWith(gateway.model));
+  if (gateway && WEB_TOOLS_IN[gateway.format].length === 0) return problem(422, cannotSearchWith(gateway.name));
   const searched = gateway ? await searchedBy(env, gateway) : { webTools: [], found: null };
   if ("refusal" in searched) return problem(searched.status, searched.refusal);
   const changed = await ember.changeAssistantWebTools(credentials, searched.webTools, gateway && { model: gateway.model, format: gateway.format }, askedAt);
@@ -170,12 +258,12 @@ export async function changeWebSearch(request: Request, env: Env): Promise<Respo
 }
 
 /**
- * What the model `gateway` names may do on the web, as it answers the web's test question given its
- * format's tools for it, and what it said, or why it can't: AI Gateway refused the tools, even without
- * the one for reading pages, which it may not have for every model, the model answered without
+ * What the model `gateway` names, called `name`, may do on the web, as it answers the web's test question
+ * given its format's tools for it, and what it said, or why it can't: AI Gateway refused the tools, even
+ * without the one for reading pages, which it may not have for every model, the model answered without
  * searching, which shows in the pages it cites, or it didn't answer at all.
  */
-async function searchedBy(env: Env, gateway: Gateway): Promise<{ webTools: WebTool[]; found: string } | GatewayRefusal> {
+async function searchedBy(env: Env, gateway: Gateway & { name: string }): Promise<{ webTools: WebTool[]; found: string } | GatewayRefusal> {
   const signal = AbortSignal.timeout(WEB_TEST_TIMEOUT_MS);
   let webTools = WEB_TOOLS_IN[gateway.format];
   let answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
@@ -184,23 +272,30 @@ async function searchedBy(env: Env, gateway: Gateway): Promise<{ webTools: WebTo
     webTools = webTools.filter((tool) => tool !== "read");
     answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
   }
-  if ("refusal" in answered) return answered.wrongFormat ? { ...answered, refusal: webToolsRefused(gateway.model, answered.cloudflareSays) } : answered;
-  if (!answered.sources) return { status: 422, reason: "model", refusal: answeredUnsearched(gateway.model) };
+  if ("refusal" in answered) return answered.wrongFormat ? { ...answered, refusal: webToolsRefused(gateway.name, answered.cloudflareSays) } : answered;
+  if (!answered.sources) return { status: 422, reason: "model", refusal: answeredUnsearched(gateway.name) };
   return { webTools: [...webTools], found: shownOf(answered.text) };
 }
 
 /**
- * `PATCH /api/users/me/assistant`, `{ thinking?, length? }`: changes how much @ember thinks and how long
- * it answers you, as your profile's dials do, answering your levels as they are then.
+ * `PATCH /api/users/me/assistant`, `{ thinking?, length?, model? }`: changes how much @ember thinks and how
+ * long it answers you, as your profile's dials do, and the model it answers you with, as its Model menu
+ * does, of those administrators let people pick, or theirs with null, answering @ember's answers to you
+ * as they are then.
  */
-export async function changeAnswerLevels(request: Request, env: Env): Promise<Response> {
+export async function changeYourAssistant(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
   if (!credentials) return problem(401, NOT_SIGNED_IN);
-  const changes = parseLevelChanges(await jsonBodyOf(request));
-  if (!changes) return problem(422, LEVELS_REFUSED);
-  const changed = await workspace(env).changeAnswerLevels(credentials, changes);
-  return changed ? Response.json(changed satisfies AnswerLevelsAnswer, { headers: PRIVATE }) : problem(401, NOT_SIGNED_IN);
+  const changes = parseYourAssistantChanges(await jsonBodyOf(request));
+  if ("error" in changes) return problem(422, changes.error);
+  const changed = await workspace(env).changeYourAssistant(credentials, changes);
+  if (!changed) return problem(401, NOT_SIGNED_IN);
+  if (changed === "not listed") return problem(422, MODEL_NOT_LISTED);
+  return Response.json(changed satisfies YourAssistantChanged, { headers: PRIVATE });
 }
+
+/** What to answer when the model didn't answer its test question: why, on the field it's about, if one is. */
+const refused = ({ refusal, field, status }: GatewayRefusal) => formAnswer({ error: refusal, ...(field && { field }) }, status);
 
 /**
  * What the model `gateway` names says to the test question, and the format it took it in, trying each

@@ -450,10 +450,25 @@ the dialog's links open that account's pages in the dashboard. Ember asks models
 account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
 logs, caching and spend limits apply. Workers AI's models come with Cloudflare's free daily
 allowance, and other companies', such as Anthropic's, OpenAI's and Google's, are paid for with AI
-Gateway's credits, as [What it costs](#what-it-costs) says. The Worker asks the model a test question
-before keeping the setup. @ember then joins every room open to everyone, and turning the card off
-takes it out again and forgets the token. Nobody else can take the name Ember, though anyone who had
-it keeps it.
+Gateway's credits, as [What it costs](#what-it-costs) says. The model menu lists the text models in
+Cloudflare's [model catalog](https://developers.cloudflare.com/ai/models/), as the Worker reads it with
+the token (`GET /accounts/{id}/ai/catalog/models`) as the dialog goes on to the model, so new models
+show up as Cloudflare adds them: Workers AI's first, then other companies', with what each
+million tokens costs where the catalog says. When the catalog can't be read, the menu has the models
+Ember knows and says why, and Another model takes any model by its ID. The Worker asks the model a
+test question before keeping the setup. @ember then joins every room open to everyone, and turning the
+card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
+who had it keeps it.
+
+The Models list on the Ember AI card has the models people can pick, at most 20, starting with the
+one Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another,
+Add a model offers the catalog's text models nobody can pick yet, asking the one chosen a test
+question before adding it, and Remove takes one out. Each person picks theirs from the Model menu
+under Ember AI on their profile, which shows while there's more than one, and picking the default
+follows the administrators' choice of it. Someone whose model is removed gets the default again, and
+their pick back if it's added again. Changing the model in Set up Ember AI puts the one chosen in
+place of the old default, and turning Ember AI off forgets the list. When the model someone picked
+has run out of credits or won't take the question, @ember's note says they can pick another.
 
 Mention @ember in a room or a thread, or write to it in a DM, and it answers there: in the thread when
 it's asked in one, typing while its model answers. It reads the thread, its first message and latest
@@ -489,16 +504,19 @@ tools, which AI Gateway passes on and the model's provider runs
 that takes Messages, and OpenAI's [web search](https://platform.openai.com/docs/guides/tools-web-search)
 for one that takes Responses. Chat Completions has no such tools, so a Workers AI or Google model
 can't search, which the card says, its switch opening Set up Ember AI to choose another model.
-Turning it on asks the model a question it has to search the web for, and keeps the tools AI Gateway
-took, reading pages only if it took that tool too, and says what the model found; a model that
-answers without searching leaves it off. A change of model turns it off, as another model may not
-take the same tools, until it's turned on again. While it's on, @ember searches at most 5 times an
-answer and reads at most 3 pages, each cut to about 10,000 tokens: pages people link to, or that its
-searches find. Its answer is what it writes after it last searches, and a line under it links to the
-pages it cites and the pages it read, by their titles, at most 10, leaving out those the answer links
-to itself. A model that stops taking the tools is asked again without them. Its searches are written
-from the conversation, so the provider's search sees what the room was asking about. While it's off,
-@ember is told it can't search, and that an administrator can turn Search the web on.
+Turning it on asks the model that answers everyone a question it has to search the web for, and keeps
+the tools AI Gateway took, reading pages only if it took that tool too, and says what the model found;
+a model that answers without searching leaves it off. Choosing another model to answer everyone, under
+Models or in Set up Ember AI, turns it off, as another model may not take the same tools, until it's
+turned on again. A model someone picks on their profile is given the same tools, of those its format
+has, so it searches too if it's Anthropic's or OpenAI's, and any other is told to say it can't, and
+that they can pick one that can. While it's on, @ember searches at most 5 times an answer and reads at
+most 3 pages, each cut to about 10,000 tokens: pages people link to, or that its searches find. Its
+answer is what it writes after it last searches, and a line under it links to the pages it cites and
+the pages it read, by their titles, at most 10, leaving out those the answer links to itself. A model
+that stops taking the tools is asked again without them. Its searches are written from the
+conversation, so the provider's search sees what the room was asking about. While it's off, @ember is
+told it can't search, and that an administrator can turn Search the web on.
 
 ### A preview from GitHub Actions
 
@@ -674,9 +692,10 @@ pages had them in October 2026:
   AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
-  While Search the web is on, an answer can also search up to 5 times, which Anthropic charges $10 per
-  1,000 searches for and OpenAI its own price per search, and the results and pages it reads count as
-  input, up to about 10,000 tokens a page.
+  Each person's questions cost what the model they pick does, so add to the Models list only the
+  models you're happy to pay for. While Search the web is on, an answer can also search up to 5 times,
+  which Anthropic charges $10 per 1,000 searches for and OpenAI its own price per search, and the
+  results and pages it reads count as input, up to about 10,000 tokens a page.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),

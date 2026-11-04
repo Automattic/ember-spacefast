@@ -22,7 +22,7 @@ import {
   type UserId,
 } from "@ember/protocol";
 import { prepareBody, userIdFromSgid, userIdsIn, type PreparedBody } from "@ember/richtext";
-import { AnswerError, answerOf, NOTES, previewAttachment, questionFor, ROOM_MESSAGES_READ, THREAD_REPLIES_READ, waitFor, type Answer } from "./assistant/answers";
+import { AnswerError, answerOf, NOTES, PICKED_MODEL_NOTES, previewAttachment, questionFor, ROOM_MESSAGES_READ, THREAD_REPLIES_READ, waitFor, type Answer } from "./assistant/answers";
 import { ask, type Answered } from "./assistant/gateway";
 import { JobQueue } from "./at-once";
 import { postWebhook, WebhookError, webhookPayload, type Reply } from "./bots/webhooks";
@@ -1170,19 +1170,19 @@ export class ChatRoom extends DurableObject<Env> {
 
   /**
    * What @ember says to `message`, `question`'s message, with what it reads of the conversation, using
-   * the web as Search the web lets it: its answer in Markdown, at the asker's levels, ending with an
-   * ellipsis when the model was cut short, and the pages it came from, or the note it posts when its model
-   * doesn't answer, saying why, which the room logs.
+   * the web as Search the web lets it: its answer in Markdown, at the asker's levels, with the model they
+   * picked, if they did, ending with an ellipsis when the model was cut short, and the pages it came from,
+   * or the note it posts when its model doesn't answer, saying why, which the room logs.
    */
-  private async saidTo(roomId: RoomId, { gateway, community, levels, webTools }: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<Said> {
+  private async saidTo(roomId: RoomId, { gateway, picked, community, levels, webTools, webSearchOn }: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<Said> {
     if (!gateway) return { text: NOTES["unopened token"] };
     const conversation = await this.conversationOf(this.storeFor(roomId), message);
     const where = { community, roomName, inThread: message.parentId !== undefined };
-    const asked = questionFor(conversation, author, where, levels, new Date(), webTools);
+    const asked = questionFor(conversation, author, where, levels, new Date(), webTools, webSearchOn);
     const answered = await ask(this.env, gateway, asked, waitFor(asked));
     if (!("refusal" in answered)) return { text: answered.cut ? `${answered.text}\n\n…` : answered.text, ...(answered.sources && { sources: answered.sources }) };
-    console.error(`Ember AI's model didn't answer message ${message.id}: ${answered.refusal}`);
-    return { text: NOTES[answered.reason] };
+    console.error(`Ember AI's model ${gateway.model} didn't answer message ${message.id}: ${answered.refusal}`);
+    return { text: (picked && PICKED_MODEL_NOTES[answered.reason]) || NOTES[answered.reason] };
   }
 
   /**

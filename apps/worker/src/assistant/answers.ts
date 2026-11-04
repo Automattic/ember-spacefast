@@ -66,27 +66,43 @@ export class AnswerError extends Error {}
  * What @ember asks its model about the question `conversation` ends with, which `asker` asked `where`,
  * at `now`: the conversation it can read, its writers named, how to answer, how much to think and
  * write, at the asker's `levels`, and what it may do on the web, `webTools`, labeled with who asked.
+ * With no tools for searching while Search the web is on, `webSearchOn`, it's told the model the asker
+ * picked can't search, rather than that an administrator could let it.
  */
-export function questionFor(conversation: Message[], asker: User, where: AskedIn, levels: AnswerLevels, now: Date, webTools: readonly WebTool[] = []): Question {
-  const instructions = instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, webTools);
+export function questionFor(
+  conversation: Message[],
+  asker: User,
+  where: AskedIn,
+  levels: AnswerLevels,
+  now: Date,
+  webTools: readonly WebTool[] = [],
+  webSearchOn = webTools.includes("search"),
+): Question {
+  const instructions = instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, webTools, webSearchOn);
   return { instructions, turns: turnsOf(readable(conversation, where.inThread)), maxTokens: maxTokensAt(levels), thinking: levels.thinking, askerId: asker.id, webTools };
 }
 
 /** What @ember is told before the conversation, asked to answer in about `words` words at most, using the web as `webTools` lets it. */
-function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, webTools: readonly WebTool[]): string {
+function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, webTools: readonly WebTool[], webSearchOn: boolean): string {
   const room = roomName === null ? "a direct message" : `the room "${roomName}"`;
   const today = new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeZone: "UTC" }).format(now);
   return [
     `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`,
     `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, as a helpful teammate would: plainly, and in at most about ${words.toLocaleString("en-US")} words.`,
     "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer. Don't begin with your name.",
-    webInstructionsFor(webTools),
+    webInstructionsFor(asker, webTools, webSearchOn),
     `Today is ${today}, in UTC.`,
   ].join("\n\n");
 }
 
-/** What @ember is told it may do on the web with `webTools`, or, with none, that it can't, and who could let it. */
-function webInstructionsFor(webTools: readonly WebTool[]): string {
+/**
+ * What @ember is told it may do on the web with `webTools`, or, with none, that it can't, and who could let
+ * it: `asker`, by picking a model that can, while Search the web is on, `webSearchOn`, or else an administrator.
+ */
+function webInstructionsFor(asker: User, webTools: readonly WebTool[], webSearchOn: boolean): string {
+  if (!webTools.includes("search") && webSearchOn) {
+    return `You can't search the web or open links with the model ${asker.name} picked for your answers to them. When they ask you to, say so, and that they can pick one that can, Anthropic's or OpenAI's, under Ember AI on their profile.`;
+  }
   if (!webTools.includes("search")) {
     return `You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web under ${SETTINGS}.`;
   }
@@ -257,7 +273,7 @@ export function previewAttachment({ url, image, title, description }: LinkPrevie
 /** Where administrators set Ember AI up, as @ember's notes name it. */
 const SETTINGS = "AI assistant in community settings";
 
-/** Where each person picks how much @ember thinks and writes for them, as its notes name it. */
+/** Where each person picks how much @ember thinks and writes for them, and the model it answers them with, as its notes name it. */
 const YOUR_LEVELS = "Ember AI on your profile";
 
 /** What @ember says when it can't answer, for each reason it can't, and while its API token doesn't open. */
@@ -272,4 +288,10 @@ export const NOTES: Record<RefusalReason | "unopened token", string> = {
   nothing: "I couldn't answer: my model answered with nothing. Try asking again.",
   "out of room": `I couldn't answer: my model thought for as long as it may before it wrote anything. Try asking again, or choose less Thinking under ${YOUR_LEVELS}.`,
   "unopened token": `I can't answer right now: Ember AI's API token no longer opens here. An administrator can set it up again under ${SETTINGS}.`,
+};
+
+/** What @ember says instead, when it can't answer with the model whoever asked picked, for the reasons they can do something about. */
+export const PICKED_MODEL_NOTES: Partial<Record<RefusalReason, string>> = {
+  credits: `I can't answer right now: the AI Gateway credits that pay for the model you picked have run out. An administrator can top them up in AI Gateway, or you can pick another model under ${YOUR_LEVELS}.`,
+  model: `I can't answer right now: AI Gateway didn't take my question for the model you picked. Pick another model under ${YOUR_LEVELS}.`,
 };
