@@ -83,8 +83,8 @@ export async function freshDeploy(): Promise<void> {
   // alarm delivers what the last test queued, so it's made again until the Workspace has nobody.
   do {
     await reset();
-    const { DB, TEST_MIGRATIONS } = env as unknown as { DB?: D1Database; TEST_MIGRATIONS: D1Migration[] };
-    if (DB) await applyD1Migrations(DB, TEST_MIGRATIONS);
+    const db = sharedD1();
+    if (db) await applyD1Migrations(db, (env as unknown as { TEST_MIGRATIONS: D1Migration[] }).TEST_MIGRATIONS);
   } while (await anyoneLeft());
   host = undefined;
   forgetNewestRelease();
@@ -232,9 +232,18 @@ export function objectSql(stub: DurableObjectStub, query: string, ...params: Arr
   return runInDurableObject(stub, (_object, state: DurableObjectState) => state.storage.sql.exec(query, ...params).toArray());
 }
 
+/**
+ * The D1 database every object keeps its tables in when this suite runs on D1, or undefined on DO SQLite,
+ * where wrangler.jsonc binds one that nothing uses, as Deploy to Cloudflare's form makes one for every copy.
+ */
+export function sharedD1(): D1Database | undefined {
+  const { STORAGE_BACKEND, DB } = env as unknown as Env;
+  return STORAGE_BACKEND === "d1" ? DB : undefined;
+}
+
 /** Runs SQL against the tables `stub` keeps: in D1 when this suite uses it, else in the object's own storage. */
 async function tablesSql(stub: DurableObjectStub, query: string, ...params: Array<string | number>): Promise<unknown[]> {
-  const db = (env as { DB?: D1Database }).DB;
+  const db = sharedD1();
   if (db) return (await db.prepare(query).bind(...params).all()).results;
   return objectSql(stub, query, ...params);
 }

@@ -196,12 +196,17 @@ was made.
 
 ### Deploy to Cloudflare
 
-1. Turn on R2 in your Cloudflare dashboard, for the files people share. Each Ember needs a bucket of its
-   own, so if your account already runs an Ember, choose Create new when the form picks that one's bucket.
+1. Turn on R2 in your Cloudflare dashboard, for the files people share. Each Ember needs a bucket and a
+   database of its own, so if your account already runs an Ember, choose Create new when the form picks
+   that one's.
 2. Click **Deploy to Cloudflare** above. Cloudflare copies Ember to your GitHub or GitLab account, asks
-   you to name the Worker and its bucket, and to make up a setup password, and deploys it. If it first
-   has you connect GitHub or GitLab, it comes back to a page for deploying one of your own repositories
-   instead: click the button again, and Ember's form opens with your account connected.
+   you to name the Worker, its bucket and its database, to choose where messages live, and to make up a
+   setup password, and deploys it. Keep `do-sqlite`, which scales furthest, unless you want every
+   message in one D1 database you can query and export, as
+   [Storage](docs/self-hosting.md#storage-durable-object-sqlite-or-d1) explains; either way, a team of
+   more than about 100 people a day needs Workers Paid. If Cloudflare first has you connect GitHub or
+   GitLab, it comes back to a page for deploying one of your own repositories instead: click the button
+   again, and Ember's form opens with your account connected.
 3. Open your Worker's address, `https://<your Worker>`, type the setup password, and create your
    community and its administrator. Only that password opens setup, so nobody who finds the address
    first can take it over. Forgot it? Give `EMBER_SETUP_PASSWORD` a new value in the Worker's
