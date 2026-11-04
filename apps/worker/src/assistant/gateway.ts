@@ -155,8 +155,9 @@ export async function askOnce(env: Env, gateway: Gateway, question: Question, si
     // Each part of a turn says what's new since the last, which is sent back as it is to carry on.
     said = [...said, ...(Array.isArray(answered.body.content) ? answered.body.content : [])];
     tokensLeft -= writtenIn(answered.body);
-    if (answered.body.stop_reason !== "pause_turn" || continued === MAX_CONTINUATIONS) return answeredIn(gateway.format, { ...answered.body, content: said });
-    if (tokensLeft < 1) return answeredIn(gateway.format, { ...answered.body, content: said, stop_reason: "max_tokens" });
+    const paused = answered.body.stop_reason === "pause_turn";
+    if (paused && tokensLeft < 1) return answeredIn(gateway.format, { ...answered.body, content: said, stop_reason: "max_tokens" });
+    if (!paused || continued === MAX_CONTINUATIONS) return answeredIn(gateway.format, { ...answered.body, content: said });
   }
 }
 

@@ -572,6 +572,25 @@ describe("@ember on the web", () => {
     client.close();
   });
 
+  it("takes a turn as cut short once the model paused with all it may written, the last time it's carried on too", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+    // A turn is carried on twice at most, and pauses here each time, the last once it had written all it was let.
+    let asked = 0;
+    const requests = fakeGateway(({ body }) =>
+      ++asked < 3 ? messagesAnswer(SEARCHING, "pause_turn", 120) : messagesAnswer([{ type: "text", text: "AI Gateway is" }], "pause_turn", body.max_tokens),
+    );
+    const client = await connect(await generalRoom(), ada);
+
+    await post(client, askEmber("what's AI Gateway?"));
+    expect((await nextAnswer(client)).plainText).toBe("AI Gateway is\n\n…");
+    expect(requests).toHaveLength(3);
+    expect(requests[2]!.body.max_tokens).toBe(requests[0]!.body.max_tokens! - 240);
+    client.close();
+  });
+
   it("has a model that paused once it had searched as many times as an answer may answer with what it found", async () => {
     const ada = await setUp();
     fakeGateway(searching);
