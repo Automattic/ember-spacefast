@@ -41,7 +41,21 @@ import {
   type UserId,
   type UserStatus,
 } from "@ember/protocol";
-import { ANSWER_LENGTHS, MODEL_FORMATS, THINKING_LEVELS, TOP_LEVELS, type AnswerLength, type AnswerLevelChanges, type AnswerLevels, type ModelFormat, type ThinkingLevel } from "@ember/protocol/assistant";
+import {
+  ANSWER_LENGTHS,
+  MODEL_FORMATS,
+  modelName,
+  modelNameOf,
+  modelOf,
+  THINKING_LEVELS,
+  TOP_LEVELS,
+  type AnswerLength,
+  type AnswerLevels,
+  type AssistantModel,
+  type ModelFormat,
+  type ThinkingLevel,
+  type YourAssistantChanges,
+} from "@ember/protocol/assistant";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
 import { messagePayload, type PushPayload } from "./push/payload";
@@ -131,14 +145,20 @@ export interface SavedTurnstileKeys {
 
 /**
  * How Ember AI asks AI Gateway, as the account keeps it: the Cloudflare account, its API token sealed
- * (`seal`), the model and the format the model took Set up Ember AI's test question in.
+ * (`seal`), the model it answers anyone with who hasn't picked another, and the format the model took
+ * its test question in, and the models people can pick from, that one among them, in the order they
+ * were added.
  */
 export interface SavedAssistant {
   accountId: string;
   sealedApiToken: string;
   model: string;
   format: ModelFormat;
+  models: SavedModel[];
 }
+
+/** A model people can pick, as the account keeps it: its ID, its name, and the format it took its test question in. */
+export type SavedModel = Pick<AssistantModel, "id" | "name" | "format">;
 
 /** The account first run creates. */
 export interface NewAccount {
@@ -221,14 +241,18 @@ export interface OwnProfileEntry extends ProfileEntry {
   membershipNeeded: boolean;
   /** The issuers of the accounts elsewhere they've connected, such as the Memberful site's address. */
   issuers: string[];
-  /** How much @ember thinks and how long it answers them, as they picked. */
-  levels: PickedLevels;
+  /** How much @ember thinks and how long it answers them, and the model it answers with, as they picked. */
+  picks: AssistantPicks;
 }
 
-/** How much @ember thinks and how long it answers someone, as they picked each, or null for a dial they haven't. */
-export interface PickedLevels {
+/**
+ * How much @ember thinks and how long it answers someone, and the model it answers them with, as they
+ * picked each, or null for one they haven't.
+ */
+export interface AssistantPicks {
   thinking: ThinkingLevel | null;
   length: AnswerLength | null;
+  model: string | null;
 }
 
 /** Someone who signs in with a Memberful account, which no account here is linked to yet. */
@@ -787,15 +811,32 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format }`, the API token sealed, or null while it's off.
+ * `{ account_id, api_token, model, format, models }`, the API token sealed, or null while it's off. Its
+ * models are `[{ id, name, format }]`, which Ember AI set up before people could pick has none of: it
+ * then has its own model alone, as it does when they leave it out.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format } = kept as Record<string, unknown>;
-  if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string") return null;
-  return (MODEL_FORMATS as readonly unknown[]).includes(format) ? { accountId, sealedApiToken, model, format: format as ModelFormat } : null;
+  const { account_id: accountId, api_token: sealedApiToken, model, format, models } = kept as Record<string, unknown>;
+  if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string" || !isModelFormat(format)) return null;
+  const listed = savedModelsIn(models);
+  const own = listed.some(({ id }) => id === model) ? listed : [{ id: model, name: modelName(model), format }, ...listed];
+  return { accountId, sealedApiToken, model, format, models: own };
 }
+
+/** The models people can pick that `kept` lists, as `assistantIn` reads them, once each, leaving out what can't be one. */
+function savedModelsIn(kept: unknown): SavedModel[] {
+  const models = new Map<string, SavedModel>();
+  for (const model of Array.isArray(kept) ? kept : []) {
+    const { id, name, format } = typeof model === "object" && model !== null ? (model as Record<string, unknown>) : {};
+    if (typeof id !== "string" || modelOf(id) !== id || models.has(id) || !isModelFormat(format)) continue;
+    models.set(id, { id, name: modelNameOf(name) ?? modelName(id), format });
+  }
+  return [...models.values()];
+}
+
+const isModelFormat = (format: unknown): format is ModelFormat => (MODEL_FORMATS as readonly unknown[]).includes(format);
 
 /**
  * The most each of @ember's dials goes to, which the account's settings keep as `assistant_limits`,
@@ -812,7 +853,15 @@ const levelIn = <T extends string>(levels: readonly T[], kept: unknown): T | nul
 
 /** Ember AI as the account's settings keep it (`assistantIn`), or null for off. */
 const assistantSetting = (assistant: SavedAssistant | null) =>
-  JSON.stringify(assistant && { account_id: assistant.accountId, api_token: assistant.sealedApiToken, model: assistant.model, format: assistant.format });
+  JSON.stringify(
+    assistant && {
+      account_id: assistant.accountId,
+      api_token: assistant.sealedApiToken,
+      model: assistant.model,
+      format: assistant.format,
+      models: assistant.models.map(({ id, name, format }) => ({ id, name, format })),
+    },
+  );
 
 /**
  * Whether the join link lets people in, which the account's settings keep as `join_link`: until the
@@ -1317,6 +1366,7 @@ const rememberSetting = (key: string) => `UPDATE accounts SET settings = json_se
     '$.${key}', json(?1)
   )`;
 const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
+const REMEMBER_ASSISTANT = rememberSetting("assistant");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
@@ -1617,21 +1667,31 @@ const PERSON_WITH_PROFILE = `SELECT id, name, email_address, bio, role, status, 
 const OWN_PROFILE = `SELECT id, name, email_address, bio, role, status, updated_at, avatar_key, avatar_variant,
     coalesce(password_digest, '') <> '' AS password, NOT ${NEEDS_NO_MEMBERSHIP} AS membership_needed,
     (SELECT json_group_array(issuer) FROM identities WHERE identities.user_id = users.id) AS issuers,
-    assistant_thinking, assistant_answer_length
+    assistant_thinking, assistant_answer_length, assistant_model
   FROM users WHERE id = ?`;
 
-/** How much someone picked for @ember to think and how long its answers to them are. */
-const ANSWER_LEVELS = `SELECT assistant_thinking, assistant_answer_length FROM users WHERE id = ?`;
+/** How much someone picked for @ember to think, how long its answers to them are, and the model it answers them with. */
+const ASSISTANT_PICKS = `SELECT assistant_thinking, assistant_answer_length, assistant_model FROM users WHERE id = ?`;
 
-/** Changes the dials someone picks a level of, ?1 and ?2, a null one staying as it is. */
-const CHANGE_ANSWER_LEVELS = `UPDATE users SET assistant_thinking = coalesce(?1, assistant_thinking), assistant_answer_length = coalesce(?2, assistant_answer_length) WHERE id = ?3`;
+/**
+ * Changes the dials someone picks a level of, ?1 and ?2, a null one staying as it is, and when ?3 is 1,
+ * the model they pick, to ?4, or to none with null.
+ */
+const CHANGE_ASSISTANT_PICKS = `UPDATE users SET assistant_thinking = coalesce(?1, assistant_thinking), assistant_answer_length = coalesce(?2, assistant_answer_length),
+    assistant_model = CASE WHEN ?3 = 1 THEN ?4 ELSE assistant_model END
+  WHERE id = ?5`;
 
-/** What a row's `assistant_thinking` and `assistant_answer_length` say someone picked. */
-const pickedLevelsOf = (row: LevelColumns): PickedLevels => ({ thinking: levelIn(THINKING_LEVELS, row.assistant_thinking), length: levelIn(ANSWER_LENGTHS, row.assistant_answer_length) });
+/** What a row's `assistant_thinking`, `assistant_answer_length` and `assistant_model` say someone picked. */
+const assistantPicksOf = (row: PickColumns): AssistantPicks => ({
+  thinking: levelIn(THINKING_LEVELS, row.assistant_thinking),
+  length: levelIn(ANSWER_LENGTHS, row.assistant_answer_length),
+  model: row.assistant_model,
+});
 
-interface LevelColumns {
+interface PickColumns {
   assistant_thinking: string | null;
   assistant_answer_length: string | null;
+  assistant_model: string | null;
 }
 
 /** Gives someone an avatar, or none, recording when, which changes its address. */
@@ -3003,30 +3063,33 @@ export class WorkspaceStore {
 
   /** Someone with their profile and the avatar they've uploaded, whatever their status, or null if nobody has id `userId`. */
   async ownProfile(userId: UserId): Promise<OwnProfileEntry | null> {
-    const [row] = await this.db.all<DirectoryRow & AvatarColumns & LevelColumns & { email_address: string | null; password: number; membership_needed: number; issuers: string }>(
+    const [row] = await this.db.all<DirectoryRow & AvatarColumns & PickColumns & { email_address: string | null; password: number; membership_needed: number; issuers: string }>(
       OWN_PROFILE,
       userId,
     );
     if (!row) return null;
     const issuers = JSON.parse(row.issuers) as string[];
     const membershipNeeded = row.membership_needed === 1;
-    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, issuers, levels: pickedLevelsOf(row) };
+    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, issuers, picks: assistantPicksOf(row) };
   }
 
-  /** How much `userId` picked for @ember to think and how long its answers to them are, or null for nobody. */
-  async pickedLevels(userId: UserId): Promise<PickedLevels | null> {
-    const [row] = await this.db.all<LevelColumns>(ANSWER_LEVELS, userId);
-    return row ? pickedLevelsOf(row) : null;
+  /** How much `userId` picked for @ember to think, how long its answers to them are and the model it answers them with, or null for nobody. */
+  async assistantPicks(userId: UserId): Promise<AssistantPicks | null> {
+    const [row] = await this.db.all<PickColumns>(ASSISTANT_PICKS, userId);
+    return row ? assistantPicksOf(row) : null;
   }
 
-  /** Changes the levels `userId` picks of @ember's dials to `changes`, keeping a dial they leave out. */
-  async changePickedLevels(userId: UserId, changes: AnswerLevelChanges): Promise<void> {
-    await this.db.run(CHANGE_ANSWER_LEVELS, changes.thinking ?? null, changes.length ?? null, userId);
+  /** Changes what `userId` picks of @ember's dials and its model to `changes`, keeping what they leave out. */
+  async changeAssistantPicks(userId: UserId, changes: YourAssistantChanges): Promise<void> {
+    await this.db.run(CHANGE_ASSISTANT_PICKS, changes.thinking ?? null, changes.length ?? null, changes.model === undefined ? 0 : 1, changes.model ?? null, userId);
   }
 
-  /** Sets the most each of @ember's dials goes to for anyone's questions, without recording when, as no page's address goes by it. */
-  async changeAssistantMost(most: AnswerLevels): Promise<void> {
-    await this.db.run(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most));
+  /**
+   * Changes Ember AI while it's on to `assistant`, and the most each of @ember's dials goes to for anyone's
+   * questions to `most`, in one batch, without recording when, as no page's address goes by either.
+   */
+  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels): Promise<void> {
+    await this.db.batch([statement(REMEMBER_ASSISTANT, assistantSetting(assistant)), statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most))]);
   }
 
   /**

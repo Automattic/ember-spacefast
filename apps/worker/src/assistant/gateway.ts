@@ -129,7 +129,7 @@ export function formatsFor(model: string): ModelFormat[] {
 }
 
 /** Where Cloudflare's API is: the browser tests' stand-in, which `AI_GATEWAY_URL` names at a loopback address, or Cloudflare's own. */
-function cloudflareApiOf(env: Env): string {
+export function cloudflareApiOf(env: Env): string {
   const standIn = URL.parse(env.AI_GATEWAY_URL?.trim() ?? "");
   return standIn && isLoopback(standIn) ? standIn.origin : CLOUDFLARE_API;
 }
@@ -203,7 +203,7 @@ function textOf(content: unknown, type: string): string | null {
  * Why AI Gateway refused a request with `status`, from its `body`, which is Cloudflare's, with errors and
  * their codes, or the format's own, with an error, and says in words what to do, with Cloudflare's own.
  */
-function refusalOf(status: number, body: unknown): GatewayRefusal {
+export function refusalOf(status: number, body: unknown): GatewayRefusal {
   const { codes, message } = errorIn(body);
   const said = (lead: string) => (message ? `${lead} Cloudflare says: ${quoted(message)}` : lead);
   if (status === 401 || (status === 403 && codes.includes(10000))) {
@@ -238,4 +238,4 @@ function errorIn(body: unknown): { codes: number[]; message: string | null } {
 /** `message` cut to what Ember passes on. */
 const quoted = (message: string) => (message.length > MAX_QUOTED_LENGTH ? `${message.slice(0, MAX_QUOTED_LENGTH - 1).trimEnd()}…` : message);
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+export const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);

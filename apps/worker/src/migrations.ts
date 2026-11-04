@@ -43,6 +43,7 @@ import emailLinkRequests from "../migrations/0042_email_link_requests.sql";
 import passwordResets from "../migrations/0043_password_resets.sql";
 import threads from "../migrations/0044_threads.sql";
 import answerLevels from "../migrations/0045_answer_levels.sql";
+import assistantModels from "../migrations/0046_assistant_models.sql";
 import searchIndex from "../search-migrations/0001_search_index.sql";
 import searchResults from "../search-migrations/0002_search_results.sql";
 
@@ -111,6 +112,7 @@ export const MIGRATIONS: Migration[] = [
   { name: "0043_password_resets.sql", scope: "workspace", sql: passwordResets },
   { name: "0044_threads.sql", scope: "room", sql: threads },
   { name: "0045_answer_levels.sql", scope: "workspace", sql: answerLevels },
+  { name: "0046_assistant_models.sql", scope: "workspace", sql: assistantModels },
 ];
 
 /**

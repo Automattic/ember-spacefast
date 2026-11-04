@@ -6,10 +6,11 @@ import {
   WORKSPACE_PRELOADS,
   type Account,
   type AccountChanges,
-  type AnswerLevelChanges,
-  type AnswerLevelsAnswer,
+  type AssistantCatalog,
   type AssistantChanged,
+  type AssistantChanges,
   type AssistantForgotten,
+  type AssistantKeys,
   type AssistantSaved,
   type AssistantSetup,
   type Bootstrap,
@@ -40,6 +41,7 @@ import {
   type Me,
   type MemberfulConnection,
   type MemberfulConnectionStart,
+  type NewAssistantModel,
   type NewDirect,
   type NewJoinCode,
   type NewRoom,
@@ -78,6 +80,8 @@ import {
   type TurnstileSettings,
   type UserId,
   type WorkspaceSettings,
+  type YourAssistantChanged,
+  type YourAssistantChanges,
 } from "@ember/protocol";
 import type { LogoVariants } from "@/lib/previews";
 
@@ -508,6 +512,15 @@ export async function forgetTurnstileKeys(): Promise<TurnstileSettings["turnstil
 }
 
 /**
+ * The text models Cloudflare's catalog lists for the account `keys` gives, with its API token, or the one
+ * Ember has, when it gives none, or else the models Ember knows, and why the catalog couldn't be read.
+ * Fails with a 422 ApiError on the field the Worker refuses, and a 403 one for anyone but an administrator.
+ */
+export async function listAssistantModels(keys: AssistantKeys): Promise<AssistantCatalog> {
+  return request<AssistantCatalog>("/api/account/assistant/catalog", { method: "POST", body: JSON.stringify(keys) });
+}
+
+/**
  * Turns Ember AI on with `setup`, or changes it, once the model has answered a test question through AI
  * Gateway, answering Ember AI as it is then and what the model said. Fails with a 422 ApiError on the
  * field AI Gateway or the Worker refuses, or with none for the credits, a 429 one while AI Gateway turns
@@ -517,22 +530,46 @@ export async function saveAssistant(setup: AssistantSetup): Promise<AssistantSav
   return request<AssistantSaved>("/api/account/assistant", { method: "PUT", body: JSON.stringify(setup) });
 }
 
+/**
+ * Adds `model` to the models people can pick, once it has answered a test question through Ember AI's
+ * account, answering Ember AI as it is then and what the model said. Fails as `saveAssistant` does, with
+ * a 422 ApiError on the model's field once people can pick as many as they can, and a 409 one while
+ * Ember AI is off, or once it was set up again while the model answered.
+ */
+export async function addAssistantModel(model: NewAssistantModel): Promise<AssistantSaved> {
+  return request<AssistantSaved>("/api/account/assistant/models", { method: "POST", body: JSON.stringify(model) });
+}
+
+/**
+ * Takes the model `model` out of those people can pick, answering Ember AI as it is then. Fails with a
+ * 409 ApiError for the one that answers everyone, or while Ember AI is off, and a 403 one for anyone but
+ * an administrator.
+ */
+export async function removeAssistantModel(model: string): Promise<AssistantChanged["assistant"]> {
+  return (await request<AssistantChanged>("/api/account/assistant/models", { method: "DELETE", body: JSON.stringify({ model }) })).assistant;
+}
+
 /** Turns Ember AI off, forgetting its API token. Fails with a 403 ApiError for anyone but an administrator. */
 export async function forgetAssistant(): Promise<null> {
   return (await request<AssistantForgotten>("/api/account/assistant", { method: "DELETE" })).assistant;
 }
 
 /**
- * Changes the most each of @ember's dials goes to for anyone's questions, answering Ember AI as it is
- * then. Fails with a 409 ApiError while it's off, and a 403 one for anyone but an administrator.
+ * Changes the most each of @ember's dials goes to for anyone's questions, or which of the models people
+ * can pick it answers everyone else with, answering Ember AI as it is then. Fails with a 409 ApiError
+ * while it's off, a 422 one for a model people can't pick, and a 403 one for anyone but an administrator.
  */
-export async function changeAssistantMost(changes: AnswerLevelChanges): Promise<AssistantChanged["assistant"]> {
+export async function changeAssistantSettings(changes: AssistantChanges): Promise<AssistantChanged["assistant"]> {
   return (await request<AssistantChanged>("/api/account/assistant", { method: "PATCH", body: JSON.stringify(changes) })).assistant;
 }
 
-/** Changes how much @ember thinks and how long it answers you, answering your levels as they are then, or null while Ember AI is off. */
-export async function changeAnswerLevels(changes: AnswerLevelChanges): Promise<AnswerLevelsAnswer["assistant"]> {
-  return (await request<AnswerLevelsAnswer>("/api/users/me/assistant", { method: "PATCH", body: JSON.stringify(changes) })).assistant;
+/**
+ * Changes how much @ember thinks and how long it answers you, or the model it answers you with, answering
+ * yours as they are then, or null while Ember AI is off. Fails with a 422 ApiError for a model people
+ * can't pick.
+ */
+export async function changeYourAssistant(changes: YourAssistantChanges): Promise<YourAssistantChanged["assistant"]> {
+  return (await request<YourAssistantChanged>("/api/users/me/assistant", { method: "PATCH", body: JSON.stringify(changes) })).assistant;
 }
 
 /**
