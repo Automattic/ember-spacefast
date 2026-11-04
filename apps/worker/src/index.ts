@@ -88,7 +88,7 @@ import {
   tokenDigest,
 } from "./auth";
 import { directoryOf } from "./avatar-tokens";
-import { changeAnswerLevels, changeAssistantMost, forgetAssistant, saveAssistant } from "./assistant/settings";
+import { changeAnswerLevels, changeAssistantMost, deployedAccountIdOf, forgetAssistant, saveAssistant } from "./assistant/settings";
 import { avatarTokenOf, showAvatar, storeAvatar } from "./avatars";
 import type { BanProblem } from "./bans";
 import { BodyTooLarge, jsonBodyOf } from "./bodies";
@@ -257,16 +257,21 @@ async function me(request: Request, env: Env): Promise<Response> {
 /**
  * Workspace settings, which anyone signed in may see, read-only unless they're an administrator, with
  * the Memberful site whose members can sign in, once the deployment has its keys, whether it hears the
- * site's webhooks, and where Turnstile's keys come from, the deployment's taking the place of any an
- * administrator gave. They hold the join code, which no cache should keep, as the sidebar's invitation
- * does.
+ * site's webhooks, where Turnstile's keys come from, the deployment's taking the place of any an
+ * administrator gave, and, for administrators, the Cloudflare account Ember is deployed to. They hold
+ * the join code, which no cache should keep, as the sidebar's invitation does.
  */
 async function workspaceSettings(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
   const settings = credentials && (await workspace(env).workspaceSettings(credentials));
   if (!settings) return problem(401, "Not signed in");
   if (settings === "not set up") return problem(404, "Ember isn't set up yet");
-  const deployment = { memberfulSite: memberfulKeysOf(env)?.site ?? null, memberfulWebhooks: memberfulWebhooksOf(env) !== null, turnstile: turnstileOf(env, settings.turnstile) };
+  const deployment = {
+    memberfulSite: memberfulKeysOf(env)?.site ?? null,
+    memberfulWebhooks: memberfulWebhooksOf(env) !== null,
+    turnstile: turnstileOf(env, settings.turnstile),
+    cloudflareAccountId: settings.canAdminister ? deployedAccountIdOf(env) : null,
+  };
   return json({ ...settings, ...deployment } satisfies WorkspaceSettings, { headers: { "Cache-Control": "no-store" } });
 }
 

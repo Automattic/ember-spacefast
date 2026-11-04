@@ -19,9 +19,10 @@
 // a Memberful custom app, for its members to sign in (apps/worker/src/memberful.ts), and of a Turnstile
 // widget, for open sign-up's check, in place of any given in Set up Turnstile (apps/worker/src/turnstile.ts),
 // go up with every deploy whose environment gives them, as the Preview workflow's does from the
-// repository's secrets. Deploy to Cloudflare's copy of Ember leaves out the .github folder, and with
-// it the Update Ember workflow that offers the copy Ember's releases, so a deploy without that workflow
-// ends by saying how to add it.
+// repository's secrets. So does the ID of the Cloudflare account the Worker goes to, as
+// CLOUDFLARE_ACCOUNT_ID, which a Worker can't learn by itself, for Set up Ember AI to fill in. Deploy
+// to Cloudflare's copy of Ember leaves out the .github folder, and with it the Update Ember workflow
+// that offers the copy Ember's releases, so a deploy without that workflow ends by saying how to add it.
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -106,9 +107,36 @@ function givenSecrets(): Record<string, string> {
   return Object.fromEntries(GIVEN_KEYS.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])));
 }
 
-/** What the deploy says it uploads: the secrets it made, and the ones its environment gave, by name alone. */
-function uploading(made: string[], given: string[]): string {
-  const secrets = [made.length ? `new ${made.join(", ")}` : "", given.length ? `${given.join(", ")} from the environment` : ""].filter(Boolean);
+/** The shape of a Cloudflare account's ID: 32 hexadecimal digits, as the Worker checks it (`accountIdOf`). */
+const ACCOUNT_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * The ID of the Cloudflare account the deploy goes to: the one its environment names, which wrangler
+ * deploys to, else the only one its credentials reach, as a Workers Builds token's do, or null where
+ * they reach several, and wrangler picks among them without saying which, or it can't say.
+ */
+function deployAccountId(): string | null {
+  const named = process.env.CLOUDFLARE_ACCOUNT_ID?.trim().toLowerCase();
+  if (named) return ACCOUNT_ID.test(named) ? named : null;
+  const whoami = wrangler(["whoami", "--json"], true);
+  if (whoami.status !== 0) return null;
+  try {
+    const { accounts } = JSON.parse(whoami.stdout) as { accounts?: unknown };
+    const [only, ...others] = Array.isArray(accounts) ? (accounts as ({ id?: unknown } | null)[]) : [];
+    const id = only?.id;
+    return others.length === 0 && typeof id === "string" && ACCOUNT_ID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What the deploy says it uploads: the secrets it made, the ones its environment gave, and the account's ID, by name alone. */
+function uploading(made: string[], given: string[], accountId: boolean): string {
+  const secrets = [
+    made.length ? `new ${made.join(", ")}` : "",
+    given.length ? `${given.join(", ")} from the environment` : "",
+    accountId ? "CLOUDFLARE_ACCOUNT_ID, the account's ID, for Set up Ember AI" : "",
+  ].filter(Boolean);
   return secrets.length ? `Deploying with ${secrets.join(", and ")}` : "Deploying with the Worker's secrets as they are";
 }
 
@@ -243,16 +271,20 @@ function tellUpdateWorkflow(): void {
   }
 }
 
-/** Deploys with `args` and the missing secrets, says how to set Ember up, and answers wrangler's exit status. */
+/**
+ * Deploys with `args`, the missing secrets and the account's ID, where it's known, says how to set Ember
+ * up, and answers wrangler's exit status.
+ */
 async function deploy(args: string[]): Promise<number> {
   const target = targetOptions(args);
   const { secrets, setupToken } = await missingSecrets(secretNames(target));
   const given = givenSecrets();
+  const accountId = deployAccountId();
   const dir = mkdtempSync(path.join(tmpdir(), "ember-deploy-"));
   try {
     const file = path.join(dir, "secrets.json");
-    writeFileSync(file, JSON.stringify({ ...secrets, ...given }), { mode: 0o600 });
-    console.log(uploading(Object.keys(secrets), Object.keys(given)));
+    writeFileSync(file, JSON.stringify({ ...secrets, ...given, ...(accountId && { CLOUDFLARE_ACCOUNT_ID: accountId }) }), { mode: 0o600 });
+    console.log(uploading(Object.keys(secrets), Object.keys(given), accountId !== null));
     // wrangler records what it deployed, the Worker's address among it, in the file the environment names, else one of this deploy's own.
     const output = process.env.WRANGLER_OUTPUT_FILE_PATH || path.join(dir, "wrangler-output.json");
     const status = wrangler(["deploy", "--secrets-file", file, ...args], false, { WRANGLER_OUTPUT_FILE_PATH: output }).status ?? 1;

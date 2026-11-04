@@ -468,6 +468,11 @@ export interface WorkspaceSettings {
   addresses: EmberAddresses;
   /** Ember AI as the AI assistant tab shows it, for administrators while it's on, and null otherwise. */
   assistant: AssistantSettings | null;
+  /**
+   * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for
+   * administrators once the deploy has given it to the Worker, and null otherwise.
+   */
+  cloudflareAccountId: string | null;
 }
 
 /**

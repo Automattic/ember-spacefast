@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACCOUNT_ID_REFUSED, API_TOKEN_REFUSED, ASSISTANT_MODELS, MODEL_REFUSED, TOP_LEVELS, type AssistantSettings } from "@ember/protocol/assistant";
 import { ApiError } from "@/lib/api";
-import { AI_GATEWAY_DASHBOARD, AssistantSetup, MODEL_CATALOG, WORKERS_AI_DASHBOARD } from "./assistant-setup";
+import { AssistantSetup, MODEL_CATALOG } from "./assistant-setup";
 
 /** A Cloudflare account's ID and an API token of its, as an administrator copies them from Workers AI's Use REST API. */
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+/** Another account's ID. */
+const OTHER_ACCOUNT_ID = "fedcba9876543210fedcba9876543210";
 const API_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab";
 const GREETING = "Hello, team! I'm Ember, here whenever you mention @ember.";
 
@@ -32,10 +34,10 @@ function held(response: () => Response) {
   return { answered: () => answered, answer: () => act(async () => answer()) };
 }
 
-/** Set up Ember AI, open on a workspace whose Ember AI is `assistant`. */
-function showSetup(assistant: AssistantSettings | null = null) {
+/** Set up Ember AI, open on a workspace whose Ember AI is `assistant`, deployed to the Cloudflare account `deployedAccountId` names, if the deploy said. */
+function showSetup(assistant: AssistantSettings | null = null, deployedAccountId: string | null = null) {
   const callbacks = { onSaved: vi.fn(), onClose: vi.fn(), onFailed: vi.fn() };
-  render(<AssistantSetup assistant={assistant} {...callbacks} />);
+  render(<AssistantSetup assistant={assistant} deployedAccountId={deployedAccountId} {...callbacks} />);
   return { ...callbacks, user: userEvent.setup() };
 }
 
@@ -45,6 +47,9 @@ const accountIdField = () => screen.getByRole("textbox", { name: "Account ID" })
 const apiTokenField = () => screen.getByRole("textbox", { name: "API token" });
 const modelMenu = () => screen.getByRole("combobox", { name: "Model" });
 const modelIdField = () => screen.getByRole("textbox", { name: "Model ID" });
+const steps = () => within(screen.getByRole("list", { name: "Steps to make a Workers AI API token" })).getAllByRole("listitem");
+const workersAiLink = () => screen.getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" });
+const aiGatewayLink = () => screen.getByRole("link", { name: "Open AI Gateway in the Cloudflare dashboard" });
 
 /** Types the account's ID and API token, as given, and goes on to the model. */
 async function giveKeys(user: ReturnType<typeof userEvent.setup>, { accountId = ACCOUNT_ID, apiToken = API_TOKEN } = {}) {
@@ -64,15 +69,18 @@ describe("Set up Ember AI", () => {
     expect(setup).toHaveAccessibleDescription(
       "Ember AI asks a model through your Cloudflare account's AI Gateway. Workers AI's models come with a free daily allowance, and other companies' are paid for with AI Gateway's credits. Ember keeps the API token encrypted.",
     );
-    const [open, token, account] = within(screen.getByRole("list", { name: "Steps to make a Workers AI API token" })).getAllByRole("listitem");
+    const [open, token, account] = steps();
     expect(open).toHaveTextContent("In the Cloudflare dashboard, open Workers AI and choose Use REST API.");
     const dashboard = within(open!).getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" });
-    expect(dashboard).toHaveAttribute("href", WORKERS_AI_DASHBOARD);
+    expect(dashboard).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/ai/workers-ai");
     expect(dashboard).toHaveAttribute("target", "_blank");
     expect(token).toHaveTextContent("Choose Create a Workers AI API Token, then Create API Token, and copy the token here.");
     expect(account).toHaveTextContent("Copy the Account ID shown there too.");
+    expect(accountIdField()).toHaveValue("");
+    expect(accountIdField()).not.toHaveAccessibleDescription();
     expect(button("Continue")).toBeDisabled();
     await user.type(accountIdField(), ACCOUNT_ID);
+    expect(dashboard).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/workers-ai`);
     expect(button("Continue")).toBeDisabled();
     await user.type(apiTokenField(), API_TOKEN);
     expect(button("Continue")).toBeEnabled();
@@ -119,7 +127,7 @@ describe("Set up Ember AI", () => {
 
     await user.selectOptions(modelMenu(), "Claude Sonnet 5.5");
     expect(modelMenu()).toHaveAccessibleDescription("AI Gateway's credits pay for this model. Top them up under Credits Available in AI Gateway. Open AI Gateway in the Cloudflare dashboard");
-    expect(screen.getByRole("link", { name: "Open AI Gateway in the Cloudflare dashboard" })).toHaveAttribute("href", AI_GATEWAY_DASHBOARD);
+    expect(aiGatewayLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/ai-gateway`);
   });
 
   it("asks the model chosen a test question, saving it with the account and API token, and shows what it said", async () => {
@@ -247,7 +255,9 @@ describe("Set up Ember AI", () => {
     serve();
     const { user } = showSetup({ accountId: ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS });
     await dialog("Set up Ember AI");
+    expect(steps()).toHaveLength(2);
     expect(accountIdField()).toHaveValue(ACCOUNT_ID);
+    expect(workersAiLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/workers-ai`);
     expect(apiTokenField()).toHaveValue("");
     expect(apiTokenField()).toHaveAccessibleDescription("Ember has an API token already. Leave this blank to keep it, or paste another to ask with it instead.");
     expect(button("Continue")).toBeEnabled();
@@ -257,6 +267,67 @@ describe("Set up Ember AI", () => {
     await user.click(button("Save"));
     await dialog("Ember AI is set up");
     expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, model: "openai/gpt-6.1-terra" }]]);
+  });
+
+  it("fills in the account Ember is deployed to, saying so, and opens its pages in the Cloudflare dashboard", async () => {
+    serve();
+    const { user, onSaved } = showSetup(null, ACCOUNT_ID);
+    await dialog("Set up Ember AI");
+    expect(steps().map((step) => step.textContent)).toEqual([
+      "In the Cloudflare dashboard, open Workers AI and choose Use REST API. Open Workers AI in the Cloudflare dashboard",
+      "Choose Create a Workers AI API Token, then Create API Token, and copy the token here.",
+    ]);
+    expect(accountIdField()).toHaveValue(ACCOUNT_ID);
+    expect(accountIdField()).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
+    expect(workersAiLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/workers-ai`);
+    expect(button("Continue")).toBeDisabled();
+    await user.type(apiTokenField(), API_TOKEN);
+    await user.click(button("Continue"));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Model" }), "Claude Sonnet 5.5");
+    expect(aiGatewayLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${ACCOUNT_ID}/ai/ai-gateway`);
+    await user.click(button("Save"));
+    await dialog("Ember AI is set up");
+    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "anthropic/claude-sonnet-5.5" }]]);
+    expect(onSaved).toHaveBeenCalledExactlyOnceWith({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" });
+  });
+
+  it("takes another account in place of the one Ember is deployed to, the dashboard's pages following what's typed", async () => {
+    serve();
+    const { user } = showSetup(null, ACCOUNT_ID);
+    await dialog("Set up Ember AI");
+    await user.clear(accountIdField());
+    expect(accountIdField()).not.toHaveAccessibleDescription();
+    expect(workersAiLink()).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/ai/workers-ai");
+    await user.type(accountIdField(), OTHER_ACCOUNT_ID.toUpperCase());
+    expect(accountIdField()).not.toHaveAccessibleDescription();
+    expect(workersAiLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${OTHER_ACCOUNT_ID}/ai/workers-ai`);
+    await user.type(apiTokenField(), API_TOKEN);
+    await user.click(button("Continue"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await dialog("Ember AI is set up");
+    expect(asked()).toEqual([["PUT /api/account/assistant", { accountId: OTHER_ACCOUNT_ID, apiToken: API_TOKEN, model: ASSISTANT_MODELS[0]!.id }]]);
+  });
+
+  it("says why AI Gateway refused the account Ember is deployed to in place of saying it's that account", async () => {
+    const refusal = "Cloudflare has no account with that ID that the token can reach.";
+    serve(() => Response.json({ error: refusal, field: "accountId" }, { status: 422 }));
+    const { user } = showSetup(null, ACCOUNT_ID);
+    await user.type(await screen.findByRole("textbox", { name: "API token" }), API_TOKEN);
+    await user.click(button("Continue"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+    expect(accountIdField()).toHaveAccessibleDescription(refusal);
+    expect(screen.queryByText("Ember is deployed to this account.", { exact: false })).not.toBeInTheDocument();
+  });
+
+  it("opens on Ember AI's own account when it's on, saying only of the deployed account that Ember is there", async () => {
+    serve();
+    showSetup({ accountId: OTHER_ACCOUNT_ID, model: "openai/gpt-6.1-sol", most: TOP_LEVELS }, ACCOUNT_ID);
+    await dialog("Set up Ember AI");
+    expect(steps()).toHaveLength(2);
+    expect(accountIdField()).toHaveValue(OTHER_ACCOUNT_ID);
+    expect(accountIdField()).not.toHaveAccessibleDescription();
+    expect(workersAiLink()).toHaveAttribute("href", `https://dash.cloudflare.com/${OTHER_ACCOUNT_ID}/ai/workers-ai`);
   });
 
   it("opens a model it doesn't list under Another model, with its ID", async () => {

@@ -3,6 +3,7 @@ import {
   ASSISTANT_FORBIDDEN,
   ASSISTANT_OFF,
   LEVELS_REFUSED,
+  accountIdOf,
   parseAssistantSetup,
   parseLevelChanges,
   type AnswerLevelsAnswer,
@@ -46,6 +47,12 @@ const TEST_TIMEOUT_MS = 30_000;
 
 /** The most of the model's hello the dialog shows. */
 const MAX_GREETING_LENGTH = 500;
+
+/**
+ * The ID of the Cloudflare account the Worker is deployed to, which Set up Ember AI fills in, as the
+ * deploy gave it, or null without one that can be an account's.
+ */
+export const deployedAccountIdOf = (env: Env): string | null => accountIdOf(env.CLOUDFLARE_ACCOUNT_ID ?? "");
 
 /**
  * `PUT /api/account/assistant`, `{ accountId, apiToken, model }`: turns Ember AI on, or changes it, once

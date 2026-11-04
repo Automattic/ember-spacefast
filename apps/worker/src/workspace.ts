@@ -736,11 +736,11 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Workspace settings as the person `credentials` signs in sees them: "not set up" before first run, or
-   * null without a valid session. The Worker adds what it knows of the Memberful site from its keys, and
-   * has the deployment's Turnstile keys take the place of any an administrator gave, and the Workspace
-   * says how it sends email, since it's what sends it.
+   * null without a valid session. The Worker adds what it knows of the Memberful site from its keys and
+   * the Cloudflare account it's deployed to, and has the deployment's Turnstile keys take the place of
+   * any an administrator gave, and the Workspace says how it sends email, since it's what sends it.
    */
-  async workspaceSettings(credentials: Credentials): Promise<Omit<WorkspaceSettings, "memberfulSite" | "memberfulWebhooks"> | "not set up" | null> {
+  async workspaceSettings(credentials: Credentials): Promise<Omit<WorkspaceSettings, "memberfulSite" | "memberfulWebhooks" | "cloudflareAccountId"> | "not set up" | null> {
     const user = await this.authenticate(credentials);
     if (!user) return null;
     const [account, canAdminister] = await Promise.all([this.joinableAccount(), this.store.isAdministrator(user.id)]);

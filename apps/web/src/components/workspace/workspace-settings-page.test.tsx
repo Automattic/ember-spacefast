@@ -51,6 +51,7 @@ const asAdministrator: WorkspaceSettings = {
   memberfulWebhooks: false,
   turnstile: null,
   assistant: null,
+  cloudflareAccountId: null,
   email: { provider: "cloudflare", resendKey: null, cloudflare: true, from: null },
   invitations: [],
   emailDomains: [],
@@ -1669,6 +1670,16 @@ describe("Ember AI", () => {
 
     await user.click(within(card).getByRole("button", { name: "Change" }));
     expect(await screen.findByRole("textbox", { name: "Account ID" })).toHaveValue("0123456789abcdef0123456789abcdef");
+  });
+
+  it("fills in the Cloudflare account Ember is deployed to when the switch sets up Ember AI", async () => {
+    serve({ ...asAdministrator, cloudflareAccountId: "0123456789abcdef0123456789abcdef" });
+    const { user } = showPage();
+    const card = await screen.findByRole("region", { name: "Ember AI" });
+    await user.click(within(card).getByRole("switch", { name: "Ember AI" }));
+    const accountId = await screen.findByRole("textbox", { name: "Account ID" });
+    expect(accountId).toHaveValue("0123456789abcdef0123456789abcdef");
+    expect(accountId).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
   });
 
   it("turns Ember AI off once the administrator confirms", async () => {

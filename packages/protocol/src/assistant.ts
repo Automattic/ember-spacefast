@@ -162,7 +162,7 @@ export const MAX_MODEL_LENGTH = 200;
 const MAX_API_TOKEN_LENGTH = 200;
 
 /** Why Set up Ember AI's fields are refused before Cloudflare is asked about them. */
-export const ACCOUNT_ID_REFUSED = "An account ID is 32 letters and digits. Copy it from Account home in the Cloudflare dashboard.";
+export const ACCOUNT_ID_REFUSED = "An account ID is 32 letters and digits. Copy it from Workers AI's Use REST API in the Cloudflare dashboard.";
 export const API_TOKEN_REFUSED = "Paste an API token from Account API tokens in the Cloudflare dashboard.";
 export const MODEL_REFUSED = "A model's ID has a slash, such as anthropic/claude-sonnet-5.5. Copy it from Cloudflare's model catalog.";
 

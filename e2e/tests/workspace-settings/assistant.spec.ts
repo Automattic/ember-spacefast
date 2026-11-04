@@ -47,8 +47,14 @@ test.describe("Ember AI", () => {
 
     const setup = page.getByRole("dialog");
     await expect(setup).toHaveAccessibleName("Set up Ember AI");
-    await expect(setup.getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" })).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/ai/workers-ai");
-    await setup.getByRole("textbox", { name: "Account ID" }).fill(AI_GATEWAY_ACCOUNT.accountId);
+    // It fills in the account the server was deployed to, as the deploy said, opening its pages in the dashboard.
+    const accountId = setup.getByRole("textbox", { name: "Account ID" });
+    await expect(accountId).toHaveValue(AI_GATEWAY_ACCOUNT.accountId);
+    await expect(accountId).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
+    await expect(setup.getByRole("link", { name: "Open Workers AI in the Cloudflare dashboard" })).toHaveAttribute(
+      "href",
+      `https://dash.cloudflare.com/${AI_GATEWAY_ACCOUNT.accountId}/ai/workers-ai`,
+    );
     await setup.getByRole("textbox", { name: "API token" }).fill("e2e-only-not-the-accounts-token");
     await setup.getByRole("button", { name: "Continue" }).click();
     await expect(setup).toHaveAccessibleName("Choose a model");
@@ -116,7 +122,7 @@ test.describe("Ember AI", () => {
     // Turned off, Ember forgot the API token, so setting it up again needs one.
     await assistantSwitch.click();
     const setup = page.getByRole("dialog");
-    await setup.getByRole("textbox", { name: "Account ID" }).fill(AI_GATEWAY_ACCOUNT.accountId);
+    await expect(setup.getByRole("textbox", { name: "Account ID" })).toHaveValue(AI_GATEWAY_ACCOUNT.accountId);
     await expect(setup.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 });

@@ -149,6 +149,18 @@ describe("Ember AI", () => {
       expect(await assistantSettings(member)).toBeNull();
     });
 
+    it("gives administrators the Cloudflare account the deploy said Ember is in, to fill in, once it can be an account's ID", async () => {
+      const administrator = await setUp();
+      const member = await joinAsGrace();
+      const deployedTo = async (session: Session, given: string | undefined) =>
+        ((await (await apiWith({ CLOUDFLARE_ACCOUNT_ID: given }, "/api/account", { headers: as(session) })).json()) as WorkspaceSettings).cloudflareAccountId;
+
+      expect(await deployedTo(administrator, ` ${ACCOUNT_ID.toUpperCase()}\n`)).toBe(ACCOUNT_ID);
+      expect(await deployedTo(member, ACCOUNT_ID)).toBeNull();
+      expect(await deployedTo(administrator, "my-account")).toBeNull();
+      expect(await deployedTo(administrator, undefined)).toBeNull();
+    });
+
     it("adds @ember, a bot named Ember that nobody can sign in as, in every open room, and tells everyone's workspace sockets", async () => {
       const administrator = await setUp();
       const member = await joinAsGrace();
