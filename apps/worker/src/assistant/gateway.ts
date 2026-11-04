@@ -138,37 +138,46 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
 
 /**
  * What the model `gateway` names answers `question`, asked as it is, until `signal` says it's waited long
- * enough: once, but for a turn Anthropic's model paused while it searched, which it carries on.
+ * enough: once, but for a turn Anthropic's model paused while it searched, which it carries on while the
+ * turn has tokens left. One that paused with none left took every token it could.
  */
 export async function askOnce(env: Env, gateway: Gateway, question: Question, signal: AbortSignal): Promise<Answered | GatewayRefusal> {
   const request = requestOf(gateway, question);
   let said: unknown[] = [];
+  let tokensLeft = question.maxTokens;
   for (let continued = 0; ; continued++) {
-    const answered = await send(env, gateway, question, continued === 0 ? request : carryingOn(request, said), signal);
+    const answered = await send(env, gateway, question, continued === 0 ? request : carryingOn(request, said, tokensLeft), signal);
     if ("refusal" in answered) return answered;
     if (gateway.format !== "messages" || !isObject(answered.body)) return answeredIn(gateway.format, answered.body);
     // Each part of a turn says what's new since the last, which is sent back as it is to carry on.
     said = [...said, ...(Array.isArray(answered.body.content) ? answered.body.content : [])];
+    tokensLeft -= writtenIn(answered.body);
     if (answered.body.stop_reason !== "pause_turn" || continued === MAX_CONTINUATIONS) return answeredIn(gateway.format, { ...answered.body, content: said });
+    if (tokensLeft < 1) return answeredIn(gateway.format, { ...answered.body, content: said, stop_reason: "max_tokens" });
   }
 }
 
 /**
  * `request`, to Messages, carrying on the turn its model paused once it had `said` what it did, which goes
- * back as it is. Each request may use a tool as many times as its `max_uses`, so that's lowered to what the
- * answer has left of it, and once the answer has used one up, which stays among the tools as the turn used
- * it, the model is told to use none and answer with what it found.
+ * back as it is. Each request may write as many tokens as its `max_tokens`, and use a tool as many times
+ * as its `max_uses`, so they're lowered to what the turn has left, `tokensLeft` of its tokens, and once it
+ * has used a tool up, which stays among the tools as the turn used it, the model is told to use none and
+ * answer with what it found.
  */
-function carryingOn(request: Record<string, unknown>, said: unknown[]): Record<string, unknown> {
+function carryingOn(request: Record<string, unknown>, said: unknown[], tokensLeft: number): Record<string, unknown> {
   const usesOf = (name: unknown) => said.filter((block) => isObject(block) && block.type === "server_tool_use" && block.name === name).length;
   const tools = (Array.isArray(request.tools) ? request.tools : []).filter(isObject).map((tool) => ({ tool, left: Number(tool.max_uses) - usesOf(tool.name) }));
   return {
     ...request,
+    max_tokens: tokensLeft,
     messages: [...(request.messages as unknown[]), { role: "assistant", content: said }],
     ...(tools.length > 0 && { tools: tools.map(({ tool, left }) => ({ ...tool, max_uses: Math.max(1, left) })) }),
     ...(tools.some(({ left }) => left < 1) && { tool_choice: { type: "none" } }),
   };
 }
+
+/** How many tokens Messages' answer `body` says its model wrote, thinking among them. */
+const writtenIn = (body: Record<string, unknown>) => (isObject(body.usage) && typeof body.usage.output_tokens === "number" ? body.usage.output_tokens : 0);
 
 /** Whether `answered` is a refusal that a model asked another way might not give. */
 const isWrongFormat = (answered: Answered | GatewayRefusal): answered is GatewayRefusal => "refusal" in answered && answered.wrongFormat === true;
@@ -238,7 +247,9 @@ function requestOf({ model, format }: Gateway, { instructions, turns, maxTokens,
     return { model, max_tokens: maxTokens, system: instructions, messages, ...thinks, ...withTools };
   }
   if (format === "responses") {
-    return { model, max_output_tokens: maxTokens, instructions, input: turns.map(({ role, text }) => ({ role, content: text })), ...(effort && { reasoning: { effort } }), ...withTools };
+    // Its web search is its only built-in tool, so its calls of built-in tools are its searches.
+    const searches = tools.length > 0 && { max_tool_calls: WEB_SEARCHES_PER_ANSWER };
+    return { model, max_output_tokens: maxTokens, instructions, input: turns.map(({ role, text }) => ({ role, content: text })), ...(effort && { reasoning: { effort } }), ...withTools, ...searches };
   }
   return {
     model,

@@ -38,7 +38,7 @@ const FOUND = "AI Gateway is Cloudflare's proxy for requests to AI models, with 
 /** A request the fake AI Gateway was sent. */
 interface Asked {
   url: string;
-  body: { tools?: unknown[]; system?: string; instructions?: string; messages?: Array<{ role: string; content: unknown }> };
+  body: { tools?: unknown[]; system?: string; instructions?: string; max_tokens?: number; messages?: Array<{ role: string; content: unknown }> };
 }
 
 /** Stands in for AI Gateway, answering each request with `answer`, and keeping what it's sent. */
@@ -74,8 +74,9 @@ const CITED = [
   { type: "text", text: ", with logs and caching.", citations: [citing(BLOG), citing(DOCS)] },
 ];
 
-/** Anthropic's model's answer with `content`, stopped for `reason`. */
-const messagesAnswer = (content: unknown[], reason = "end_turn") => Response.json({ type: "message", role: "assistant", content, stop_reason: reason });
+/** Anthropic's model's answer with `content`, stopped for `reason` once it had `written` as many tokens. */
+const messagesAnswer = (content: unknown[], reason = "end_turn", written = 100) =>
+  Response.json({ type: "message", role: "assistant", content, stop_reason: reason, usage: { input_tokens: 1_000, output_tokens: written } });
 
 /** What a model says without searching, in the format of the API at `url`. */
 function unsearched(url: string, text: string): Response {
@@ -142,11 +143,14 @@ async function turnedWebSearch(administrator: Session, on: boolean): Promise<Web
   return (await response.json()) as WebSearchChanged;
 }
 
-/** What Ember AI's model may do on the web, as the account's settings keep it. */
-const storedWebTools = async () => {
+/** Ember AI as the account's settings keep it. */
+const storedAssistant = async () => {
   const [{ settings }] = (await workspaceSql("SELECT settings FROM accounts")) as [{ settings: string }];
-  return (JSON.parse(settings) as { assistant: { web_tools?: unknown } | null }).assistant?.web_tools;
+  return (JSON.parse(settings) as { assistant: { web_tools?: unknown; web_tools_asked_at?: unknown } | null }).assistant;
 };
+
+/** What Ember AI's model may do on the web, as the account's settings keep it. */
+const storedWebTools = async () => (await storedAssistant())?.web_tools;
 
 /** Ember AI as the workspace's settings show it to `session`. */
 const assistantSettings = async (session: Session) => ((await (await api("/api/account", { headers: { Cookie: session.cookie } })).json()) as WorkspaceSettings).assistant;
@@ -211,6 +215,8 @@ describe("Search the web", () => {
     expect(assistant.webTools).toEqual(["search"]);
     expect(found).toBe(`${FOUND} ([developers.cloudflare.com](${DOCS.url}))`);
     expect(requests.map(({ url, body }) => [url.split("/ai/v1/")[1], body.tools])).toEqual([["responses", [{ type: "web_search" }]]]);
+    // What caps its calls of built-in tools caps its searches, its only one.
+    expect(requests[0]!.body).toHaveProperty("max_tool_calls", WEB_SEARCHES_PER_ANSWER);
   });
 
   it("says a model that takes Chat Completions can't search, asking it nothing", async () => {
@@ -268,8 +274,12 @@ describe("Search the web", () => {
     fakeGateway(searching);
     await turnedWebSearch(ada, true);
     vi.restoreAllMocks();
+    const turnedOnAt = (await storedAssistant())!.web_tools_asked_at;
+    expect(turnedOnAt).toEqual(expect.any(String));
 
     expect((await setUpAssistant(ada, MESSAGES_MODEL)).webTools).toEqual(["search", "read"]);
+    // As does when it was asked to turn on, which a change asked for before then doesn't undo.
+    expect((await storedAssistant())!.web_tools_asked_at).toBe(turnedOnAt);
     expect((await setUpAssistant(ada, "anthropic/claude-opus-5.5")).webTools).toEqual([]);
     expect((await setUpAssistant(ada, MESSAGES_MODEL)).webTools).toEqual([]);
     expect(await storedWebTools()).toEqual([]);
@@ -299,6 +309,30 @@ describe("Search the web", () => {
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: WEB_SEARCH_CHANGED });
     expect(await storedWebTools()).toEqual([]);
+  });
+
+  it("turns nothing on once it's turned off, after it was asked to turn on, while the model searched", async () => {
+    const ada = await setUp();
+    let asked = false;
+    let answering = false;
+    fakeGateway(async (request) => {
+      asked = true;
+      while (!answering) await new Promise((resolve) => setTimeout(resolve, 10));
+      return searching(request);
+    });
+
+    const turning = turnWebSearch(ada, true);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    // Turned off a few milliseconds after it was asked to turn on, as the time it was asked goes by them.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect((await turnedWebSearch(ada, false)).assistant.webTools).toEqual([]);
+    answering = true;
+    const refused = await turning;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: WEB_SEARCH_CHANGED });
+    expect(await storedWebTools()).toEqual([]);
+
+    expect((await turnedWebSearch(ada, true)).assistant.webTools).toEqual(["search", "read"]);
   });
 
   it("is only for administrators, while Ember AI is on, before anything's asked", async () => {
@@ -353,7 +387,7 @@ describe("@ember on the web", () => {
     fakeGateway(searching);
     await turnedWebSearch(ada, true);
     vi.restoreAllMocks();
-    const requests = fakeGateway(({ body }) => (body.messages!.at(-1)!.role === "assistant" ? messagesAnswer(CITED) : messagesAnswer(SEARCHING, "pause_turn")));
+    const requests = fakeGateway(({ body }) => (body.messages!.at(-1)!.role === "assistant" ? messagesAnswer(CITED) : messagesAnswer(SEARCHING, "pause_turn", 120)));
     const client = await connect(await generalRoom(), ada);
 
     const question = await post(client, askEmber("what's AI Gateway?"));
@@ -364,6 +398,22 @@ describe("@ember on the web", () => {
     // Each request may search as many times as an answer may, so it's let search only what the answer has left.
     expect(requests[1]!.body.tools).toEqual([{ ...SEARCH_TOOL, max_uses: WEB_SEARCHES_PER_ANSWER - 1 }, READ_TOOL]);
     expect(requests[1]!.body).not.toHaveProperty("tool_choice");
+    // And so for the tokens it may write.
+    expect(requests[1]!.body.max_tokens).toBe(requests[0]!.body.max_tokens! - 120);
+    client.close();
+  });
+
+  it("takes a turn Anthropic's model paused once it had written all it may as cut short, carrying nothing on", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+    const requests = fakeGateway(({ body }) => messagesAnswer([...SEARCHING, { type: "text", text: "AI Gateway is" }], "pause_turn", body.max_tokens));
+    const client = await connect(await generalRoom(), ada);
+
+    await post(client, askEmber("what's AI Gateway?"));
+    expect((await nextAnswer(client)).plainText).toBe("AI Gateway is\n\n…");
+    expect(requests).toHaveLength(1);
     client.close();
   });
 
@@ -389,10 +439,13 @@ describe("@ember on the web", () => {
     const ada = await setUp(RESPONSES_MODEL);
     fakeGateway(searching);
     await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+    const requests = fakeGateway(searching);
     const client = await connect(await generalRoom(), ada);
 
     await post(client, askEmber("what's AI Gateway?"));
     const answer = await nextAnswer(client);
+    expect(requests[0]!.body).toHaveProperty("max_tool_calls", WEB_SEARCHES_PER_ANSWER);
     expect(answer.body).toContain(`<a href="${DOCS.url}">developers.cloudflare.com</a>`);
     expect(answer.body).toContain(`<p>Sources: <a href="${BLOG.url}">AI Gateway is generally available</a></p>`);
     expect(answer.plainText).toMatch(new RegExp(`\\n\\nSources: ${BLOG.title}$`));

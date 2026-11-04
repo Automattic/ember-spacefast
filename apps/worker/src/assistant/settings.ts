@@ -144,9 +144,11 @@ export async function changeAssistantMost(request: Request, env: Env): Promise<R
  * model said when it searched (`searchedBy`). Someone who isn't an administrator hears so before
  * anything they sent is read, and turning it on for a model whose format has no tools for the web, that
  * it can't search. The model being changed while it searched turns nothing on, as it's the model that
- * was asked that searched.
+ * was asked that searched, and nor does Search the web being turned off meanwhile, or on again, as the
+ * latest change asked for is the one that stays.
  */
 export async function changeWebSearch(request: Request, env: Env): Promise<Response> {
+  const askedAt = new Date().toISOString();
   const credentials = await credentialsOf(request, env);
   const ember = workspace(env);
   const administrator = credentials && (await ember.canAdminister(credentials));
@@ -159,7 +161,7 @@ export async function changeWebSearch(request: Request, env: Env): Promise<Respo
   if (gateway && WEB_TOOLS_IN[gateway.format].length === 0) return problem(422, cannotSearchWith(gateway.model));
   const searched = gateway ? await searchedBy(env, gateway) : { webTools: [], found: null };
   if ("refusal" in searched) return problem(searched.status, searched.refusal);
-  const changed = await ember.changeAssistantWebTools(credentials, searched.webTools, gateway && { model: gateway.model, format: gateway.format });
+  const changed = await ember.changeAssistantWebTools(credentials, searched.webTools, gateway && { model: gateway.model, format: gateway.format }, askedAt);
   if (!changed) return problem(401, NOT_SIGNED_IN);
   if (changed === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
   if (changed === "off") return problem(409, ASSISTANT_OFF);

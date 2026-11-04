@@ -143,8 +143,9 @@ export interface SavedTurnstileKeys {
 
 /**
  * How Ember AI asks AI Gateway, as the account keeps it: the Cloudflare account, its API token sealed
- * (`seal`), the model, the format the model took Set up Ember AI's test question in, and what the model
- * may do on the web, which Search the web found it could when it was turned on, or nothing while it's off.
+ * (`seal`), the model, the format the model took Set up Ember AI's test question in, what the model may
+ * do on the web, which Search the web found it could when it was turned on, or nothing while it's off,
+ * and when that was asked for, if Search the web has been turned on or off for the model.
  */
 export interface SavedAssistant {
   accountId: string;
@@ -152,6 +153,7 @@ export interface SavedAssistant {
   model: string;
   format: ModelFormat;
   webTools: WebTool[];
+  webToolsAskedAt: string | null;
 }
 
 /** The account first run creates. */
@@ -801,16 +803,24 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format, web_tools }`, the API token sealed, or null while it's off.
- * Without `web_tools`, as Ember AI was kept before Search the web, its model does nothing on the web.
+ * `{ account_id, api_token, model, format, web_tools, web_tools_asked_at }`, the API token sealed, or null
+ * while it's off. Without `web_tools`, as Ember AI was kept before Search the web, its model does nothing
+ * on the web.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format, web_tools: webTools } = kept as Record<string, unknown>;
+  const { account_id: accountId, api_token: sealedApiToken, model, format, web_tools: webTools, web_tools_asked_at: webToolsAskedAt } = kept as Record<string, unknown>;
   if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string") return null;
   if (!(MODEL_FORMATS as readonly unknown[]).includes(format)) return null;
-  return { accountId, sealedApiToken, model, format: format as ModelFormat, webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)) };
+  return {
+    accountId,
+    sealedApiToken,
+    model,
+    format: format as ModelFormat,
+    webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)),
+    webToolsAskedAt: typeof webToolsAskedAt === "string" ? webToolsAskedAt : null,
+  };
 }
 
 /**
@@ -829,7 +839,14 @@ const levelIn = <T extends string>(levels: readonly T[], kept: unknown): T | nul
 /** Ember AI as the account's settings keep it (`assistantIn`), or null for off. */
 const assistantSetting = (assistant: SavedAssistant | null) =>
   JSON.stringify(
-    assistant && { account_id: assistant.accountId, api_token: assistant.sealedApiToken, model: assistant.model, format: assistant.format, web_tools: assistant.webTools },
+    assistant && {
+      account_id: assistant.accountId,
+      api_token: assistant.sealedApiToken,
+      model: assistant.model,
+      format: assistant.format,
+      web_tools: assistant.webTools,
+      web_tools_asked_at: assistant.webToolsAskedAt,
+    },
   );
 
 /**
@@ -1326,17 +1343,17 @@ const SET_TURNSTILE_KEYS = setSetting("turnstile_keys");
 const SET_ASSISTANT = setSetting("assistant");
 
 /**
- * Sets the account's setting `key` to the JSON value ?1, as `setSetting` does, but without recording
- * when: for what pages don't show, so that the logo's address, which goes by when the account changed,
- * stays as it is.
+ * Sets the account's settings `keys` to the JSON values ?1, ?2 and on, as `setSetting` does one, but
+ * without recording when: for what pages don't show, so that the logo's address, which goes by when the
+ * account changed, stays as it is.
  */
-const rememberSetting = (key: string) => `UPDATE accounts SET settings = json_set(
+const rememberSetting = (...keys: string[]) => `UPDATE accounts SET settings = json_set(
     CASE WHEN json_valid(settings) AND json_type(settings) = 'object' THEN settings ELSE '{}' END,
-    '$.${key}', json(?1)
+    ${keys.map((key, index) => `'$.${key}', json(?${index + 1})`).join(", ")}
   )`;
 const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
-const REMEMBER_ASSISTANT_WEB_TOOLS = rememberSetting("assistant.web_tools");
+const REMEMBER_ASSISTANT_WEB_TOOLS = rememberSetting("assistant.web_tools", "assistant.web_tools_asked_at");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
 /** Navigation icon changes as the merge patch `CHANGE_NAVIGATION_ICONS` takes them: null for a slot's default. */
@@ -3048,9 +3065,12 @@ export class WorkspaceStore {
     await this.db.run(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most));
   }
 
-  /** Sets what Ember AI's model may do on the web, while Ember AI is on, without recording when, as no page's address goes by it. */
-  async changeAssistantWebTools(webTools: readonly WebTool[]): Promise<void> {
-    await this.db.run(REMEMBER_ASSISTANT_WEB_TOOLS, JSON.stringify(webTools));
+  /**
+   * Sets what Ember AI's model may do on the web, while Ember AI is on, as Search the web was asked to at
+   * `askedAt`, without recording when it changed, as no page's address goes by it.
+   */
+  async changeAssistantWebTools(webTools: readonly WebTool[], askedAt: string): Promise<void> {
+    await this.db.run(REMEMBER_ASSISTANT_WEB_TOOLS, JSON.stringify(webTools), JSON.stringify(askedAt));
   }
 
   /**

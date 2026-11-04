@@ -173,7 +173,7 @@ export const WEB_SEARCH_REFUSED = "Say whether @ember searches the web.";
 export const cannotSearchWith = (model: string) =>
   `${modelName(model)} can't search the web through AI Gateway, but Anthropic's and OpenAI's models can. Choose one under Change.`;
 
-/** Why it didn't turn on once the model was asked: Ember AI was changed or turned off meanwhile. */
+/** Why it didn't turn on once the model was asked: Ember AI was changed or turned off meanwhile, or Search the web was. */
 export const WEB_SEARCH_CHANGED = "Ember AI changed while its model searched. Try again.";
 
 /**

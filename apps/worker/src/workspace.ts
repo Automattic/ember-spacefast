@@ -271,6 +271,13 @@ const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount,
 /** Whether Ember AI, as `saved`, asks the model `asked` names in the format it's asked in. */
 const isAskedAs = (saved: SavedAssistant, asked: Pick<Gateway, "model" | "format">) => saved.model === asked.model && saved.format === asked.format;
 
+/**
+ * What Ember AI's model may do on the web, and when that was asked for, as Ember AI, `saved`, keeps them
+ * while it's set up to ask as `asked`: as they were, for the same model in the same format, and else nothing.
+ */
+const webToolsKept = (saved: SavedAssistant | null, asked: Pick<Gateway, "model" | "format">): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
+  saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: null };
+
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
 const levelsOf = (picked: PickedLevels | null, most: AnswerLevels): AnswerLevels =>
   withinMost({ thinking: picked?.thinking ?? DEFAULT_LEVELS.thinking, length: picked?.length ?? DEFAULT_LEVELS.length }, most);
@@ -965,7 +972,7 @@ export class Workspace extends DurableObject<Env> {
         sealedApiToken: await seal(this.env.SESSION_SECRET, "ai-gateway-token", gateway.apiToken),
         model: gateway.model,
         format: gateway.format,
-        webTools: account.assistant && isAskedAs(account.assistant, gateway) ? account.assistant.webTools : [],
+        ...webToolsKept(account.assistant, gateway),
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
@@ -988,22 +995,25 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * Changes what @ember may do on the web to `webTools`, as Search the web does while Ember AI is on, as
-   * the administrator `credentials` signs in, answering Ember AI as the AI assistant tab then shows it:
-   * "off" while it's off, "forbidden" for anyone else, and null without a valid session. Tools Search the
-   * web found the model `tested` took change nothing ("changed") once Ember AI asks another model, or in
-   * another format, as it was changed while the model searched.
+   * Changes what @ember may do on the web to `webTools`, as Search the web was asked to at `askedAt` while
+   * Ember AI is on, as the administrator `credentials` signs in, answering Ember AI as the AI assistant tab
+   * then shows it: "off" while it's off, "forbidden" for anyone else, and null without a valid session.
+   * The change, whose tools Search the web found the model `tested` took, changes nothing ("changed") once
+   * Ember AI asks another model, or in another format, or once a change to Search the web asked for after
+   * it has been saved, as when it's turned off while the model searched, which this change doesn't undo.
    */
   async changeAssistantWebTools(
     credentials: Credentials,
     webTools: WebTool[],
     tested: Pick<Gateway, "model" | "format"> | null,
+    askedAt: string,
   ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       if (!account.assistant) return "off";
       if (tested && !isAskedAs(account.assistant, tested)) return "changed";
-      const assistant = { ...account.assistant, webTools };
-      const changed = await this.storeAccount({ ...account, assistant }, () => this.store.changeAssistantWebTools(webTools));
+      if (account.assistant.webToolsAskedAt !== null && account.assistant.webToolsAskedAt > askedAt) return "changed";
+      const assistant = { ...account.assistant, webTools, webToolsAskedAt: askedAt };
+      const changed = await this.storeAccount({ ...account, assistant }, () => this.store.changeAssistantWebTools(webTools, askedAt));
       return { assistant: assistantSettingsOf(changed)! };
     });
   }
