@@ -212,9 +212,9 @@ was made.
    [Ember's](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/blob/main/.github/workflows/update-ember.yml)
    has.
 5. Trim the API token Cloudflare made for your copy's builds, `<your Worker> build token`, which may edit
-   every Worker, KV namespace and R2 bucket in your account, though Ember's builds touch no bucket or
-   namespace: in **My Profile**, under **API Tokens**, choose **Edit** on it, not Roll, and take out
-   Workers R2 Storage, Workers KV Storage and Workers Routes.
+   nearly everything in your account, every R2 bucket included, though Ember's builds only deploy the
+   Worker: in **My Profile**, under **API Tokens**, choose **Edit** on it, not Roll, and remove every
+   permission but Workers Scripts, Account Settings, User Details and Memberships.
    [The build's token](docs/self-hosting.md#the-builds-token) says why.
 6. Invite your team with the join link on general's welcome card, or by email.
 

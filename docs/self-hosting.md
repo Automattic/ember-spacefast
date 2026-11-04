@@ -161,16 +161,19 @@ script, which merges from where yours and Ember's part.
 ### The build's token
 
 Workers Builds deploys a Deploy to Cloudflare copy with an API token it made for the copy's Worker,
-`<your Worker> build token`. Cloudflare lets that token edit every Worker, KV namespace and R2 bucket
-in the account, and the Workers Routes of all its zones, which is why R2's **Manage API tokens** page
-lists it as Admin Read & Write for all buckets. Ember's builds need much less: the Worker reaches its
-bucket through its binding, which takes no token, the deploy form makes the bucket before the first
-build, and `wrangler.jsonc` binds no KV namespace and lists no routes. So once your copy has deployed,
-trim the token. In **My Profile**, under **API Tokens**, choose **Edit** on it, take out Workers R2
-Storage, Workers KV Storage and Workers Routes, and keep Workers Scripts, Account Settings, User
-Details and Memberships, which `pnpm run deploy` uses to deploy the Worker and find the account's ID.
-Edit keeps the token's value, which the builds hold, where Roll would give it a new one and fail every
-build until the Worker's **Settings**, under **Build**, name a token again.
+`<your Worker> build token`. It holds far more than the seven permissions Cloudflare's docs list for
+it: it may edit every Worker, R2 bucket, KV namespace, D1 database and queue in the account, its AI
+and containers among much else, and the Workers Routes, certificates and Email Routing rules of every
+zone in every account you belong to. That's why R2's **Manage API tokens** page lists it as Admin
+Read & Write for all buckets. Ember's builds need four of those permissions: Workers Scripts, to
+deploy the Worker, and Account Settings, User Details and Memberships, with which `pnpm run deploy`
+finds the account's ID. The Worker reaches its bucket through its binding, which takes no token, the
+deploy form makes the bucket before the first build, and `wrangler.jsonc` binds no namespace, database
+or queue and lists no routes. So once your copy has deployed, trim the token. In **My Profile**, under
+**API Tokens**, choose **Edit** on it, remove every permission but Workers Scripts, Account Settings,
+User Details and Memberships, and choose **Update token**. Edit keeps the token's value, which the
+builds hold, where Roll would give it a new one and fail every build until the Worker's **Settings**,
+under **Build**, name a token again.
 
 Every build runs with that token, those of Update Ember's pull requests included, so the less it may
 do, the less a dependency gone bad could. The Worker's **Settings**, under **Build**, name the token
@@ -598,8 +601,8 @@ address the API doesn't have does.
 
 What a self-hoster should know, beyond keeping the setup password and link to themselves:
 
-- The API token Deploy to Cloudflare's builds run with may edit every Worker, KV namespace and R2
-  bucket in your account, so trim it, as [The build's token](#the-builds-token) says.
+- The API token Deploy to Cloudflare's builds run with may edit nearly everything in your account,
+  every R2 bucket included, so trim it, as [The build's token](#the-builds-token) says.
 - Every answer carries a `Content-Security-Policy` beside Rails' headers: scripts only from your
   Worker, images from any HTTPS site, since link previews show their page's image, and no page of
   Ember's in a frame elsewhere. When the policy gets in the way of something in a browser, the
