@@ -534,7 +534,7 @@ export async function saveAssistant(setup: AssistantSetup): Promise<AssistantSav
  * Adds `model` to the models people can pick, once it has answered a test question through Ember AI's
  * account, answering Ember AI as it is then and what the model said. Fails as `saveAssistant` does, with
  * a 422 ApiError on the model's field once people can pick as many as they can, and a 409 one while
- * Ember AI is off.
+ * Ember AI is off, or once it was set up again while the model answered.
  */
 export async function addAssistantModel(model: NewAssistantModel): Promise<AssistantSaved> {
   return request<AssistantSaved>("/api/account/assistant/models", { method: "POST", body: JSON.stringify(model) });

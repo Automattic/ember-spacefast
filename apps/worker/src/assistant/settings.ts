@@ -44,6 +44,8 @@ const PRIVATE = { "Cache-Control": "no-store" };
 export const API_TOKEN_NEEDED = "Paste an API token. Ember doesn't have one yet.";
 /** Why it needs one after the model answered: Ember AI was turned off meanwhile, or set up with another token. */
 export const API_TOKEN_CHANGED = "Ember AI changed while the model answered, so Ember no longer has that API token. Paste an API token.";
+/** Why Add a model didn't add one: Ember AI was set up again, with another account or API token, while the model answered. */
+export const SETUP_CHANGED = "Ember AI was set up again while the model answered, so it wasn't added. Add it again.";
 
 /** What Set up Ember AI asks the model before Ember keeps it, so that it's known to answer. */
 const TEST_QUESTION: Question = {
@@ -130,7 +132,8 @@ export async function saveAssistant(request: Request, env: Env): Promise<Respons
  * as Add a model on the Ember AI card does, once it has answered a test question through Ember AI's
  * account, answering Ember AI as it is then and what the model said. Someone who isn't an administrator
  * hears so before anything they sent is read. A model that can't be one, or that AI Gateway refuses, is
- * refused on its field.
+ * refused on its field, and one that answered through Ember AI as it was before it was set up again isn't
+ * added.
  */
 export async function addAssistantModel(request: Request, env: Env): Promise<Response> {
   const credentials = await administratorOf(request, env);
@@ -142,10 +145,11 @@ export async function addAssistantModel(request: Request, env: Env): Promise<Res
   if (!gateway) return problem(409, ASSISTANT_OFF);
   const answered = await greetingFrom(env, { accountId: gateway.accountId, apiToken: gateway.apiToken, model: added.model });
   if ("refusal" in answered) return refused(answered);
-  const saved = await ember.addAssistantModel(credentials, { id: added.model, name: added.modelName ?? modelName(added.model), format: answered.format });
+  const saved = await ember.addAssistantModel(credentials, { id: added.model, name: added.modelName ?? modelName(added.model), format: answered.format }, gateway);
   if (!saved) return problem(401, NOT_SIGNED_IN);
   if (saved === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
   if (saved === "off") return problem(409, ASSISTANT_OFF);
+  if (saved === "changed") return problem(409, SETUP_CHANGED);
   if (saved === "full") return formAnswer({ error: MODELS_FULL, field: "model" }, 422);
   return Response.json({ assistant: saved.assistant, greeting: answered.greeting } satisfies AssistantSaved, { headers: PRIVATE });
 }

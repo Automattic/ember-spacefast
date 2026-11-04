@@ -22,7 +22,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTES, PICKED_MODEL_NOTES } from "../src/assistant/answers";
 import { CATALOG_UNANSWERED } from "../src/assistant/catalog";
-import { API_TOKEN_NEEDED } from "../src/assistant/settings";
+import { API_TOKEN_NEEDED, SETUP_CHANGED } from "../src/assistant/settings";
 import { api, connect, cookieOf, freshDeploy, post, shown, workspaceSql, workspaceStub, type Client, type Session } from "./support";
 
 // The models @ember can answer with: the text models Cloudflare's catalog lists, which Set up Ember AI and
@@ -304,6 +304,26 @@ describe("The models people can pick", () => {
     expect(await response.json()).toEqual({ error: expect.stringContaining("AI Gateway didn't take that model.") as unknown, field: "model" });
     expect(await refusalOf(await addModel(ada, { model: "gpt-0" }))).toEqual([422, MODEL_REFUSED]);
     expect((await settingsShown(ada))?.models).toEqual([CLAUDE]);
+  });
+
+  it("add no model that answered through Ember AI as it was before it was set up again", async () => {
+    const ada = await setUp();
+    cloudflare();
+    await turnOn(ada);
+    vi.restoreAllMocks();
+    cloudflare({
+      // While GPT answers its test question, Ember AI is turned off and set up again with another API token.
+      answer: async (sent) => {
+        if (sent.body?.model === GPT.id) {
+          expect((await api("/api/account/assistant", { method: "DELETE", headers: as(ada) })).status).toBe(200);
+          await turnOn(ada, { ...SETUP, apiToken: `${API_TOKEN}-2`, model: DEEPSEEK.id, modelName: DEEPSEEK.name });
+        }
+        return answering(HELLO)(sent);
+      },
+    });
+
+    expect(await refusalOf(await addModel(ada, { model: GPT.id, modelName: GPT.name }))).toEqual([409, SETUP_CHANGED]);
+    expect((await settingsShown(ada))?.models).toEqual([DEEPSEEK]);
   });
 
   it(`hold at most ${MAX_ASSISTANT_MODELS}`, async () => {

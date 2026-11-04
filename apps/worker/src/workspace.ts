@@ -1028,15 +1028,23 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * Adds `model`, which the Worker has had answer a test question through Ember AI, to the models people
-   * can pick, or changes it there, as the administrator `credentials` signs in, answering Ember AI as the
-   * AI assistant tab then shows it: "off" while it's off, "full" when people can pick as many as they
-   * can already, "forbidden" for anyone else, and null without a valid session.
+   * Adds `model`, which the Worker has had answer a test question through Ember AI as `tested` asks AI
+   * Gateway, to the models people can pick, or changes it there, as the administrator `credentials` signs
+   * in, answering Ember AI as the AI assistant tab then shows it: "off" while it's off, "changed" once it
+   * asks with another account or API token than `tested`'s, as after it was turned off and set up again
+   * while the model answered, "full" when people can pick as many as they can already, "forbidden" for
+   * anyone else, and null without a valid session.
    */
-  async addAssistantModel(credentials: Credentials, model: SavedModel): Promise<{ assistant: AssistantSettings } | "off" | "full" | "forbidden" | null> {
+  async addAssistantModel(
+    credentials: Credentials,
+    model: SavedModel,
+    tested: Pick<Gateway, "accountId" | "apiToken">,
+  ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "full" | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       const { assistant } = account;
       if (!assistant) return "off";
+      const opened = await this.openedAssistant(account);
+      if (!opened || opened.accountId !== tested.accountId || opened.apiToken !== tested.apiToken) return "changed";
       const listed = assistant.models.some(({ id }) => id === model.id);
       if (!listed && assistant.models.length >= MAX_ASSISTANT_MODELS) return "full";
       const models = listed ? assistant.models.map((kept) => (kept.id === model.id ? model : kept)) : [...assistant.models, model];

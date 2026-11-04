@@ -320,6 +320,7 @@ function KeysStep({
               autoCapitalize="none"
               spellCheck={false}
               value={typed.accountId}
+              disabled={listing}
               aria-invalid={accountRefused}
               aria-describedby={accountRefused ? "assistant-account-id-refusal" : deployedTo ? "assistant-account-id-description" : undefined}
               onChange={(event) => onType("accountId", event.target.value)}
@@ -344,6 +345,7 @@ function KeysStep({
               autoCapitalize="none"
               spellCheck={false}
               value={typed.apiToken}
+              disabled={listing}
               aria-invalid={tokenRefused}
               aria-describedby={tokenRefused ? "assistant-api-token-refusal" : hasToken ? "assistant-api-token-description" : undefined}
               onChange={(event) => onType("apiToken", event.target.value)}

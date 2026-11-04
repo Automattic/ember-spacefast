@@ -400,6 +400,9 @@ describe("Cloudflare's model catalog", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Listing the models in Cloudflare's catalog…");
     expect(button("Listing models…")).toBeDisabled();
     expect(button("Cancel")).toBeDisabled();
+    // The account and API token stay as they're listed for.
+    expect(accountIdField()).toBeDisabled();
+    expect(apiTokenField()).toBeDisabled();
     expect(asked()).toEqual([LISTED]);
 
     await list.answer();
@@ -469,6 +472,7 @@ describe("Cloudflare's model catalog", () => {
     await giveKeys(user);
     expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
     expect(apiTokenField()).toHaveAttribute("aria-invalid", "true");
+    expect(apiTokenField()).toBeEnabled();
     expect(screen.getByRole("dialog", { name: "Set up Ember AI" })).toBeInTheDocument();
     expect(button("Continue")).toBeEnabled();
     expect(onFailed).not.toHaveBeenCalled();
@@ -481,5 +485,6 @@ describe("Cloudflare's model catalog", () => {
     await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(403, "Only administrators can set up Ember AI")));
     expect(screen.getByRole("dialog", { name: "Set up Ember AI" })).toBeInTheDocument();
     expect(button("Continue")).toBeEnabled();
+    expect(accountIdField()).toBeEnabled();
   });
 });
