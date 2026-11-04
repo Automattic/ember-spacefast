@@ -11,6 +11,7 @@ account, as [Deploying](#deploying) describes.
 
 - [Deploying](#deploying)
   - [Updating](#updating)
+  - [The build's token](#the-builds-token)
   - [A custom domain](#a-custom-domain)
   - [Who can join](#who-can-join)
   - [Memberful sign-in](#memberful-sign-in)
@@ -156,6 +157,29 @@ git push -u origin update-ember/v1.2.3      # then merge it into main
 
 A clone of Ember's own repository shares its history, so `git pull` brings it up to date too, or the
 script, which merges from where yours and Ember's part.
+
+### The build's token
+
+Workers Builds deploys a Deploy to Cloudflare copy with an API token it made for the copy's Worker,
+`<your Worker> build token`. Cloudflare lets that token edit every Worker, KV namespace and R2 bucket
+in the account, and the Workers Routes of all its zones, which is why R2's **Manage API tokens** page
+lists it as Admin Read & Write for all buckets. Ember's builds need much less: the Worker reaches its
+bucket through its binding, which takes no token, the deploy form makes the bucket before the first
+build, and `wrangler.jsonc` binds no KV namespace and lists no routes. So once your copy has deployed,
+trim the token. In **My Profile**, under **API Tokens**, choose **Edit** on it, take out Workers R2
+Storage, Workers KV Storage and Workers Routes, and keep Workers Scripts, Account Settings, User
+Details and Memberships, which `pnpm run deploy` uses to deploy the Worker and find the account's ID.
+Edit keeps the token's value, which the builds hold, where Roll would give it a new one and fail every
+build until the Worker's **Settings**, under **Build**, name a token again.
+
+Every build runs with that token, those of Update Ember's pull requests included, so the less it may
+do, the less a dependency gone bad could. The Worker's **Settings**, under **Build**, name the token
+it builds with, and deleting the Worker leaves the token as it was: delete it too, under **API
+Tokens**, unless another Worker builds with it.
+
+Trimmed, the token can still deploy Workers, and a Worker may be bound to any bucket, database or
+namespace in its account, whatever its deployer's token may do with them. So keep what Ember's
+deploys shouldn't reach, such as another project's files, in a Cloudflare account of its own.
 
 ### A custom domain
 
@@ -574,6 +598,8 @@ address the API doesn't have does.
 
 What a self-hoster should know, beyond keeping the setup password and link to themselves:
 
+- The API token Deploy to Cloudflare's builds run with may edit every Worker, KV namespace and R2
+  bucket in your account, so trim it, as [The build's token](#the-builds-token) says.
 - Every answer carries a `Content-Security-Policy` beside Rails' headers: scripts only from your
   Worker, images from any HTTPS site, since link previews show their page's image, and no page of
   Ember's in a frame elsewhere. When the policy gets in the way of something in a browser, the
