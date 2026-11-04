@@ -67,7 +67,8 @@ export class AnswerError extends Error {}
  * at `now`: the conversation it can read, its writers named, how to answer, how much to think and
  * write, at the asker's `levels`, and what it may do on the web, `webTools`, labeled with who asked.
  * With no tools for searching while Search the web is on, `webSearchOn`, it's told the model the asker
- * picked can't search, rather than that an administrator could let it.
+ * picked can't search, rather than that an administrator could let it, and with tools, how to answer
+ * without them too, as it's asked again without them when AI Gateway doesn't take them (`ask`).
  */
 export function questionFor(
   conversation: Message[],
@@ -78,22 +79,34 @@ export function questionFor(
   webTools: readonly WebTool[] = [],
   webSearchOn = webTools.includes("search"),
 ): Question {
-  const instructions = instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, webTools, webSearchOn);
-  return { instructions, turns: turnsOf(readable(conversation, where.inThread)), maxTokens: maxTokensAt(levels), thinking: levels.thinking, askerId: asker.id, webTools };
+  const told = (web: string) => instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, web);
+  return {
+    instructions: told(webInstructionsFor(asker, webTools, webSearchOn)),
+    ...(webTools.length > 0 && { instructionsWithoutWeb: told(WEB_TOOLS_REFUSED) }),
+    turns: turnsOf(readable(conversation, where.inThread)),
+    maxTokens: maxTokensAt(levels),
+    thinking: levels.thinking,
+    askerId: asker.id,
+    webTools,
+  };
 }
 
-/** What @ember is told before the conversation, asked to answer in about `words` words at most, using the web as `webTools` lets it. */
-function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, webTools: readonly WebTool[], webSearchOn: boolean): string {
+/** What @ember is told before the conversation, asked to answer in about `words` words at most, and what it's told of the web, `web`. */
+function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, web: string): string {
   const room = roomName === null ? "a direct message" : `the room "${roomName}"`;
   const today = new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeZone: "UTC" }).format(now);
   return [
     `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`,
     `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, as a helpful teammate would: plainly, and in at most about ${words.toLocaleString("en-US")} words.`,
     "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer. Don't begin with your name.",
-    webInstructionsFor(asker, webTools, webSearchOn),
+    web,
     `Today is ${today}, in UTC.`,
   ].join("\n\n");
 }
+
+/** What @ember is told when it's asked again without the web, as AI Gateway didn't take its model's tools for it. */
+const WEB_TOOLS_REFUSED =
+  "You can't search the web or open links this time, as AI Gateway didn't take the tools for them with the model you answer with. When someone asks you to, say so.";
 
 /**
  * What @ember is told it may do on the web with `webTools`, or, with none, that it can't, and who could let

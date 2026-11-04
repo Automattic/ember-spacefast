@@ -37,11 +37,16 @@ import { DIALOG, DIALOG_BACKDROP, DIALOG_CLOSE, DIALOG_TITLE, MAIN_ACTION, OTHER
 const workersAiDashboard = (accountId: string | null) => dashboard(accountId, "ai/workers-ai");
 
 /**
- * What the last step says once a change of model has turned Search the web off, leaving @ember doing
- * `webTools` on the web: that the new model can try it, or that it can't search.
+ * What the last step says once a change of model, or of the Cloudflare account it's asked through, has
+ * turned Search the web off, leaving @ember doing `webTools` on the web: that it can try it again, or that
+ * the model can't search.
  */
-export const searchTurnedOff = (webTools: WebTool[] | null) =>
-  webTools === null ? "Search the web is off, as this model can't search the web through AI Gateway." : "Search the web is off for the new model. Turn it on again to try it.";
+export const searchTurnedOff = (webTools: WebTool[] | null, changed: "model" | "account" = "model") =>
+  webTools === null ? "Search the web is off, as this model can't search the web through AI Gateway." : `Search the web is off for the new ${changed}. Turn it on again to try it.`;
+
+/** What Set up Ember AI changed of `before` in saving `after`, which turns Search the web off: the account, if only that. */
+const changeOf = (before: AssistantSettings | null, after: AssistantSettings) =>
+  before && before.accountId !== after.accountId && before.model === after.model ? "account" : "model";
 
 /** Where it's at: the account and its API token, the model, or done. */
 type Step = "keys" | "model" | "done";
@@ -194,7 +199,9 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
           Asked to say hello, it said:
         </DialogDescription>
         <blockquote className="border-s-2 ps-3 whitespace-pre-wrap wrap-anywhere">{saved.greeting}</blockquote>
-        {searched && !saved.assistant.webTools?.includes("search") && <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools)}</p>}
+        {searched && !saved.assistant.webTools?.includes("search") && (
+          <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools, changeOf(assistant, saved.assistant))}</p>
+        )}
         <Actions back={null} next={onClose} nextLabel="Done" />
       </>
     ),

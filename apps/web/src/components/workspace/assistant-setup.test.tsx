@@ -397,6 +397,22 @@ describe("Set up Ember AI", () => {
       cleanup();
     }
   });
+
+  it("says Search the web is off for the new account once moving the same model to another turned it off", async () => {
+    const searching: AssistantSettings = { ...savedOf({ accountId: ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5" }), webTools: ["search", "read"] };
+    // The server turns it off, as the other account's AI Gateway may not take the same tools.
+    serve();
+    const { user } = showSetup(searching);
+    await dialog("Set up Ember AI");
+    await user.clear(accountIdField());
+    await user.type(accountIdField(), OTHER_ACCOUNT_ID);
+    await user.type(apiTokenField(), API_TOKEN);
+    await user.click(button("Continue"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    expect(await dialog("Ember AI is set up")).toHaveTextContent("Search the web is off for the new account. Turn it on again to try it.");
+    const setup = { accountId: OTHER_ACCOUNT_ID, model: "anthropic/claude-sonnet-5.5", modelName: "Claude Sonnet 5.5", apiToken: API_TOKEN };
+    expect(asked().at(-1)).toEqual(["PUT /api/account/assistant", setup]);
+  });
 });
 
 describe("Cloudflare's model catalog", () => {

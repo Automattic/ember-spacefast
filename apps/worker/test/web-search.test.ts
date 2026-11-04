@@ -24,6 +24,8 @@ import { api, connect, cookieOf, freshDeploy, post, shown, workspaceSql, type Cl
 const EMBER: User = { id: ASSISTANT_ID, name: ASSISTANT_NAME };
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 const API_TOKEN = "an-api-token-with-workers-ai-read_0123456";
+/** Another Cloudflare account, and another API token. */
+const [OTHER_ACCOUNT_ID, OTHER_API_TOKEN] = ["fedcba9876543210fedcba9876543210", "another-api-token-with-workers-ai-read_01"];
 /** Anthropic's model, which takes Messages, OpenAI's, which takes Responses, and one of Workers AI's, which takes Chat Completions. */
 const [MESSAGES_MODEL, RESPONSES_MODEL, CHAT_MODEL] = ["anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol", "@cf/zai-org/glm-4.7-flash"];
 
@@ -124,10 +126,17 @@ async function setUp(model = MESSAGES_MODEL): Promise<Session> {
   return ada;
 }
 
-/** Sets Ember AI up as `administrator` with `model`, called `modelName`, if it's given one, as Set up Ember AI does, answering Ember AI as it is then. */
-async function setUpAssistant(administrator: Session, model: string, modelName?: string): Promise<AssistantSaved["assistant"]> {
+/**
+ * Sets Ember AI up as `administrator` with `model`, called `modelName`, if it's given one, through the
+ * account `accountId` with `apiToken`, as Set up Ember AI does, answering Ember AI as it is then.
+ */
+async function setUpAssistant(
+  administrator: Session,
+  model: string,
+  { modelName, accountId = ACCOUNT_ID, apiToken = API_TOKEN }: { modelName?: string; accountId?: string; apiToken?: string } = {},
+): Promise<AssistantSaved["assistant"]> {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => unsearched(new Request(input, init).url, "Hello, team!"));
-  const setup = { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model, ...(modelName && { modelName }) };
+  const setup = { accountId, apiToken, model, ...(modelName && { modelName }) };
   const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify(setup) });
   expect(saved.status, await saved.clone().text()).toBe(200);
   vi.restoreAllMocks();
@@ -249,7 +258,7 @@ describe("Search the web", () => {
     expect(await storedWebTools()).toEqual([]);
 
     // As Set up Ember AI named it, from Cloudflare's catalog.
-    await setUpAssistant(ada, CHAT_MODEL, "glm-4.7-flash");
+    await setUpAssistant(ada, CHAT_MODEL, { modelName: "glm-4.7-flash" });
     expect(await (await turnWebSearch(ada, true)).json()).toEqual({ error: cannotSearchWith("glm-4.7-flash") });
   });
 
@@ -304,6 +313,17 @@ describe("Search the web", () => {
     expect((await storedAssistant())!.web_tools_asked_at).toBe(turnedOnAt);
     expect((await setUpAssistant(ada, "anthropic/claude-opus-5.5")).webTools).toEqual([]);
     expect((await setUpAssistant(ada, MESSAGES_MODEL)).webTools).toEqual([]);
+    expect(await storedWebTools()).toEqual([]);
+  });
+
+  it("stays on through another of the account's API tokens, and turns off through another account, whose AI Gateway may not take the same tools", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+
+    expect((await setUpAssistant(ada, MESSAGES_MODEL, { apiToken: OTHER_API_TOKEN })).webTools).toEqual(["search", "read"]);
+    expect((await setUpAssistant(ada, MESSAGES_MODEL, { accountId: OTHER_ACCOUNT_ID, apiToken: OTHER_API_TOKEN })).webTools).toEqual([]);
     expect(await storedWebTools()).toEqual([]);
   });
 
@@ -383,6 +403,32 @@ describe("Search the web", () => {
       method: "PUT",
       headers: { Cookie: ada.cookie },
       body: JSON.stringify({ accountId: ACCOUNT_ID, model: "anthropic/claude-opus-5.5" }),
+    });
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    answering = true;
+    const refused = await turning;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: WEB_SEARCH_CHANGED });
+    expect(await storedWebTools()).toEqual([]);
+  });
+
+  it("turns nothing on once Ember AI asks through another Cloudflare account, after the one asked searched", async () => {
+    const ada = await setUp();
+    let asked = false;
+    let answering = false;
+    fakeGateway(async (request) => {
+      if (!gives(request, "web_search")) return unsearched(request.url, "Hello, team!");
+      asked = true;
+      while (!answering) await new Promise((resolve) => setTimeout(resolve, 10));
+      return searching(request);
+    });
+
+    const turning = turnWebSearch(ada, true);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    const changed = await api("/api/account/assistant", {
+      method: "PUT",
+      headers: { Cookie: ada.cookie },
+      body: JSON.stringify({ accountId: OTHER_ACCOUNT_ID, apiToken: OTHER_API_TOKEN, model: MESSAGES_MODEL }),
     });
     expect(changed.status, await changed.clone().text()).toBe(200);
     answering = true;
@@ -581,6 +627,10 @@ describe("@ember on the web", () => {
       [false, false],
     ]);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${MESSAGES_MODEL} again without the web`));
+    // Told then that it can't search, as it was told it could.
+    expect(requests[0]!.body.system).toContain("You can search the web");
+    expect(requests[2]!.body.system).toContain("You can't search the web or open links this time, as AI Gateway didn't take the tools for them");
+    expect(requests[2]!.body.system).not.toContain("You can search the web");
     client.close();
   });
 

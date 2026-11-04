@@ -66,6 +66,8 @@ export interface Turn {
  */
 export interface Question {
   instructions: string;
+  /** How it should answer when it's asked again without the web, whose tools AI Gateway didn't take, if that's not as `instructions` says. */
+  instructionsWithoutWeb?: string;
   turns: Turn[];
   maxTokens: number;
   thinking?: ThinkingLevel;
@@ -119,7 +121,8 @@ export interface Answered {
 /**
  * What the model `gateway` names answers `question` in its format, or why it didn't, waiting at most
  * `timeoutMs` for it all. A model that doesn't take being told how much to think is asked again without
- * that, and then, as Search the web tried the web's tools when it was turned on, without them.
+ * that, and then, as Search the web tried the web's tools when it was turned on, without them, told it
+ * can't use them.
  */
 export async function ask(env: Env, gateway: Gateway, question: Question, timeoutMs: number): Promise<Answered | GatewayRefusal> {
   const signal = AbortSignal.timeout(timeoutMs);
@@ -133,7 +136,7 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
   }
   if (!isWrongFormat(answered) || toolsFor(gateway.format, asked.webTools).length === 0) return answered;
   console.error(`Asking ${gateway.model} again without the web, whose tools AI Gateway didn't take: ${answered.refusal}`);
-  return askOnce(env, gateway, { ...asked, webTools: [] }, signal);
+  return askOnce(env, gateway, { ...asked, instructions: asked.instructionsWithoutWeb ?? asked.instructions, webTools: [] }, signal);
 }
 
 /**

@@ -281,16 +281,23 @@ const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount,
     webTools: WEB_TOOLS_IN[assistant.format].length === 0 ? null : assistant.webTools,
   };
 
-/** Whether Ember AI, as `saved`, answers everyone with the model `asked` names, in the format it's asked in. */
-const isAskedAs = (saved: SavedAssistant, asked: Pick<Gateway, "model" | "format">) => saved.model === asked.model && saved.format === asked.format;
+/**
+ * How AI Gateway is asked, as far as the tools it passes on go: through which Cloudflare account, whose
+ * gateway settings and provider keys it uses, and the model and format, but whichever of the account's
+ * API tokens asks.
+ */
+type AskedAs = Pick<Gateway, "accountId" | "model" | "format">;
+
+/** Whether Ember AI, as `saved`, answers everyone as `asked` says: through its account, with its model, in its format. */
+const isAskedAs = (saved: SavedAssistant, asked: AskedAs) => saved.accountId === asked.accountId && saved.model === asked.model && saved.format === asked.format;
 
 /**
  * What @ember may do on the web, and when that was asked for, once Ember AI, `saved`, or off for null,
- * changes at `changedAt` to answer everyone with the model `asked` names, in the format it's asked in: as
- * they were, for the same model in the same format, and else nothing, as of then, as another model may
- * not take the same tools, so that a test Search the web began before then can't turn it on.
+ * changes at `changedAt` to answer everyone as `asked` says: as they were, for the same account and model
+ * in the same format, and else nothing, as of then, as another account or model may not take the same
+ * tools, so that a test Search the web began before then can't turn it on.
  */
-const webToolsKept = (saved: SavedAssistant | null, asked: Pick<Gateway, "model" | "format">, changedAt: string): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
+const webToolsKept = (saved: SavedAssistant | null, asked: AskedAs, changedAt: string): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
   saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: changedAt };
 
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
@@ -1013,8 +1020,8 @@ export class Workspace extends DurableObject<Env> {
    * workspace sockets hear of @ember either way. A change that kept the API token Ember had, as
    * `keptToken` says, changes nothing ("changed") once that's no longer Ember's token: Ember AI was turned
    * off while the model answered, which forgot it, or set up again with another. What @ember may do on
-   * the web stays as Search the web found it while the model that answers everyone and its format do
-   * (`webToolsKept`), and turns off otherwise, as setting Ember AI up after it was off does.
+   * the web stays as Search the web found it while the account, the model that answers everyone and its
+   * format do (`webToolsKept`), and turns off otherwise, as setting Ember AI up after it was off does.
    */
   async changeAssistant(credentials: Credentials, chosen: AssistantChoice | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
     return this.administerAccount(credentials, async (account) => {
@@ -1049,7 +1056,7 @@ export class Workspace extends DurableObject<Env> {
       if (!account.assistant) return "off";
       const chosen = model === undefined ? null : account.assistant.models.find(({ id }) => id === model);
       if (chosen === undefined) return "not listed";
-      const asked = chosen && { model: chosen.id, format: chosen.format };
+      const asked = chosen && { accountId: account.assistant.accountId, model: chosen.id, format: chosen.format };
       const assistant = asked ? { ...account.assistant, ...asked, ...webToolsKept(account.assistant, asked, new Date().toISOString()) } : account.assistant;
       return this.storeAssistant(account, assistant, { ...account.assistantMost, ...levels });
     });
@@ -1060,14 +1067,14 @@ export class Workspace extends DurableObject<Env> {
    * Ember AI is on, as the administrator `credentials` signs in, answering Ember AI as the AI assistant tab
    * then shows it: "off" while it's off, "forbidden" for anyone else, and null without a valid session.
    * The change, whose tools Search the web found the model `tested` took, changes nothing ("changed") once
-   * Ember AI answers everyone with another model, or in another format, or once a change to Search the
-   * web asked for after it has been saved, as when it's turned off while the model searched, which this
-   * change doesn't undo.
+   * Ember AI answers everyone through another account or with another model, or in another format, or
+   * once a change to Search the web asked for after it has been saved, as when it's turned off while the
+   * model searched, which this change doesn't undo.
    */
   async changeAssistantWebTools(
     credentials: Credentials,
     webTools: WebTool[],
-    tested: Pick<Gateway, "model" | "format"> | null,
+    tested: AskedAs | null,
     askedAt: string,
   ): Promise<{ assistant: AssistantSettings } | "off" | "changed" | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
@@ -1100,7 +1107,7 @@ export class Workspace extends DurableObject<Env> {
       if (!listed && assistant.models.length >= MAX_ASSISTANT_MODELS) return "full";
       const models = listed ? assistant.models.map((kept) => (kept.id === model.id ? model : kept)) : [...assistant.models, model];
       // The one that answers everyone took its test question in this format now, which Search the web may not have tried.
-      const asked = { model: model.id, format: model.format };
+      const asked = { accountId: assistant.accountId, model: model.id, format: model.format };
       const everyone = model.id === assistant.model && { format: model.format, ...webToolsKept(assistant, asked, new Date().toISOString()) };
       return this.storeAssistant(account, { ...assistant, models, ...everyone });
     });
