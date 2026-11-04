@@ -372,6 +372,18 @@ describe("Message rows", () => {
     expect(followUp.getByRole("heading", { level: 3 })).toHaveTextContent(/^3:04 PM$/);
   });
 
+  it("follows @ember's name with a badge saying it's an agent, and nobody else's", () => {
+    const { article } = show(message({ creator: { id: "ember", name: "Ember" }, createdAt: "2026-10-12T15:04:00" }));
+    const heading = within(article).getByRole("heading", { level: 3 });
+    expect(heading).toHaveTextContent(/^Ember Agent3:04 PM$/);
+    expect(within(heading).getByText("Agent")).toHaveAttribute("data-slot", "badge");
+    // A follow-up's heading holds only its time.
+    cleanup();
+    expect(within(show(message({ creator: { id: "ember", name: "Ember" } }), { threaded: true }).article).queryByText("Agent")).not.toBeInTheDocument();
+    cleanup();
+    expect(within(show(message()).article).queryByText("Agent")).not.toBeInTheDocument();
+  });
+
   it("titles the author with their bio as the people directory lists it, or with just their name", () => {
     const listed = (user: User, name: string, bio: string | null) => [user.id, { ...user, name, bio, role: "member", status: "active", avatarUrl: "" }] as const;
     const actions = { boost: vi.fn(), unboost: vi.fn(), edit: vi.fn(), remove: vi.fn() };
