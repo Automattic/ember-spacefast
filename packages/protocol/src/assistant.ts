@@ -9,17 +9,28 @@
 export const MODEL_FORMATS = ["messages", "responses", "chat"] as const;
 export type ModelFormat = (typeof MODEL_FORMATS)[number];
 
-/** A model Set up Ember AI lists, with what to call it and the format AI Gateway takes its requests in. */
+/**
+ * A model @ember can answer with, as Cloudflare's catalog lists it, or Ember does: its ID, what to call
+ * it, the format AI Gateway takes its requests in, and what it costs, when the catalog says.
+ */
 export interface AssistantModel {
   id: string;
   name: string;
   format: ModelFormat;
+  price?: ModelPrice;
+}
+
+/** What a model costs through AI Gateway, in US dollars for each million tokens it reads and writes. */
+export interface ModelPrice {
+  input: number;
+  output: number;
 }
 
 /**
- * The models Set up Ember AI lists, Workers AI's first, which come with Cloudflare's free daily
- * allowance, then other companies', which AI Gateway's credits pay for. Any other model in Cloudflare's
- * catalog can be typed in.
+ * The models Ember knows without Cloudflare's catalog, which Set up Ember AI lists when it can't read
+ * the catalog, Workers AI's first, which come with Cloudflare's free daily allowance, then other
+ * companies', which AI Gateway's credits pay for. Their names are the ones Ember calls them by, wherever
+ * they're listed.
  */
 export const ASSISTANT_MODELS: readonly AssistantModel[] = [
   { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
@@ -38,8 +49,24 @@ export const ASSISTANT_MODELS: readonly AssistantModel[] = [
 /** Whether `model` is one of Workers AI's, which Cloudflare runs itself, rather than another company's. */
 export const isWorkersAiModel = (model: string) => model.startsWith("@cf/");
 
-/** What to call `model`: its name in the list Set up Ember AI shows, or else its ID. */
-export const modelName = (model: string) => ASSISTANT_MODELS.find(({ id }) => id === model)?.name ?? model;
+/** What to call `model`: its name in `models`, or else in the models Ember knows, or else its ID. */
+export const modelName = (model: string, models: readonly AssistantModel[] = []) =>
+  (models.find(({ id }) => id === model) ?? ASSISTANT_MODELS.find(({ id }) => id === model))?.name ?? model;
+
+/** The most models administrators can let people pick from, the one @ember answers everyone else with among them. */
+export const MAX_ASSISTANT_MODELS = 20;
+
+/** The longest name Ember keeps for a model, where Cloudflare's are a few words. */
+export const MAX_MODEL_NAME_LENGTH = 100;
+
+/**
+ * The model's name `text` gives, without the spaces around it, or null when it can't be one: one line of
+ * text no longer than Ember keeps, without characters that show nothing or turn the text around.
+ */
+export function modelNameOf(text: unknown): string | null {
+  const name = typeof text === "string" ? text.trim() : "";
+  return name !== "" && name.length <= MAX_MODEL_NAME_LENGTH && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) ? name : null;
+}
 
 /** How much @ember thinks before it answers: not at all, a little, more, or the most. */
 export const THINKING_LEVELS = ["off", "low", "medium", "high"] as const;
@@ -79,69 +106,141 @@ export function withinMost(levels: AnswerLevels, most: AnswerLevels): AnswerLeve
   return { thinking: lower(THINKING_LEVELS, levels.thinking, most.thinking), length: lower(ANSWER_LENGTHS, levels.length, most.length) };
 }
 
-/**
- * What `PATCH /api/account/assistant` changes of the most each dial goes to, and `PATCH
- * /api/users/me/assistant` of your own levels: one dial, or both.
- */
+/** A change to one of @ember's dials, or both: the most each goes to, or your own levels. */
 export type AnswerLevelChanges = Partial<AnswerLevels>;
 
-/** The changes `data` gives, as a dial sends them, or null when it changes neither dial, or gives a level neither has. */
-export function parseLevelChanges(data: unknown): AnswerLevelChanges | null {
-  const given = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
-  const { thinking, length } = given;
-  if (thinking === undefined && length === undefined) return null;
-  if (thinking !== undefined && !(THINKING_LEVELS as readonly unknown[]).includes(thinking)) return null;
-  if (length !== undefined && !(ANSWER_LENGTHS as readonly unknown[]).includes(length)) return null;
-  return { ...(thinking !== undefined && { thinking: thinking as ThinkingLevel }), ...(length !== undefined && { length: length as AnswerLength }) };
+/**
+ * What `PATCH /api/account/assistant` changes: the most one dial or both go to for anyone's questions,
+ * or which of the models people can pick @ember answers everyone else with.
+ */
+export interface AssistantChanges extends AnswerLevelChanges {
+  model?: string;
+}
+
+/**
+ * What `PATCH /api/users/me/assistant` changes of yours: one dial or both, or the model @ember answers
+ * you with, which null leaves to administrators.
+ */
+export interface YourAssistantChanges extends AnswerLevelChanges {
+  model?: string | null;
 }
 
 /** Why a change to the levels is refused before anything's saved. */
 export const LEVELS_REFUSED = "Choose a level the dial has.";
 
+/** Why a change to a model is refused: it isn't one of the models administrators let people pick. */
+export const MODEL_NOT_LISTED = "Choose one of the models an administrator added.";
+
+/**
+ * The changes `data` gives, as the Ember AI card sends them, or why they can't be changes: they change
+ * nothing, or give a level a dial doesn't have, or a model that can't be one.
+ */
+export function parseAssistantChanges(data: unknown): AssistantChanges | { error: string } {
+  const given = objectIn(data);
+  const levels = levelChangesIn(given);
+  if ("error" in levels) return levels;
+  if (given.model === undefined) return Object.keys(levels).length > 0 ? levels : { error: LEVELS_REFUSED };
+  const model = typeof given.model === "string" ? modelOf(given.model) : null;
+  return model === null ? { error: MODEL_NOT_LISTED } : { ...levels, model };
+}
+
+/** Your changes `data` gives, as your profile sends them, or why they can't be changes, as `parseAssistantChanges` says, where a null model leaves yours to administrators. */
+export function parseYourAssistantChanges(data: unknown): YourAssistantChanges | { error: string } {
+  const given = objectIn(data);
+  if (given.model !== null) return parseAssistantChanges(given);
+  const levels = levelChangesIn(given);
+  return "error" in levels ? levels : { ...levels, model: null };
+}
+
+/** The levels `given` changes, or why they can't be changes: a level a dial doesn't have. */
+function levelChangesIn(given: Record<string, unknown>): AnswerLevelChanges | { error: string } {
+  const { thinking, length } = given;
+  if (thinking !== undefined && !(THINKING_LEVELS as readonly unknown[]).includes(thinking)) return { error: LEVELS_REFUSED };
+  if (length !== undefined && !(ANSWER_LENGTHS as readonly unknown[]).includes(length)) return { error: LEVELS_REFUSED };
+  return { ...(thinking !== undefined && { thinking: thinking as ThinkingLevel }), ...(length !== undefined && { length: length as AnswerLength }) };
+}
+
+/** `data` as an object's fields, or none when it isn't one. */
+const objectIn = (data: unknown): Record<string, unknown> => (typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {});
+
 /**
  * Ember AI as the AI assistant tab shows it to administrators while it's on: the Cloudflare account it
- * asks through, its model, and the most each dial goes to for anyone's questions.
+ * asks through, the model it answers anyone with who hasn't picked another, the models people can pick
+ * from, that one among them, in the order they were added, and the most each dial goes to for anyone's
+ * questions.
  */
 export interface AssistantSettings {
   accountId: string;
   model: string;
+  models: AssistantModel[];
   most: AnswerLevels;
 }
 
-/** What `PATCH /api/account/assistant` answers once it has saved the most each dial goes to: Ember AI as it is then. */
+/** What `PATCH /api/account/assistant` answers once it has saved a change, and `DELETE /api/account/assistant/models` a model's removal: Ember AI as it is then. */
 export interface AssistantChanged {
   assistant: AssistantSettings;
 }
 
 /**
- * The levels of @ember's answers to you while Ember AI is on, as your profile shows them: yours, or
- * where they start until you pick, no higher than the most administrators allow, which it shows too.
+ * @ember's answers to you while Ember AI is on, as your profile shows them: the levels of each dial,
+ * yours, or where they start until you pick, no higher than the most administrators allow, which it
+ * shows too, the model it answers you with, yours while it's one people can pick, or else the one
+ * administrators chose for everyone, and the models you can pick from, that one among them.
  */
-export interface YourAnswerLevels {
+export interface YourAssistant {
   levels: AnswerLevels;
   most: AnswerLevels;
+  model: string;
+  defaultModel: string;
+  models: AssistantModel[];
 }
 
-/** What `PATCH /api/users/me/assistant` answers: your levels as they are then, or null while Ember AI is off. */
-export interface AnswerLevelsAnswer {
-  assistant: YourAnswerLevels | null;
+/** What `PATCH /api/users/me/assistant` answers: your levels and model as they are then, or null while Ember AI is off. */
+export interface YourAssistantChanged {
+  assistant: YourAssistant | null;
 }
 
 /** What the AI assistant tab says when a change to the most each dial goes to comes while Ember AI is off. */
 export const ASSISTANT_OFF = "Ember AI is off. Turn it on first.";
 
 /**
- * What Set up Ember AI gives `PUT /api/account/assistant`: the Cloudflare account's ID, an API token of
- * its with the Workers AI Read permission, which a change can leave out to keep the one Ember has, and
- * the ID of the model to answer with.
+ * The Cloudflare account Ember AI asks through, as Set up Ember AI gives it: its ID, and an API token of
+ * its with the Workers AI Read permission, which a change can leave out to keep the one Ember has.
  */
-export interface AssistantSetup {
+export interface AssistantKeys {
   accountId: string;
   apiToken?: string;
-  model: string;
 }
 
-/** What `PUT /api/account/assistant` answers once the model answered its test question: Ember AI as it is then, and what the model said. */
+/**
+ * What Set up Ember AI gives `PUT /api/account/assistant`: the account, and the ID of the model to answer
+ * anyone with who hasn't picked another, with its name, as Cloudflare's catalog gives it, if it does.
+ */
+export interface AssistantSetup extends AssistantKeys {
+  model: string;
+  modelName?: string;
+}
+
+/**
+ * What `POST /api/account/assistant/catalog` answers for an account: the text models Cloudflare's catalog
+ * lists, Workers AI's first, by name, with what they cost, or else, when Ember can't read the catalog,
+ * the models it knows, and why it can't.
+ */
+export interface AssistantCatalog {
+  models: AssistantModel[];
+  refusal: string | null;
+}
+
+/** What Add a model gives `POST /api/account/assistant/models`: the model's ID, and its name, as Cloudflare's catalog gives it, if it does. */
+export interface NewAssistantModel {
+  model: string;
+  modelName?: string;
+}
+
+/**
+ * What `PUT /api/account/assistant` answers once the model answered its test question, and `POST
+ * /api/account/assistant/models` once the model it adds did: Ember AI as it is then, and what the model said.
+ */
 export interface AssistantSaved {
   assistant: AssistantSettings;
   greeting: string;
@@ -153,7 +252,7 @@ export interface AssistantForgotten {
 }
 
 /** A field of Set up Ember AI, which a refusal can be about. */
-export type AssistantField = keyof AssistantSetup;
+export type AssistantField = "accountId" | "apiToken" | "model";
 
 /** The longest model ID Ember takes, where Cloudflare's are a few dozen characters. */
 export const MAX_MODEL_LENGTH = 200;
@@ -188,21 +287,45 @@ export function modelOf(text: string): string | null {
 }
 
 /**
- * What `PUT /api/account/assistant` gives Ember, as Set up Ember AI sends it, or why it can't be one, on
- * the field it's about. A blank API token is left out, keeping the one Ember has.
+ * The account `POST /api/account/assistant/catalog` lists the models of, as Set up Ember AI sends it, or
+ * why it can't be one, on the field it's about. A blank API token is left out, keeping the one Ember has.
  */
-export function parseAssistantSetup(data: unknown): AssistantSetup | { error: string; field: AssistantField } {
-  const given = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+export function parseAssistantKeys(data: unknown): AssistantKeys | { error: string; field: AssistantField } {
+  const given = objectIn(data);
   const accountId = typeof given.accountId === "string" ? accountIdOf(given.accountId) : null;
   if (accountId === null) return { error: ACCOUNT_ID_REFUSED, field: "accountId" };
   const { apiToken: typed } = given;
   if (typed !== undefined && typeof typed !== "string") return { error: API_TOKEN_REFUSED, field: "apiToken" };
   const apiToken = typed === undefined || typed.trim() === "" ? undefined : apiTokenOf(typed);
   if (apiToken === null) return { error: API_TOKEN_REFUSED, field: "apiToken" };
+  return apiToken === undefined ? { accountId } : { accountId, apiToken };
+}
+
+/**
+ * What `PUT /api/account/assistant` gives Ember, as Set up Ember AI sends it, or why it can't be one, on
+ * the field it's about, as `parseAssistantKeys` reads the account. A name that can't be a model's is left out.
+ */
+export function parseAssistantSetup(data: unknown): AssistantSetup | { error: string; field: AssistantField } {
+  const keys = parseAssistantKeys(data);
+  if ("error" in keys) return keys;
+  const model = parseNewAssistantModel(data);
+  return "error" in model ? model : { ...keys, ...model };
+}
+
+/** The model `POST /api/account/assistant/models` adds, as Add a model sends it, or why it can't be one. A name that can't be a model's is left out. */
+export function parseNewAssistantModel(data: unknown): NewAssistantModel | { error: string; field: "model" } {
+  const given = objectIn(data);
   const model = typeof given.model === "string" ? modelOf(given.model) : null;
   if (model === null) return { error: MODEL_REFUSED, field: "model" };
-  return apiToken === undefined ? { accountId, model } : { accountId, apiToken, model };
+  const name = modelNameOf(given.modelName);
+  return name === null ? { model } : { model, modelName: name };
 }
+
+/** Why `DELETE /api/account/assistant/models` keeps a model: @ember answers everyone with it who hasn't picked another. */
+export const DEFAULT_MODEL_KEPT = "@ember answers everyone with this model. Choose another for that first.";
+
+/** Why `POST /api/account/assistant/models` adds no more. */
+export const MODELS_FULL = `People can pick from at most ${MAX_ASSISTANT_MODELS} models. Remove one first.`;
 
 /** What the AI assistant tab tells anyone but an administrator. */
 export const ASSISTANT_FORBIDDEN = "Only administrators can set up Ember AI";

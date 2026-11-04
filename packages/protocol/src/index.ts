@@ -2,7 +2,7 @@
 // object with a `type`, and what the API sends and takes. Keep this file dependency-free: the
 // worker and the web app both import it directly as TypeScript.
 
-import type { AssistantSettings, YourAnswerLevels } from "./assistant.ts";
+import type { AssistantSettings, YourAssistant } from "./assistant.ts";
 import type { Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
@@ -48,15 +48,22 @@ export type {
   AnswerLength,
   AnswerLevelChanges,
   AnswerLevels,
-  AnswerLevelsAnswer,
+  AssistantCatalog,
   AssistantChanged,
+  AssistantChanges,
   AssistantForgotten,
+  AssistantKeys,
+  AssistantModel,
   AssistantSaved,
   AssistantSettings,
   AssistantSetup,
   ModelFormat,
+  ModelPrice,
+  NewAssistantModel,
   ThinkingLevel,
-  YourAnswerLevels,
+  YourAssistant,
+  YourAssistantChanged,
+  YourAssistantChanges,
 } from "./assistant.ts";
 export {
   FILE_NAME_NOT_KEPT,
@@ -818,8 +825,8 @@ export interface Profile {
    * who has nothing to connect.
    */
   memberful: boolean | null;
-  /** How much @ember thinks and how long it answers you, and the most each may be, or null while Ember AI is off. */
-  assistant: YourAnswerLevels | null;
+  /** How much @ember thinks and how long it answers you, and the most each may be, and the model it answers you with, and the others you can pick, or null while Ember AI is off. */
+  assistant: YourAssistant | null;
 }
 
 /** What `GET /api/users/me/profile` answers, and `PATCH` once it has saved. */
