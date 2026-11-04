@@ -45,8 +45,7 @@ export const searchTurnedOff = (webTools: WebTool[] | null, changed: "model" | "
   webTools === null ? "Search the web is off, as this model can't search the web through AI Gateway." : `Search the web is off for the new ${changed}. Turn it on again to try it.`;
 
 /** What Set up Ember AI changed of `before` in saving `after`, which turns Search the web off: the account, if only that. */
-const changeOf = (before: AssistantSettings | null, after: AssistantSettings) =>
-  before && before.accountId !== after.accountId && before.model === after.model ? "account" : "model";
+const changeOf = (before: AssistantSettings, after: AssistantSettings) => (before.accountId !== after.accountId && before.model === after.model ? "account" : "model");
 
 /** Where it's at: the account and its API token, the model, or done. */
 type Step = "keys" | "model" | "done";
@@ -87,8 +86,9 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
   // Asking the model a test question holds the dialog open until it's answered.
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<{ assistant: AssistantSettings; greeting: string } | null>(null);
-  // Whether @ember searched the web before, which another model may not do with the same tools, and so doesn't until it's tried.
-  const [searched] = useState(() => assistant?.webTools?.includes("search") ?? false);
+  // Ember AI as it was when the dialog opened, which saving it replaces: whether @ember searched the web then,
+  // which another model or account may not do with the same tools, and so doesn't until it's tried.
+  const [opened] = useState(assistant);
   const title = useRef<HTMLHeadingElement>(null);
   const shown = useRef(step);
   const mounted = useMounted();
@@ -199,8 +199,8 @@ export function AssistantSetup({ assistant, deployedAccountId, onSaved, onClose,
           Asked to say hello, it said:
         </DialogDescription>
         <blockquote className="border-s-2 ps-3 whitespace-pre-wrap wrap-anywhere">{saved.greeting}</blockquote>
-        {searched && !saved.assistant.webTools?.includes("search") && (
-          <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools, changeOf(assistant, saved.assistant))}</p>
+        {opened?.webTools?.includes("search") && !saved.assistant.webTools?.includes("search") && (
+          <p className={cn(NOTE, "mt-4")}>{searchTurnedOff(saved.assistant.webTools, changeOf(opened, saved.assistant))}</p>
         )}
         <Actions back={null} next={onClose} nextLabel="Done" />
       </>

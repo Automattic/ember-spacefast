@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,10 +64,22 @@ function held(response: () => Response) {
   return { answered: () => answered, answer: () => act(async () => answer()) };
 }
 
-/** Set up Ember AI, open on a workspace whose Ember AI is `assistant`, deployed to the Cloudflare account `deployedAccountId` names, if the deploy said. */
+/**
+ * Set up Ember AI, open on a workspace whose Ember AI is `assistant`, deployed to the Cloudflare account
+ * `deployedAccountId` names, if the deploy said, as the settings page opens it: on Ember AI as it's saved,
+ * once it is.
+ */
 function showSetup(assistant: AssistantSettings | null = null, deployedAccountId: string | null = null) {
   const callbacks = { onSaved: vi.fn(), onClose: vi.fn(), onFailed: vi.fn() };
-  render(<AssistantSetup assistant={assistant} deployedAccountId={deployedAccountId} {...callbacks} />);
+  function SettingsPage() {
+    const [shown, setShown] = useState(assistant);
+    const onSaved = (saved: AssistantSettings) => {
+      setShown(saved);
+      callbacks.onSaved(saved);
+    };
+    return <AssistantSetup assistant={shown} deployedAccountId={deployedAccountId} {...callbacks} onSaved={onSaved} />;
+  }
+  render(<SettingsPage />);
   return { ...callbacks, user: userEvent.setup() };
 }
 
