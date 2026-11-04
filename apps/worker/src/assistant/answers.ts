@@ -5,7 +5,7 @@ import { decodeHTMLStrict } from "entities/decode";
 import { Marked } from "marked";
 import { markdownHtml } from "../bots/markdown";
 import { anchor, escapeText, linkHref } from "../bots/mrkdwn";
-import type { Question, RefusalReason, Source, Turn } from "./gateway";
+import { MAX_SOURCES, type Question, type RefusalReason, type Source, type Turn } from "./gateway";
 
 // What @ember asks its model when someone asks it something, and what it answers with. It reads the
 // conversation it's asked in, each message after its writer's name, and answers in Markdown, thinking
@@ -142,6 +142,12 @@ const markdown = new Marked({ gfm: true });
 const MAX_SOURCE_TITLE_LENGTH = 80;
 
 /**
+ * The most markup a link to one of an answer's sources may take, so that all it names take about half of
+ * what a message holds at most, leaving the rest to the answer: a page whose address is longer goes unnamed.
+ */
+const MAX_SOURCE_LINK_LENGTH = MAX_MESSAGE_HTML_LENGTH / (2 * MAX_SOURCES);
+
+/**
  * `text`, the model's answer in Markdown, as @ember posts it, without its name in front, where the
  * conversation's form leads some models to write it, then the `sources` it came from, all cut to what
  * one message holds, which cuts the answer, as its sources are what it says it came from.
@@ -183,7 +189,8 @@ function webPartsOf(text: string): { images: CardImage[]; links: string[] } {
 /**
  * The markup naming `sources`, the pages an answer that used the web came from, as Anthropic asks of
  * answers from its searches: a line after the answer linking to each, by its page's title, or its host
- * without one, but for those the answer links to itself, `linked`, or "" when there's none left to name.
+ * without one, but for those the answer links to itself, `linked`, and those whose address is too long
+ * to name in a message, or "" when there's none left to name.
  */
 function sourcesHtml(sources: readonly Source[], linked: readonly string[]): string {
   const links = sources.flatMap(({ url, title }) => {
@@ -191,7 +198,8 @@ function sourcesHtml(sources: readonly Source[], linked: readonly string[]): str
     if (address === null || linked.includes(address)) return [];
     const words = title.replace(/\s+/g, " ").trim();
     const shown = words.length > MAX_SOURCE_TITLE_LENGTH ? `${words.slice(0, MAX_SOURCE_TITLE_LENGTH - 1).trimEnd()}…` : words;
-    return [anchor(address, escapeText(shown || new URL(address).host))];
+    const link = anchor(address, escapeText(shown || new URL(address).host));
+    return link.length > MAX_SOURCE_LINK_LENGTH ? [] : [link];
   });
   return links.length > 0 ? `<p>Sources: ${links.join(", ")}</p>` : "";
 }

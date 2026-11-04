@@ -1,4 +1,4 @@
-import { ASSISTANT_ID, ASSISTANT_NAME, type Message, type NewWorkspace, type RoomId, type User, type WorkspaceSettings } from "@ember/protocol";
+import { ASSISTANT_ID, ASSISTANT_NAME, MAX_MESSAGE_HTML_LENGTH, type Message, type NewWorkspace, type RoomId, type User, type WorkspaceSettings } from "@ember/protocol";
 import {
   ASSISTANT_FORBIDDEN,
   ASSISTANT_OFF,
@@ -490,6 +490,18 @@ describe("An answer's sources", () => {
     const paragraph = `${"word ".repeat(199)}word`;
     const { markup } = answerOf(Array.from({ length: 20 }, () => paragraph).join("\n\n"), [DOCS]);
     expect(markup).toMatch(new RegExp(`<p>…</p><p>Sources: <a href="${DOCS.url}">${DOCS.title}</a></p>$`));
+  });
+
+  it("leave out a page whose address is too long to name in a message, so that the answer always fits", () => {
+    const tooLong = { url: `https://example.com/${"a".repeat(MAX_MESSAGE_HTML_LENGTH / 20)}`, title: "Too long" };
+    expect(answerOf("Short.", [tooLong, DOCS]).markup).toBe(`<p>Short.</p><p>Sources: <a href="${DOCS.url}">${DOCS.title}</a></p>`);
+    // As many sources as an answer names, each nearly as long as one may be, still leave room for its start.
+    const longest = Array.from({ length: 10 }, (_, page) => ({ url: `https://example.com/${page}/${"a".repeat(MAX_MESSAGE_HTML_LENGTH / 20 - 60)}`, title: "" }));
+    const paragraph = `${"word ".repeat(199)}word`;
+    const answer = answerOf(Array.from({ length: 20 }, () => paragraph).join("\n\n"), longest);
+    expect(answer.markup.length).toBeLessThanOrEqual(MAX_MESSAGE_HTML_LENGTH);
+    expect(answer.markup).toMatch(/^<p>word word/);
+    expect(answer.markup.match(/<a href=/g)).toHaveLength(10);
   });
 
   it("name a page the answer links to only past where it's cut", () => {

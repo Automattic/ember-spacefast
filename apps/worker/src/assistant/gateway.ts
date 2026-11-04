@@ -41,7 +41,7 @@ const PAGE_TOKENS = 10_000;
 const MAX_CONTINUATIONS = 2;
 
 /** The most pages an answer names as its sources. */
-const MAX_SOURCES = 10;
+export const MAX_SOURCES = 10;
 
 /** What Ember asks AI Gateway with: a Cloudflare account, an API token of its, a model and the format the model takes. */
 export interface Gateway {
