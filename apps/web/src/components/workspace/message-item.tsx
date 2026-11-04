@@ -8,6 +8,7 @@ import { messagePath, permalinkOf, threadPath } from "@/hooks/use-route";
 import { cardsQuote, dateTimeLabel, lastReplyLabel, timeLabel } from "@/lib/messages";
 import { isPending, type PendingMessage } from "@/lib/room-state";
 import { cn } from "@/lib/utils";
+import { AgentBadge, isAssistant } from "./agent-badge";
 import { Attachment } from "./attachment";
 import { BotCards } from "./bot-card";
 import { MessageActionsMenu, type MessageActionsHandle } from "./message-actions-menu";
@@ -188,14 +189,17 @@ function DeletedMessage({ message, thread, open }: { message: Message; thread?: 
 
 /**
  * The author's name as the people directory lists them now, which runs to an ellipsis rather than wrap,
- * and shows their bio on hover.
+ * and shows their bio on hover, then the agent badge for @ember.
  */
 function Author({ user }: { user: User }) {
   const listed = useContext(PeopleContext).get(user.id) ?? user;
   return (
-    <strong title={userTitle(listed)} className="truncate font-bold text-message-ink">
-      {listed.name}
-    </strong>
+    <>
+      <strong title={userTitle(listed)} className="truncate font-bold text-message-ink">
+        {listed.name}
+      </strong>
+      {isAssistant(user) && <AgentBadge />}
+    </>
   );
 }
 

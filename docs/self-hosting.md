@@ -28,13 +28,15 @@ account, as [Deploying](#deploying) describes.
 
 ## Deploying
 
-The Deploy to Cloudflare button at the top asks you to name the repository, the Worker and the R2
-bucket for files (turn R2 on for your account first), and to make up a setup password,
+The Deploy to Cloudflare button at the top asks you to name the repository, the Worker, the R2
+bucket for files (turn R2 on for your account first) and a D1 database, to choose where messages
+live, as [Storage](#storage-durable-object-sqlite-or-d1) says, and to make up a setup password,
 `EMBER_SETUP_PASSWORD`, then Cloudflare's Workers Builds builds and deploys it, and again after
 every push to the copy. Connecting GitHub or GitLab to Cloudflare the
 first time leaves you on Cloudflare's page for deploying one of your own repositories, so click the
 button again afterwards. If your account already has a bucket named `ember`, the form picks it, so
-pick a new one there for this Ember's files. The copy has all of Ember but its `.github` folder, so
+pick a new one there for this Ember's files, and choose Create new for the database if it picks one
+another Ember uses. The copy has all of Ember but its `.github` folder, so
 add the Update Ember workflow to it, as [Updating](#updating) says, for it to be offered Ember's
 releases. To deploy from your machine instead, after `pnpm exec wrangler login`:
 
@@ -496,6 +498,29 @@ as the levels may take, 2 minutes at the least and about 13 at High and Long. An
 cuts short ends with an ellipsis, and when the model thinks for all it may before writing anything,
 @ember says so and suggests less thinking.
 
+Search the web, on the Ember AI card, lets @ember search the web and read pages with its model's own
+tools, which AI Gateway passes on and the model's provider runs
+([Cloudflare's guide](https://developers.cloudflare.com/ai-gateway/usage/web-search/)): Anthropic's
+[web search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) and
+[web fetch](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) for a model
+that takes Messages, and OpenAI's [web search](https://platform.openai.com/docs/guides/tools-web-search)
+for one that takes Responses. Chat Completions has no such tools, so a Workers AI or Google model
+can't search, which the card says, its switch opening Set up Ember AI to choose another model.
+Turning it on asks the model that answers everyone a question it has to search the web for, and keeps
+the tools AI Gateway took, reading pages only if it took that tool too, and says what the model found;
+a model that answers without searching leaves it off. Choosing another model to answer everyone, under
+Models or in Set up Ember AI, or another Cloudflare account there, turns it off, as another model, or
+another account's AI Gateway, may not take the same tools, until it's turned on again. A model someone
+picks on their profile is given the same tools, of those its format has, so it searches too if it's
+Anthropic's or OpenAI's, and any other is told to say it can't, and that they can pick one that can.
+While it's on, @ember searches at most 5 times an answer and reads at most 3 pages, each cut to about
+10,000 tokens: pages people link to, or that its searches find. Its answer is what it writes after it
+last searches, and a line under it links to the pages it cites and the pages it read, by their titles,
+at most 10, leaving out those the answer links to itself. A model that stops taking the tools is asked
+again without them, told it can't search this time. Its searches are written from the conversation, so
+the provider's search sees what the room was asking about. While it's off, @ember is told it can't
+search, and that an administrator can turn Search the web on.
+
 ### A preview from GitHub Actions
 
 The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
@@ -671,7 +696,9 @@ pages had them in October 2026:
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
   Each person's questions cost what the model they pick does, so add to the Models list only the
-  models you're happy to pay for.
+  models you're happy to pay for. While Search the web is on, an answer can also search up to 5 times,
+  which Anthropic charges $10 per 1,000 searches for and OpenAI its own price per search, and the
+  results and pages it reads count as input, up to about 10,000 tokens a page.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),
@@ -681,14 +708,43 @@ Cloudflare's pages have the details: [Workers pricing](https://developers.cloudf
 
 ## Storage: Durable Object SQLite or D1
 
-`STORAGE_BACKEND` in `wrangler.jsonc` picks where messages live.
+`STORAGE_BACKEND` picks where messages live, and with them the rooms, the people and the rest of what
+Ember keeps: type it in Deploy to Cloudflare's form, or set it in `wrangler.jsonc`'s `vars`.
 
-- **`do-sqlite`** (default): each room's Durable Object keeps its messages in its own SQLite
-  storage. Nothing to provision, and reads and writes never leave the object.
-- **`d1`**: messages go to one shared D1 database, which makes cross-room queries (activity,
-  exports) straightforward. Create the database with `pnpm exec wrangler d1 create ember`,
-  uncomment the `d1_databases` block, set `STORAGE_BACKEND` to `"d1"`, and apply
-  `apps/worker/migrations/` with `pnpm --filter @ember/worker d1:migrate:local` (or `--remote`).
+- **`do-sqlite`** (the default): each room's Durable Object keeps its messages in its own SQLite
+  storage, and the Workspace object keeps what the rooms share in its own. There's nothing to set up,
+  reads and writes never leave the object, and no room waits on another, so it scales furthest:
+  Durable Objects may keep 5 GB in all on Workers Free, and 10 GB for each room on Workers Paid.
+- **`d1`**: everything goes to one D1 database, which you can query in the dashboard or with
+  `wrangler d1 execute`, export with `wrangler d1 export`, and restore to any minute of the last 7 days
+  (30 on Workers Paid) with Time Travel. It's one database for the whole Ember, which runs one query at
+  a time, each a trip from the room's object to the database, and holds at most 500 MB on Workers Free
+  and 10 GB on Workers Paid, which Cloudflare can't raise.
+
+Neither choice changes much how many people Ember carries: on Workers Free, D1 has a daily allowance
+of rows written of its own beside Durable Objects', which lifts the estimate in
+[What it costs](#what-it-costs) from about 100 people a day to about 125. Past that, move to Workers
+Paid, whichever you chose. Choose before you set Ember up: nothing moves messages from one to the
+other, so switching later starts an empty Ember, to be set up again, and leaves the messages where
+they were.
+
+The form makes the D1 database bound as `DB` whatever you type, since it can't make one only for D1;
+on `do-sqlite`, the deploy leaves it unbound and empty. From a terminal, set `STORAGE_BACKEND` to
+`"d1"` and run `pnpm run deploy`, which makes the database that `d1_databases` names, `ember`, if your
+account has none of that name. Each Ember needs a database of its own, so give a second one another
+`database_name`.
+
+On `d1`, `pnpm run deploy` applies `apps/worker/migrations/` to the database before the Worker deploys,
+which takes a Cloudflare API token that may edit D1. The token Workers Builds makes for a build may
+not: if a Deploy to Cloudflare build stops at `wrangler d1`, give its token D1 Edit in the dashboard,
+under **My Profile**, **API Tokens**, and retry the build. The deploy also stops, saying why, where
+`STORAGE_BACKEND` is anything but `do-sqlite` or `d1`, which the Worker would take for `do-sqlite`, and
+where the database holds a set-up Ember that the Worker isn't bound to, as another Ember's would. If
+that database is this Ember's own, from before it was on DO SQLite or before its Worker was made again,
+set `EMBER_ADOPT_D1_DATABASE` to the database's name in the deploy's environment, a build variable
+under the Worker's **Settings**, **Build** for a Deploy to Cloudflare copy, and deploy again. A dry run
+(`--dry-run`) leaves the database as it is. For `wrangler dev`, apply the migrations to the database on
+your machine with `pnpm --filter @ember/worker d1:migrate:local`.
 
 Both use the same schema (`apps/worker/migrations/`) and the same queries
 (`apps/worker/src/store.ts`); only the driver (`apps/worker/src/db.ts`) differs. The Workspace

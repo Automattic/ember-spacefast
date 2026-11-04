@@ -7,6 +7,7 @@ import { roomSettingsPath, SEARCHES_PATH } from "@/hooks/use-route";
 import type { RoomAnswer } from "@/lib/room-list";
 import type { ConnectionStatus } from "@/lib/room-state";
 import { cn } from "@/lib/utils";
+import { AgentBadge, isWithAssistant } from "./agent-badge";
 import { FavoriteButton } from "./favorite-button";
 import { NotificationBell } from "./notification-bell";
 import { HEADER_BUTTON, PageHeader } from "./page-header";
@@ -38,7 +39,7 @@ interface Props {
 /**
  * The room header: the room's name, its star, who's here, Search, the bell, which turns notifications on
  * until they're on and is then your notification level's, and its settings. A DM's has a chat bubble in
- * place of the room's icon, and no star.
+ * place of the room's icon, and no star, and a DM with @ember alone the agent badge after its name.
  */
 export function RoomHeader({ room, name, present, status, offline, favorite, onStarred, involvement, askForRoom, onSessionChanged, onFailed }: Props) {
   const nameOf = useNameOf();
@@ -60,6 +61,7 @@ export function RoomHeader({ room, name, present, status, offline, favorite, onS
             name
           )}
         </h1>
+        {isWithAssistant(room) && <AgentBadge />}
         {!direct && <FavoriteButton roomId={room.id} favorite={favorite} onSaved={onStarred} onSessionChanged={onSessionChanged} />}
         {/* The composer's disabled while it's offline; this says why. */}
         {offline && (

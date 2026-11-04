@@ -190,8 +190,17 @@ const storedAssistant = async () =>
 /** What a refusal says. */
 const refusalOf = async (response: Response) => [response.status, ((await response.json()) as { error: string }).error];
 
-/** Ember AI as the AI assistant tab shows it with `models`, the first of them answering everyone. */
-const settingsWith = (models: AssistantModel[], model = models[0]!.id): AssistantSettings => ({ accountId: ACCOUNT_ID, model, models, most: TOP_LEVELS });
+/**
+ * Ember AI as the AI assistant tab shows it with `models`, the first of them answering everyone, with
+ * Search the web off, or null for a model that can't search.
+ */
+const settingsWith = (models: AssistantModel[], model = models[0]!.id): AssistantSettings => ({
+  accountId: ACCOUNT_ID,
+  model,
+  models,
+  most: TOP_LEVELS,
+  webTools: models.find(({ id }) => id === model)?.format === "chat" ? null : [],
+});
 
 /** @ember's answers to someone who picked `model`, among `models`, the first of them answering everyone, at the levels everyone starts with. */
 const yoursWith = (models: AssistantModel[], model = models[0]!.id): YourAssistant => ({ levels: DEFAULT_LEVELS, most: TOP_LEVELS, model, defaultModel: models[0]!.id, models });

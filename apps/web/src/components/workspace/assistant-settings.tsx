@@ -1,10 +1,23 @@
 import { useState } from "react";
 import type { WorkspaceSettings } from "@ember/protocol";
-import { MAX_ASSISTANT_MODELS, MODELS_FULL, modelName, type AssistantChanges, type AssistantSettings as Assistant } from "@ember/protocol/assistant";
+import {
+  cannotSearchWith,
+  MAX_ASSISTANT_MODELS,
+  MODELS_FULL,
+  modelName,
+  PAGES_READ_PER_ANSWER,
+  WEB_SEARCHES_PER_ANSWER,
+  type AssistantChanges,
+  type AssistantModel,
+  type AssistantSettings as Assistant,
+  type WebTool,
+} from "@ember/protocol/assistant";
 import { Switch } from "@/components/ui/switch";
 import { useMounted } from "@/hooks/use-mounted";
-import { changeAssistantSettings, forgetAssistant, isSignedOut, removeAssistantModel } from "@/lib/api";
+import { ApiError, changeAssistantSettings, changeWebSearch, forgetAssistant, isSignedOut, removeAssistantModel } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { AddAssistantModel } from "./add-assistant-model";
+import { searchTurnedOff } from "./assistant-setup";
 import { BUTTON } from "./email-settings";
 import { LevelDials } from "./level-dials";
 
@@ -15,9 +28,11 @@ import { LevelDials } from "./level-dials";
 // @ember out of every room and forgets the API token and the models people could pick. Change opens the
 // setup with the account and model as they are. While it's on, the card says what @ember sends the model,
 // which its provider reads, lists the models people can pick on their profile, the one that answers
-// everyone else chosen, with Add a model and each other's Remove, and has the dials of the most @ember may
-// think and write for anyone's question. Each change saves at once. While one saves, Ember AI can't be
-// turned off or changed, so that the save's answer can't show it as it was.
+// everyone else chosen, with Add a model and each other's Remove, has Search the web's switch, which
+// turns on once the model that answers everyone has searched the web for a test question, saying what it
+// found, or opens the setup for a model that can't search, and the dials of the most @ember may think and
+// write for anyone's question. Each change saves at once. While one saves, Ember AI can't be turned off
+// or changed, so that the save's answer can't show it as it was.
 
 /** What @ember sends the model as it answers, which the card says while Ember AI is on. */
 export const WHAT_EMBER_SENDS = "Mention @ember, or write to it directly, and it answers, sending the thread, or the room's latest messages, through Cloudflare to the model.";
@@ -28,6 +43,19 @@ export const MODELS_EXPLAINED = "People can pick any of these on their profile f
 /** What the card says of its dials. */
 export const LIMITS_EXPLAINED =
   "The most @ember may think and write for anyone's question. Each person picks their own levels on their profile, up to these. AI Gateway's spend limits can cap what each person's questions cost, as every request says who asked.";
+
+/** What the card says of Search the web while it's off, for a model that can search. */
+export const WEB_SEARCH_OFF = `@ember answers from what its model learned in training. Turn this on to let it search the web when a question needs what's current, at most ${WEB_SEARCHES_PER_ANSWER} times an answer, and list the pages it used under its answer.`;
+
+/** What the card says of Search the web while it's on, letting @ember do `webTools` on the web, while people can pick from `models`. */
+export function webSearchOn(webTools: WebTool[], models: readonly AssistantModel[]): string {
+  const reads = webTools.includes("read") ? `, and reads the pages people link to or its searches find, at most ${PAGES_READ_PER_ANSWER}` : "";
+  const picked = models.length > 1 ? " A model someone picks searches too, if it's Anthropic's or OpenAI's." : "";
+  return `@ember searches the web when a question needs it, at most ${WEB_SEARCHES_PER_ANSWER} times an answer${reads}, and lists the pages it used under its answer.${picked} AI Gateway's credits pay for each search.`;
+}
+
+/** What the card says while the model called `name` searches the web for Search the web's test question. */
+export const searchingWith = (name: string) => `Asking ${name} something it has to search the web for…`;
 
 /** What turning Ember AI off asks first. */
 export const CONFIRM_STOP_ASSISTANT =
@@ -41,17 +69,30 @@ interface Props {
   onSetUp: () => void;
   /** Shows that Ember AI is off, once turning it off has. */
   onStopped: () => void;
-  /** Shows Ember AI as a change to its models or dials leaves it, or as it was again when the change fails. */
+  /** Shows Ember AI as a change to its models, dials or Search the web leaves it, or as it was again when the change fails. */
   onChanged: (assistant: Assistant) => void;
   /** Says why turning it off failed, as the workspace's alerts do. */
   onFailed: (error: unknown) => void;
 }
+
+/**
+ * What came of turning Search the web on: the model is searching, said what it found, or why it didn't
+ * turn on, or else that choosing another model turned it off.
+ */
+type WebTest = "searching" | { found: string } | { refusal: string } | { off: string };
+
+/** Whether Ember AI, as `assistant` has it, searches the web. */
+const searchesIn = (assistant: Assistant) => assistant.webTools?.includes("search") ?? false;
 
 /** Whether @ember runs on a model, for administrators, and which, or else what Ember AI would add. */
 export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, onFailed }: Props) {
   const [stopping, setStopping] = useState(false);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
+  // Whether Search the web is turning on or off, while it saves.
+  const [turningWeb, setTurningWeb] = useState<boolean | null>(null);
+  const [webTest, setWebTest] = useState<WebTest | null>(null);
+  const busy = stopping || saving || turningWeb !== null;
   const mounted = useMounted();
 
   /** Shows Ember AI as `changed` at once, and saves it with `save`, showing it as it was, `shown`, again if it isn't saved. */
@@ -72,13 +113,48 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
     );
   };
 
-  /** Changes the model that answers everyone, or the most of the dials, by `changes`. */
+  /**
+   * Changes the model that answers everyone, or the most of the dials, by `changes`. Another model may not
+   * take the same tools for the web, so choosing one turns Search the web off, which the card then says.
+   */
   const change = (shown: Assistant, { model, ...levels }: AssistantChanges) =>
-    saveShown(shown, { ...shown, model: model ?? shown.model, most: { ...shown.most, ...levels } }, () => changeAssistantSettings({ ...levels, ...(model && { model }) }));
+    saveShown(shown, { ...shown, model: model ?? shown.model, most: { ...shown.most, ...levels } }, async () => {
+      const saved = await changeAssistantSettings({ ...levels, ...(model && { model }) });
+      if (mounted.current && saved.model !== shown.model) setWebTest(searchesIn(shown) && !searchesIn(saved) ? { off: searchTurnedOff(saved.webTools) } : null);
+      return saved;
+    });
 
   /** Takes `model` out of the models people can pick. */
   const remove = (shown: Assistant, model: string) =>
     saveShown(shown, { ...shown, models: shown.models.filter(({ id }) => id !== model) }, () => removeAssistantModel(model));
+
+  /** Turns Search the web `on`, once the model has searched, or off, saying what came of it. */
+  const turnWebSearch = (on: boolean) => {
+    setTurningWeb(on);
+    setWebTest(on ? "searching" : null);
+    changeWebSearch(on).then(
+      ({ assistant, found }) => {
+        onChanged(assistant);
+        if (!mounted.current) return;
+        setTurningWeb(null);
+        setWebTest(found === null ? null : { found });
+      },
+      (error: unknown) => {
+        if (!mounted.current && !isSignedOut(error)) return;
+        setTurningWeb(null);
+        // What AI Gateway or the model made of searching, or that Ember AI changed meanwhile, which the card says itself.
+        if (error instanceof ApiError && [409, 422, 429, 502].includes(error.status)) return setWebTest({ refusal: error.message });
+        setWebTest(null);
+        onFailed(error);
+      },
+    );
+  };
+
+  /** Opens the setup, whose model, once it's saved, may not be the one the card said searched, or didn't. */
+  const setUp = () => {
+    setWebTest(null);
+    onSetUp();
+  };
 
   const stop = () => {
     if (!confirm(CONFIRM_STOP_ASSISTANT)) return;
@@ -116,8 +192,8 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
         </div>
         <Switch
           checked={assistant !== null && !stopping}
-          onCheckedChange={(on) => (on ? onSetUp() : stop())}
-          disabled={stopping || saving}
+          onCheckedChange={(on) => (on ? setUp() : stop())}
+          disabled={busy}
           aria-labelledby="assistant-heading"
           aria-describedby="assistant-description"
         />
@@ -126,23 +202,24 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
         <>
           <p className={NOTE}>{WHAT_EMBER_SENDS}</p>
           <div>
-            <button type="button" onClick={onSetUp} disabled={stopping || saving} className={BUTTON}>
+            <button type="button" onClick={setUp} disabled={busy} className={BUTTON}>
               Change
             </button>
           </div>
           <Models
             assistant={assistant}
-            disabled={stopping || saving}
+            disabled={busy}
             onChoose={(model) => change(assistant, { model })}
             onRemove={(model) => remove(assistant, model)}
             onAdd={() => setAdding(true)}
           />
+          <WebSearch assistant={assistant} turning={turningWeb} test={webTest} disabled={busy} onTurn={turnWebSearch} onSetUp={setUp} />
           <div className="flex flex-col gap-3 border-t pt-4">
             <div>
               <h3 className="text-sm font-semibold">Limits</h3>
               <p className={NOTE}>{LIMITS_EXPLAINED}</p>
             </div>
-            <LevelDials name="assistant-most" levels={assistant.most} disabled={stopping || saving} onChange={(changes) => change(assistant, changes)} />
+            <LevelDials name="assistant-most" levels={assistant.most} disabled={busy} onChange={(changes) => change(assistant, changes)} />
           </div>
           {adding && <AddAssistantModel assistant={assistant} onAdded={onChanged} onClose={() => setAdding(false)} onFailed={onFailed} />}
         </>
@@ -213,6 +290,56 @@ function Models({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Search the web, while Ember AI is on: what @ember does on the web, its switch, shown as it's `turning`
+ * while it saves, and what came of turning it on, or of choosing another model, its `test`. For a model
+ * that can't search, it says so, and its switch opens the setup, where another can be chosen.
+ */
+function WebSearch({
+  assistant,
+  turning,
+  test,
+  disabled,
+  onTurn,
+  onSetUp,
+}: {
+  assistant: Assistant;
+  turning: boolean | null;
+  test: WebTest | null;
+  disabled: boolean;
+  onTurn: (on: boolean) => void;
+  onSetUp: () => void;
+}) {
+  const { webTools, model, models } = assistant;
+  const name = modelName(model, models);
+  const searches = searchesIn(assistant);
+  const note = webTools === null ? cannotSearchWith(name) : searches ? webSearchOn(webTools, models) : WEB_SEARCH_OFF;
+  return (
+    <div className="border-t pt-4">
+      <div className="flex items-center gap-x-[1ch]">
+        <div className="min-w-0 flex-1">
+          <h3 id="web-search-heading" className="text-sm font-semibold">
+            Search the web
+          </h3>
+          <p id="web-search-description" className={NOTE}>
+            {note}
+          </p>
+        </div>
+        <Switch
+          checked={turning ?? searches}
+          onCheckedChange={(on) => (webTools === null ? onSetUp() : onTurn(on))}
+          disabled={disabled}
+          aria-labelledby="web-search-heading"
+          aria-describedby="web-search-description"
+        />
+      </div>
+      <p role="status" className={cn(NOTE, "mt-2 wrap-anywhere empty:mt-0", test !== null && test !== "searching" && ("found" in test ? "text-positive" : "refusal" in test && "text-negative"))}>
+        {test === "searching" ? searchingWith(name) : test !== null && ("found" in test ? `It searched the web and said: ${test.found}` : "refusal" in test ? test.refusal : test.off)}
+      </p>
     </div>
   );
 }

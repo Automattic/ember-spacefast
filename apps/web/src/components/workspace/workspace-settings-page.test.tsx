@@ -176,7 +176,7 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
         return Response.json({ turnstile });
       case "PUT /api/account/assistant": {
         const { accountId, model, modelName: name } = JSON.parse(String(init?.body)) as AssistantSetup;
-        assistant = { accountId, model, models: [{ id: model, name: name ?? modelName(model), format: "chat" }], most: assistant?.most ?? TOP_LEVELS };
+        assistant = { accountId, model, models: [{ id: model, name: name ?? modelName(model), format: "chat" }], most: assistant?.most ?? TOP_LEVELS, webTools: null };
         return Response.json({ assistant, greeting: "Hello, team!" });
       }
       case "PATCH /api/account/assistant": {
@@ -1670,6 +1670,7 @@ describe("Ember AI", () => {
     model: "@cf/zai-org/glm-4.7-flash",
     models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
     most: TOP_LEVELS,
+    webTools: null,
   };
 
   it("gives administrators the Ember AI card, whose switch sets up Ember AI, naming the model it saved", async () => {
