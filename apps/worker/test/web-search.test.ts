@@ -335,6 +335,34 @@ describe("Search the web", () => {
     expect((await turnedWebSearch(ada, true)).assistant.webTools).toEqual(["search", "read"]);
   });
 
+  it("turns nothing on once Ember AI is turned off and set up again, after it was asked to turn on, while the model searched", async () => {
+    const ada = await setUp();
+    let asked = false;
+    let answering = false;
+    fakeGateway(async (request) => {
+      if (!gives(request, "web_search")) return unsearched(request.url, "Hello, team!");
+      asked = true;
+      while (!answering) await new Promise((resolve) => setTimeout(resolve, 10));
+      return searching(request);
+    });
+
+    const turning = turnWebSearch(ada, true);
+    await vi.waitFor(() => expect(asked).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect((await api("/api/account/assistant", { method: "DELETE", headers: { Cookie: ada.cookie } })).status).toBe(200);
+    const setUpAgain = await api("/api/account/assistant", {
+      method: "PUT",
+      headers: { Cookie: ada.cookie },
+      body: JSON.stringify({ accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: MESSAGES_MODEL }),
+    });
+    expect(setUpAgain.status, await setUpAgain.clone().text()).toBe(200);
+    answering = true;
+    const refused = await turning;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: WEB_SEARCH_CHANGED });
+    expect(await storedWebTools()).toEqual([]);
+  });
+
   it("is only for administrators, while Ember AI is on, before anything's asked", async () => {
     const ada = await setUp();
     const [{ join_code: joinCode }] = (await workspaceSql("SELECT join_code FROM accounts")) as [{ join_code: string }];

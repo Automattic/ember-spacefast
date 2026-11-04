@@ -150,7 +150,7 @@ describe("Ember AI", () => {
         model: SETUP.model,
         format: "messages",
         web_tools: [],
-        web_tools_asked_at: null,
+        web_tools_asked_at: expect.any(String) as unknown,
       });
       expect(JSON.stringify(await workspaceSql("SELECT * FROM accounts"))).not.toContain(API_TOKEN);
       expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, most: TOP_LEVELS, webTools: [] });

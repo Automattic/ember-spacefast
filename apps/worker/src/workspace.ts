@@ -272,11 +272,12 @@ const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount,
 const isAskedAs = (saved: SavedAssistant, asked: Pick<Gateway, "model" | "format">) => saved.model === asked.model && saved.format === asked.format;
 
 /**
- * What Ember AI's model may do on the web, and when that was asked for, as Ember AI, `saved`, keeps them
- * while it's set up to ask as `asked`: as they were, for the same model in the same format, and else nothing.
+ * What Ember AI's model may do on the web, and when that was asked for, once Ember AI, `saved`, or off for
+ * null, is set up at `setUpAt` to ask as `asked`: as they were, for the same model in the same format, and
+ * else nothing, as of then, so that a test Search the web began before then can't turn it on.
  */
-const webToolsKept = (saved: SavedAssistant | null, asked: Pick<Gateway, "model" | "format">): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
-  saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: null };
+const webToolsKept = (saved: SavedAssistant | null, asked: Pick<Gateway, "model" | "format">, setUpAt: string): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
+  saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: setUpAt };
 
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
 const levelsOf = (picked: PickedLevels | null, most: AnswerLevels): AnswerLevels =>
@@ -961,7 +962,8 @@ export class Workspace extends DurableObject<Env> {
    * A change that kept the API token Ember had, as `keptToken` says, changes nothing ("changed") once
    * that's no longer Ember's token: Ember AI was turned off while the model answered, which forgot it, or
    * set up again with another. What the model may do on the web stays as Search the web found it while
-   * the model and its format do, as another model may not take the same tools, which turns it off.
+   * the model and its format do, as another model may not take the same tools, which turns it off, as
+   * setting Ember AI up after it was off does, which no test Search the web began before then undoes.
    */
   async changeAssistant(credentials: Credentials, gateway: Gateway | null, keptToken = false): Promise<{ assistant: AssistantSettings | null } | "forbidden" | "changed" | null> {
     return this.administerAccount(credentials, async (account) => {
@@ -972,7 +974,7 @@ export class Workspace extends DurableObject<Env> {
         sealedApiToken: await seal(this.env.SESSION_SECRET, "ai-gateway-token", gateway.apiToken),
         model: gateway.model,
         format: gateway.format,
-        ...webToolsKept(account.assistant, gateway),
+        ...webToolsKept(account.assistant, gateway, new Date().toISOString()),
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
