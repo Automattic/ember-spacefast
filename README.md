@@ -217,10 +217,10 @@ was made.
    [Ember's](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/blob/main/.github/workflows/update-ember.yml)
    has.
 5. Trim the API token Cloudflare made for your copy's builds, `<your Worker> build token`, which may edit
-   nearly everything in your account, every R2 bucket included, though Ember's builds only deploy the
-   Worker: in **My Profile**, under **API Tokens**, choose **Edit** on it, not Roll, and remove every
-   permission but Workers Scripts, Account Settings, User Details and Memberships.
-   [The build's token](docs/self-hosting.md#the-builds-token) says why.
+   nearly everything in your account, every R2 bucket included, though Ember's builds need little of
+   that: in **My Profile**, under **API Tokens**, choose **Edit** on it, not Roll, and remove every
+   permission but Workers Scripts, Account Settings, User Details and Memberships, and D1 if you chose
+   `d1`. [The build's token](docs/self-hosting.md#the-builds-token) says why.
 6. Invite your team with the join link on general's welcome card, or by email.
 
 From then on, every push to your copy deploys again, and each new release of Ember arrives in your copy

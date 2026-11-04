@@ -169,13 +169,15 @@ and containers among much else, and the Workers Routes, certificates and Email R
 zone in every account you belong to. That's why R2's **Manage API tokens** page lists it as Admin
 Read & Write for all buckets. Ember's builds need four of those permissions: Workers Scripts, to
 deploy the Worker, and Account Settings, User Details and Memberships, with which `pnpm run deploy`
-finds the account's ID. The Worker reaches its bucket through its binding, which takes no token, the
-deploy form makes the bucket before the first build, and `wrangler.jsonc` binds no namespace, database
-or queue and lists no routes. So once your copy has deployed, trim the token. In **My Profile**, under
-**API Tokens**, choose **Edit** on it, remove every permission but Workers Scripts, Account Settings,
-User Details and Memberships, and choose **Update token**. Edit keeps the token's value, which the
-builds hold, where Roll would give it a new one and fail every build until the Worker's **Settings**,
-under **Build**, name a token again.
+finds the account's ID. On `d1` they need D1 as well, to make and migrate the database messages live
+in ([Storage](#storage-durable-object-sqlite-or-d1)); on `do-sqlite` the deploy leaves the form's
+database unbound and never touches D1. The Worker reaches its bucket through its binding, which takes
+no token, the deploy form makes the bucket before the first build, and `wrangler.jsonc` binds no
+namespace or queue and lists no routes. So once your copy has deployed, trim the token. In **My
+Profile**, under **API Tokens**, choose **Edit** on it, remove every permission but Workers Scripts,
+Account Settings, User Details and Memberships, and D1 on `d1`, and choose **Update token**. Edit
+keeps the token's value, which the builds hold, where Roll would give it a new one and fail every
+build until the Worker's **Settings**, under **Build**, name a token again.
 
 Every build runs with that token, those of Update Ember's pull requests included, so the less it may
 do, the less a dependency gone bad could. The Worker's **Settings**, under **Build**, name the token
