@@ -761,9 +761,10 @@ export const EMBER_REPOSITORY = "https://github.com/NYLLON-SOFTWARE/ember-cloudf
 export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#updating`;
 
 /**
- * What `GET /api/account/release` answers an administrator, for General settings to say: the release
- * this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release of
- * Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
+ * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
+ * /api/account/release_checks`, which opening Admin makes to have the Worker ask GitHub afresh: the
+ * release this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release
+ * of Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
  * one, or null when GitHub didn't name one.
  */
 export interface ReleaseCheck {

@@ -916,8 +916,9 @@ describe("Rail", () => {
 describe("New releases", () => {
   const NOTES = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0";
   const asAdministrator = { ...ada, administrator: true };
-  /** How many times the release check was asked for. */
+  /** How many times the release check was asked for, and afresh, as opening Admin asks for it. */
   const releaseChecks = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/account/release").length;
+  const afreshChecks = () => vi.mocked(fetch).mock.calls.filter(([input, init]) => String(input) === "/api/account/release_checks" && init?.method === "POST").length;
   // Unmounted while what it calls on the way out is still stubbed.
   afterEach(cleanup);
 
@@ -944,9 +945,51 @@ describe("New releases", () => {
     const admin = screen.getByRole("link", { name: "Admin" });
     await waitFor(() => expect(admin).toHaveAccessibleDescription("Ember 0.2 is available"));
 
-    // General says so too, as the release check answered, which it isn't asked again for.
+    // General says so too, as the release check answered, before opening Admin has it asked afresh.
     await user.click(admin);
     expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.2 is available" })).toBeInTheDocument();
+    expect([releaseChecks(), afreshChecks()]).toEqual([1, 0]);
+  });
+
+  it("asks afresh each time an administrator opens Admin, once the browser is idle, but not for going on within it, or leaving", async () => {
+    const idle = idleCallbacks();
+    let newest = "0.2";
+    const answer = () => Response.json({ release: "0.1", newest: { release: newest, notes: NOTES, newer: true } });
+    serve({
+      "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
+      "GET /api/account/release": answer,
+      "POST /api/account/release_checks": answer,
+    });
+    const { user } = showWorkspace("/rooms/random", asAdministrator);
+    await roomHeading();
+    await vi.waitFor(() => expect(idle).toHaveLength(2));
+    act(() => idle.splice(0).forEach((run) => run()));
+    const admin = screen.getByRole("link", { name: "Admin" });
+    await waitFor(() => expect(admin).toHaveAccessibleDescription("Ember 0.2 is available"));
+
+    // GitHub has published another since, which General and the rail say once the check made afresh answers.
+    newest = "0.3";
+    await user.click(admin);
+    expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.2 is available" })).toBeInTheDocument();
+    await vi.waitFor(() => expect(idle).toHaveLength(1));
+    expect(afreshChecks()).toBe(0);
+    act(() => idle.splice(0).forEach((run) => run()));
+    expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.3 is available" })).toBeInTheDocument();
+    expect(admin).toHaveAccessibleDescription("Ember 0.3 is available");
+    expect([releaseChecks(), afreshChecks()]).toEqual([1, 1]);
+
+    // Going on to Membership, then home, asks nothing, but opening Admin again asks afresh again.
+    await user.click(screen.getByRole("link", { name: "Membership" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Membership" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await waitFor(() => expect(railCurrent()).toEqual(["Home"]));
+    expect(idle).toEqual([]);
+
+    await user.click(admin);
+    await communitySettings();
+    await vi.waitFor(() => expect(idle).toHaveLength(1));
+    act(() => idle.splice(0).forEach((run) => run()));
+    await waitFor(() => expect(afreshChecks()).toBe(2));
     expect(releaseChecks()).toBe(1);
   });
 
@@ -956,9 +999,10 @@ describe("New releases", () => {
       [null, "GitHub didn't say whether a newer release is out."],
     ] as const) {
       const idle = idleCallbacks();
+      // Asked afresh alone, as the page opens in Admin.
       serve({
         "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-        "GET /api/account/release": () => Response.json({ release: "0.1", newest }),
+        "POST /api/account/release_checks": () => Response.json({ release: "0.1", newest }),
       });
       const { unmount } = showWorkspace("/account/edit", asAdministrator);
       await communitySettings();
@@ -966,18 +1010,23 @@ describe("New releases", () => {
       act(() => idle.forEach((run) => run()));
       expect(await screen.findByRole("region", { name: "Ember 0.1" })).toHaveTextContent(says);
       expect(screen.getByRole("link", { name: "Admin" })).not.toHaveAccessibleDescription();
+      expect([releaseChecks(), afreshChecks()]).toEqual([0, 1]);
       unmount();
+      vi.mocked(fetch).mockClear();
     }
   });
 
-  it("asks nothing for anyone else", async () => {
+  it("asks nothing for anyone else, even as they open Workspace", async () => {
     const idle = idleCallbacks();
-    showWorkspace("/rooms/random");
+    const { user } = showWorkspace("/rooms/random");
     await roomHeading();
     await vi.waitFor(() => expect(idle).toHaveLength(1));
-    act(() => idle.forEach((run) => run()));
+    act(() => idle.splice(0).forEach((run) => run()));
     await import("./pages");
-    expect(releaseChecks()).toBe(0);
+    await user.click(screen.getByRole("link", { name: "Workspace" }));
+    await communitySettings();
+    expect(idle).toEqual([]);
+    expect([releaseChecks(), afreshChecks()]).toEqual([0, 0]);
   });
 });
 
