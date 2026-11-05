@@ -13,6 +13,7 @@ import {
   type Account,
   type AccountChanges,
   type AssistantSetup,
+  type CopyOnGitHub,
   type DirectoryUser,
   type EmailInvitation,
   type Invited,
@@ -30,7 +31,9 @@ import { AccountContext } from "@/hooks/use-account";
 import { PeopleContext } from "@/hooks/use-directory";
 import { navigate, WORKSPACE_SETTINGS_PATH } from "@/hooks/use-route";
 import { ApiError } from "@/lib/api";
-import { HOW_COPIES_UPDATE } from "./ember-version";
+// Ember's own Update Ember workflow, which the card offers a copy without one.
+import EMBERS_WORKFLOW from "../../../../../.github/workflows/update-ember.yml?raw";
+import { HOW_COPIES_UPDATE, HOW_THIS_COPY_UPDATES, HOW_TO_ADD_THE_WORKFLOW } from "./ember-version";
 import { CONFIRM_REMOVE } from "./people-list";
 import { workspaceSectionPath, type WorkspaceSection } from "./settings-navigation";
 import { CHANGES_SAVED } from "./settings-page";
@@ -398,37 +401,66 @@ describe("Version", () => {
   /** Ember 0.2's page on GitHub, with its notes. */
   const NOTES = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0";
   const card = () => screen.findByRole("region", { name: /^Ember \d/ });
+  /** What the Worker says of a copy on GitHub, as its deploy told it, while Ember 0.2 is out, if `copy` is given. */
+  const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({ release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true }, copy });
+  /** The card's links, by name, which each open in a new tab. */
+  function linksIn(shown: HTMLElement): Record<string, string | null> {
+    const links = within(shown).getAllByRole("link");
+    for (const link of links) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener");
+    }
+    return Object.fromEntries(links.map((link) => [link.textContent, link.getAttribute("href")]));
+  }
 
-  it("shows administrators which release this is once the Worker has said, at the end of General", async () => {
-    release = { release: "0.1", newest: { release: "0.1", notes: NOTES, newer: false } };
-    showPage();
-    const shown = await card();
-    expect(shown).toHaveTextContent(/^Ember 0\.1This is the newest release\.$/);
-    expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
-    const general = screen.getByRole("region", { name: "Basic community settings" });
-    expect(general.lastElementChild).toBe(shown);
-  });
+  it.each([null, { repository: "someone/my-ember", branch: "main", workflow: true }])(
+    "shows administrators which release this is once the Worker has said, at the end of General (copy: %j)",
+    async (copy) => {
+      release = { release: "0.1", newest: { release: "0.1", notes: NOTES, newer: false }, copy };
+      showPage();
+      const shown = await card();
+      expect(shown).toHaveTextContent(/^Ember 0\.1This is the newest release\.$/);
+      expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
+      const general = screen.getByRole("region", { name: "Basic community settings" });
+      expect(general.lastElementChild).toBe(shown);
+    },
+  );
 
   it("says when a newer release is out, with its notes and how to update", async () => {
-    release = { release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true } };
+    release = newerFor();
     showPage();
     const shown = await card();
     expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent("Ember 0.2 is available");
     expect(shown).toHaveTextContent("This is Ember 0.1.");
     expect(shown).toHaveTextContent(HOW_COPIES_UPDATE);
-    for (const [name, href] of [
-      ["What's new", NOTES],
-      ["How to update", UPDATING_EMBER],
-    ]) {
-      const link = within(shown).getByRole("link", { name });
-      expect(link).toHaveAttribute("href", href);
-      expect(link).toHaveAttribute("target", "_blank");
-      expect(link).toHaveAttribute("rel", "noopener");
-    }
+    expect(linksIn(shown)).toEqual({ "What's new": NOTES, "How to update": UPDATING_EMBER });
+  });
+
+  it("links a copy that has the Update Ember workflow straight to it on GitHub, to run", async () => {
+    release = newerFor({ repository: "someone/my-ember", branch: "main", workflow: true });
+    showPage();
+    const shown = await card();
+    expect(shown).toHaveTextContent(HOW_THIS_COPY_UPDATES);
+    expect(linksIn(shown)).toEqual({ "What's new": NOTES, "Open GitHub action to update": "https://github.com/someone/my-ember/actions/workflows/update-ember.yml" });
+  });
+
+  it("links a copy without it to GitHub's editor, on the branch that deploys, with Ember's workflow filled in to commit", async () => {
+    release = newerFor({ repository: "someone/my-ember", branch: "release/v1#stable", workflow: false });
+    showPage();
+    const shown = await card();
+    expect(shown).toHaveTextContent(HOW_TO_ADD_THE_WORKFLOW);
+    const { "Add GitHub action to update": add, ...others } = linksIn(shown);
+    expect(others).toEqual({ "What's new": NOTES });
+    const editor = new URL(add!);
+    expect(`${editor.origin}${editor.pathname}`).toBe("https://github.com/someone/my-ember/new/release/v1%23stable");
+    expect([...editor.searchParams]).toEqual([
+      ["filename", ".github/workflows/update-ember.yml"],
+      ["value", EMBERS_WORKFLOW],
+    ]);
   });
 
   it("says when GitHub didn't say whether a newer release is out", async () => {
-    release = { release: "0.1", newest: null };
+    release = { release: "0.1", newest: null, copy: null };
     showPage();
     expect(await card()).toHaveTextContent(/^Ember 0\.1GitHub didn't say whether a newer release is out\.$/);
   });
@@ -438,7 +470,7 @@ describe("Version", () => {
     await nameField();
     expect(screen.queryByText(/^Ember \d/)).not.toBeInTheDocument();
     cleanup();
-    release = { release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true } };
+    release = newerFor();
     serve(asMember);
     showPage(asLinus);
     expect(await screen.findByRole("heading", { level: 2, name: "Analytical Engines" })).toBeInTheDocument();

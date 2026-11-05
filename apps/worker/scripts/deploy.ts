@@ -23,6 +23,8 @@
 // CLOUDFLARE_ACCOUNT_ID, which a Worker can't learn by itself, for Set up Ember AI to fill in. Deploy
 // to Cloudflare's copy of Ember leaves out the .github folder, and with it the Update Ember workflow
 // that offers the copy Ember's releases, so a deploy without that workflow ends by saying how to add it.
+// A copy on GitHub tells the Worker its repository, the branch that deploys, and whether it has the
+// workflow, as vars, for General's release card to link to running the workflow, or to adding it.
 // Where STORAGE_BACKEND keeps messages in D1, the deploy makes the database the config names if the
 // account has none, refuses one in which an Ember the Worker isn't bound to is set up, and applies
 // Ember's migrations to it before the Worker that reads it deploys; on DO SQLite, it deploys without the
@@ -254,18 +256,44 @@ function githubRepository(): string | null {
   return /^(?:https:\/\/(?:[^@/]*@)?github\.com\/|git@github\.com:)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i.exec(origin.stdout.trim())?.[1] ?? null;
 }
 
+/** The repository of the copy of Ember the checkout is, on GitHub, or null where it's on GitHub as nothing but Ember's own. */
+function copyRepository(): string | null {
+  const repository = githubRepository();
+  return repository && `https://github.com/${repository}`.toLowerCase() !== EMBER.toLowerCase() ? repository : null;
+}
+
+/** Whether the checkout has the Update Ember workflow. */
+const hasUpdateWorkflow = () => existsSync(path.join(ROOT, UPDATE_WORKFLOW));
+
+/** The branch that deploys: the one Workers Builds deploys, else `main`. */
+const deployBranch = () => process.env.WORKERS_CI_BRANCH || "main";
+
+/**
+ * The vars that tell the Worker of the copy it's deployed from, as `--var`s for wrangler deploy: its
+ * repository on GitHub, the branch that deploys, and whether it has the Update Ember workflow, which
+ * General's release card links to, or to adding it. None for a checkout that isn't a copy on GitHub, and
+ * none that `args` give themselves.
+ */
+function copyVars(args: string[]): string[] {
+  const repository = copyRepository();
+  if (!repository) return [];
+  const given = varsGiven(args);
+  const vars = { GITHUB_REPOSITORY: repository, GIT_BRANCH: deployBranch(), UPDATE_WORKFLOW: String(hasUpdateWorkflow()) };
+  return Object.entries(vars).flatMap(([name, value]) => (given.has(name) ? [] : ["--var", `${name}:${value}`]));
+}
+
 /**
  * Says how to add the Update Ember workflow to a copy that has none, as Deploy to Cloudflare's don't:
  * on GitHub, with a link that opens the copy's editor with Ember's workflow in it, ready to commit, on a
  * line of its own to copy, as the whole workflow makes it long.
  */
 function tellUpdateWorkflow(): void {
-  if (existsSync(path.join(ROOT, UPDATE_WORKFLOW))) return;
-  const repository = githubRepository();
+  if (hasUpdateWorkflow()) return;
+  const repository = copyRepository();
   const missing = "\nThis copy of Ember has no Update Ember workflow, which Deploy to Cloudflare leaves out with the rest of the .github folder, so nothing offers it Ember's new releases.";
-  if (repository && `https://github.com/${repository}`.toLowerCase() !== EMBER.toLowerCase() && existsSync(EMBERS_UPDATE_WORKFLOW)) {
+  if (repository && existsSync(EMBERS_UPDATE_WORKFLOW)) {
     // A branch's name may hold what a link can't, such as `#`, so each of its parts goes in encoded.
-    const branch = (process.env.WORKERS_CI_BRANCH || "main").split("/").map(encodeURIComponent).join("/");
+    const branch = deployBranch().split("/").map(encodeURIComponent).join("/");
     const editor = `https://github.com/${repository}/new/${branch}`;
     const workflow = new URLSearchParams({ filename: UPDATE_WORKFLOW, value: readFileSync(EMBERS_UPDATE_WORKFLOW, "utf8") });
     console.log(`${missing} To have each come as a pull request, commit the workflow in GitHub's editor, which this link opens with it filled in:\n${editor}?${workflow}`);
@@ -447,8 +475,8 @@ function readyD1(file: string, settings: Settings, newWorker: boolean, target: s
 }
 
 /**
- * Deploys with `args`, the missing secrets and the account's ID, where it's known, on the storage
- * STORAGE_BACKEND names, says how to set Ember up, and answers wrangler's exit status.
+ * Deploys with `args`, the missing secrets and the account's ID, where it's known, and the copy's vars,
+ * on the storage STORAGE_BACKEND names, says how to set Ember up, and answers wrangler's exit status.
  */
 async function deploy(args: string[]): Promise<number> {
   const target = targetOptions(args);
@@ -470,7 +498,7 @@ async function deploy(args: string[]): Promise<number> {
     console.log(uploading(Object.keys(secrets), Object.keys(given), accountId !== null));
     // wrangler records what it deployed, the Worker's address among it, in the file the environment names, else one of this deploy's own.
     const output = process.env.WRANGLER_OUTPUT_FILE_PATH || path.join(dir, "wrangler-output.json");
-    const options = config === configFile ? args : [...withoutConfig(args), "--config", path.relative(ROOT, config)];
+    const options = [...(config === configFile ? args : [...withoutConfig(args), "--config", path.relative(ROOT, config)]), ...copyVars(args)];
     const status = wrangler(["deploy", "--secrets-file", file, ...options], false, { WRANGLER_OUTPUT_FILE_PATH: output }).status ?? 1;
     if (status === 0) {
       tellSetupLink(setupToken, secrets.EMBER_SETUP_TOKEN, deployedUrl(output), target);
