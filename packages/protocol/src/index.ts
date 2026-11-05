@@ -174,7 +174,7 @@ export interface DirectoryUser extends User {
   bio: string | null;
   role: Role;
   status: UserStatus;
-  /** Their avatar, `/users/<token>/avatar?v=<version>`, whose address changes whenever they do. */
+  /** Their avatar, `/users/<token>/avatar?v=<version>`, whose address changes whenever they do, and @ember's with each release too. */
   avatarUrl: string;
 }
 

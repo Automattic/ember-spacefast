@@ -1,11 +1,14 @@
-import type { UserId } from "@ember/protocol";
+import { ASSISTANT_ID, type UserId } from "@ember/protocol";
 import { toBase64url } from "./encoding";
 import { hmacKey } from "./hmac";
+import { VERSION } from "./version";
 import type { DirectoryEntry } from "./workspace-store";
 
 // The addresses of people's avatars, /users/<token>/avatar?v=<version>, which the people directory and
 // `user.updated` frames give out and avatars.ts serves. The token names someone and is signed so nobody
-// can make one up, and the version changes whenever they do.
+// can make one up, and the version changes whenever they do. @ember's picture comes with Ember, so its
+// address names the release too (&release=<version>): browsers keep an avatar for half an hour, and
+// would go on showing @ember's old picture after an update that changes it.
 
 const encoder = new TextEncoder();
 
@@ -36,6 +39,12 @@ export async function avatarTokenUser(token: string, secret: string): Promise<Us
 /** `updated_at.to_fs(:number)`: when someone or something last changed, to the second, as 14 digits. */
 export const versionOf = (updatedAt: string) => updatedAt.slice(0, 19).replace(/\D/g, "");
 
+/** The address of the avatar `token` names, for someone who last changed at `updatedAt`. */
+function avatarPath(userId: UserId, token: string, updatedAt: string): string {
+  const path = `/users/${encodeURIComponent(token)}/avatar?v=${versionOf(updatedAt)}`;
+  return userId === ASSISTANT_ID ? `${path}&release=${VERSION}` : path;
+}
+
 /**
  * The tokens the directory has listed, under the secret that made them, since signing is most of what
  * listing everyone costs. Only people the directory lists go in, so nobody can fill it with made-up ids.
@@ -51,7 +60,7 @@ export async function directoryOf<Entry extends DirectoryEntry>(entries: Entry[]
     entries.map(async ({ updatedAt, ...user }) => {
       let token = tokens.get(user.id);
       if (token === undefined) tokens.set(user.id, (token = await tokenOf(user.id)));
-      return { ...user, avatarUrl: `/users/${encodeURIComponent(token)}/avatar?v=${versionOf(updatedAt)}` };
+      return { ...user, avatarUrl: avatarPath(user.id, token, updatedAt) };
     }),
   );
 }
