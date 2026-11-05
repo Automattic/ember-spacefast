@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { MAX_PICTURE_REQUEST } from "../src/files/pictures";
 import type { Workspace } from "../src/workspace";
-import { api, apiWith, avatarVersionOf, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, signIn, workspaceSql, workspaceStub, type Session } from "./support";
+import { api, apiWith, avatarVersionOf, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, signIn, stopTheClock, workspaceSql, workspaceStub, type Session } from "./support";
 
 // Avatars people upload, setup and sign-up forms take them.
 
@@ -59,6 +59,9 @@ async function uploadMoon(session: Session): Promise<ProfileAnswer> {
 }
 
 const removeAvatar = (session: Session | null) => api(AVATAR_PATH, { method: "DELETE", headers: as(session) });
+
+/** Saves `bio` on the profile of the person `session` signs in. */
+const saveBio = (session: Session, bio: string) => api("/api/users/me/profile", { method: "PATCH", headers: as(session), body: JSON.stringify({ bio }) });
 
 /** Someone as the directory lists them, as `viewer` sees it. */
 async function listed(viewer: Session, userId: UserId): Promise<DirectoryUser> {
@@ -157,18 +160,22 @@ describe("Upload an avatar", () => {
     expect(new Uint8Array(await (await avatar(now.avatarUrl, grace)).arrayBuffer())).toEqual(recordedImage("moon-avatar.webp"));
   });
 
-  it("gives each change a later address, even one in the same second as the last, as browsers keep the picture they have at one", async () => {
-    // Joining, uploading a photo, replacing it and removing it, all in the same second.
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+  it("gives each change a later address, even one in the same second as the last, which nothing after takes back, as browsers keep the picture they have at one", async () => {
+    // Joining, uploading a photo, saving the profile, replacing the photo and removing it, all at once.
+    stopTheClock();
     const ada = await signIn("Ada Lovelace");
     const initials = (await listed(ada, ada.user.id)).avatarUrl;
     const { profile: first } = await uploadMoon(ada);
+    const { profile: saved } = (await (await saveBio(ada, "Countess")).json()) as ProfileAnswer;
     const { profile: second } = await uploadMoon(ada);
     const { profile: removed } = (await (await removeAvatar(ada)).json()) as ProfileAnswer;
 
-    const versions = [initials, first.avatarUrl, second.avatarUrl, removed.avatarUrl].map(avatarVersionOf);
-    expect(versions).toEqual([...versions].sort((a, b) => a - b));
-    expect(new Set(versions).size).toBe(4);
+    const pictures = [initials, first.avatarUrl, second.avatarUrl, removed.avatarUrl].map(avatarVersionOf);
+    expect(pictures).toEqual([...pictures].sort((a, b) => a - b));
+    expect(new Set(pictures).size).toBe(4);
+    // The same picture, at the address it had or a later one.
+    expect(avatarVersionOf(saved.avatarUrl)).toBeGreaterThanOrEqual(avatarVersionOf(first.avatarUrl));
+    expect(avatarVersionOf(saved.avatarUrl)).toBeLessThan(avatarVersionOf(second.avatarUrl));
     expect((await listed(ada, ada.user.id)).avatarUrl).toBe(removed.avatarUrl);
   });
 

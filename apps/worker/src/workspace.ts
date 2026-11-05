@@ -82,7 +82,7 @@ import {
 } from "@ember/protocol/assistant";
 import { WEB_TOOLS_IN, type Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
-import { avatarChangedAt, directoryOf, versionOf } from "./avatar-tokens";
+import { avatarChangeTime, directoryOf, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";
 import { botKeyOf, isBotToken, newBotToken } from "./bots/keys";
 import { openDb, type Db } from "./db";
@@ -1151,8 +1151,8 @@ export class Workspace extends DurableObject<Env> {
       const previous = ember.avatar?.key ?? null;
       // Taking away an avatar that isn't there changes nothing.
       if (avatar !== null || previous !== null) {
-        const now = Date.now();
-        await this.store.changeAvatar(ASSISTANT_ID, avatar, previous, avatarChangedAt(ember.updatedAt, now), now);
+        const now = await avatarChangeTime(ember.updatedAt);
+        await this.store.changeAvatar(ASSISTANT_ID, avatar, previous, new Date(now).toISOString(), now);
         if (previous) await this.wakeAt(now);
         await this.publishPerson(ASSISTANT_ID);
       }
@@ -2447,10 +2447,9 @@ export class Workspace extends DurableObject<Env> {
       const bot = await this.store.activeBot(botId);
       if (!bot) return "not found";
       if (changes.name !== undefined && takesReservedName(bot.name, changes.name)) return "name reserved";
-      const now = Date.now();
+      const now = avatar ? await avatarChangeTime(bot.updatedAt) : Date.now();
       const previous = avatar && ((await this.store.avatarOwner(botId))?.avatar?.key ?? null);
-      const changedAt = avatar ? avatarChangedAt(bot.updatedAt, now) : new Date(now).toISOString();
-      await this.store.changeBot(botId, changes, changedAt, avatar && { avatar, previous, dueAt: now });
+      await this.store.changeBot(botId, changes, new Date(now).toISOString(), avatar && { avatar, previous, dueAt: now });
       if (previous) await this.wakeAt(now);
       const changed = (await this.store.activeBot(botId))!;
       if (changed.name !== bot.name || avatar) {
@@ -2743,8 +2742,8 @@ export class Workspace extends DurableObject<Env> {
       if (!person) return null;
       // Removing an avatar that isn't there changes nothing.
       if (avatar === null && person.avatar === null) return this.yourProfile(person, session);
-      const now = Date.now();
-      const updatedAt = avatarChangedAt(person.updatedAt, now);
+      const now = await avatarChangeTime(person.updatedAt);
+      const updatedAt = new Date(now).toISOString();
       const previous = person.avatar?.key ?? null;
       await this.store.changeAvatar(user.id, avatar, previous, updatedAt, now);
       if (previous) await this.wakeAt(now);

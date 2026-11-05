@@ -78,7 +78,8 @@ const CATALOG: AssistantCatalog = {
 /**
  * Answers turning Ember AI off, changing it, taking a model out, listing Cloudflare's catalog, adding a
  * model, and uploading @ember's avatar and taking it away as the server would, or as `stopped`, `changed`,
- * `removed`, `listed`, `added`, `pictured` and `unpictured` say.
+ * `removed`, `listed`, `added`, `pictured` and `unpictured` say, and reading Ember AI again as another
+ * tab's upload left it, or as `read` says.
  */
 function serve({
   stopped = () => Response.json({ assistant: null }),
@@ -88,6 +89,7 @@ function serve({
   added = ({ model }) => Response.json({ assistant: on("anthropic/claude-sonnet-5.5", TOP_LEVELS, [model]), greeting: "Hello! I'm here to help." }),
   pictured = () => Response.json({ assistant: { ...on("anthropic/claude-sonnet-5.5"), avatarUrl: UPLOADED, avatar: true } }),
   unpictured = () => Response.json({ assistant: on("anthropic/claude-sonnet-5.5") }),
+  read = () => Response.json({ assistant: { ...on("anthropic/claude-sonnet-5.5"), avatarUrl: UPLOADED, avatar: true } }),
 }: {
   stopped?: Answer;
   changed?: Answer<AssistantChanges>;
@@ -96,9 +98,10 @@ function serve({
   added?: Answer<NewAssistantModel>;
   pictured?: Answer<FormData>;
   unpictured?: Answer;
+  read?: Answer;
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const request = `${init?.method} ${String(input)}`;
+    const request = `${init?.method ?? "GET"} ${String(input)}`;
     const body = () => JSON.parse(String(init?.body)) as unknown;
     if (request === "DELETE /api/account/assistant") return stopped();
     if (request === "PATCH /api/account/assistant") return changed(body() as AssistantChanges);
@@ -107,6 +110,7 @@ function serve({
     if (request === "POST /api/account/assistant/models") return added(body() as NewAssistantModel);
     if (request === "PUT /api/account/assistant/avatar") return pictured(init?.body as FormData);
     if (request === "DELETE /api/account/assistant/avatar") return unpictured();
+    if (request === "GET /api/account") return read();
     throw new Error(`Unexpected request for ${request}`);
   });
 }
@@ -135,19 +139,22 @@ function showCard(assistant: WorkspaceSettings["assistant"], people: People = ne
   return { ...callbacks, user: userEvent.setup(), showPeople: (listed: People) => rerender(shown(listed)) };
 }
 
-/** The card, showing Ember AI as each change to it leaves it, as the settings page does. */
-function showLiveCard(assistant: Assistant) {
+/** The card, showing Ember AI as each change to it leaves it, as the settings page does, with `people` as `showCard` has them. */
+function showLiveCard(assistant: Assistant, people: People = new Map()) {
   const callbacks = { onSetUp: vi.fn(), onStopped: vi.fn(), onFailed: vi.fn() };
   function Live() {
     const [shown, setShown] = useState(assistant);
     return <AssistantSettings assistant={shown} onChanged={setShown} {...callbacks} />;
   }
-  render(
-    <FlashProvider workspace>
-      <Live />
-    </FlashProvider>,
+  const shown = (listed: People) => (
+    <PeopleContext value={listed}>
+      <FlashProvider workspace>
+        <Live />
+      </FlashProvider>
+    </PeopleContext>
   );
-  return { ...callbacks, user: userEvent.setup() };
+  const { rerender } = render(shown(people));
+  return { ...callbacks, user: userEvent.setup(), showPeople: (listed: People) => rerender(shown(listed)) };
 }
 
 const card = () => screen.getByRole("region", { name: "Ember AI" });
@@ -236,6 +243,8 @@ describe("Avatar", () => {
       .mocked(fetch)
       .mock.calls.filter(([input, init]) => `${init?.method} ${String(input)}` === "PUT /api/account/assistant/avatar")
       .map(([, init]) => init?.body as FormData);
+  /** How many times Ember AI was read again. */
+  const reads = () => vi.mocked(fetch).mock.calls.filter(([input, init]) => String(input) === "/api/account" && init?.method === undefined).length;
   /** @ember as the people directory lists it, with its avatar at `avatarUrl`. */
   const listed = (avatarUrl: string): People =>
     new Map([[ASSISTANT_ID, { id: ASSISTANT_ID, name: "Ember", bio: null, role: "bot", status: "active", avatarUrl } satisfies DirectoryUser]]);
@@ -339,13 +348,51 @@ describe("Avatar", () => {
     expect(useTheFlame()).toBeEnabled();
   });
 
-  it("shows the avatar as another tab changes it, once the people directory hears", () => {
+  it("shows the avatar as another tab changes it, once the people directory hears, reading Ember AI again for Use Ember's flame", async () => {
     serve();
-    const { showPeople } = showCard(SONNET, listed("/users/ember.abc/avatar?v=20261031120000"));
+    const { showPeople, onFailed } = showLiveCard(SONNET, listed("/users/ember.abc/avatar?v=20261031120000"));
     // The directory can list an avatar from before the card's settings were read.
     expect(avatar()).toHaveAttribute("src", FLAME);
+    expect(reads()).toBe(0);
     showPeople(listed(UPLOADED));
     expect(avatar()).toHaveAttribute("src", UPLOADED);
+
+    expect(await within(card()).findByRole("button", { name: "Use Ember's flame" })).toBeEnabled();
+    expect(picker()).toHaveAccessibleDescription(UPLOADED_AVATAR_EXPLAINED);
+    expect(reads()).toBe(1);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("takes away Use Ember's flame once another tab brings back the flame", async () => {
+    const flameAgain = "/users/ember.abc/avatar?v=20261105130000";
+    serve({ read: () => Response.json({ assistant: { ...SONNET, avatarUrl: flameAgain } }) });
+    const { showPeople } = showLiveCard(PICTURED, listed(UPLOADED));
+    expect(useTheFlame()).toBeEnabled();
+    showPeople(listed(flameAgain));
+
+    await waitFor(() => expect(useTheFlame()).toBeNull());
+    expect(avatar()).toHaveAttribute("src", flameAgain);
+    expect(picker()).toHaveAccessibleDescription(AVATAR_EXPLAINED);
+  });
+
+  it("shows Ember AI off once it's read again after another tab turns it off", async () => {
+    serve({ read: () => Response.json({ assistant: null }) });
+    const { showPeople, onStopped } = showLiveCard(PICTURED, listed(UPLOADED));
+    showPeople(listed("/users/ember.abc/avatar?v=20261105130000"));
+    await waitFor(() => expect(onStopped).toHaveBeenCalledTimes(1));
+  });
+
+  it("doesn't read Ember AI again for a picture it saves itself, which the directory may hear of before its answer", async () => {
+    const answer = held(() => Response.json({ assistant: PICTURED }));
+    serve({ pictured: answer.answered });
+    const { user, showPeople } = showLiveCard(SONNET, listed(FLAME));
+    await user.upload(picker(), moon());
+    await waitFor(() => expect(uploads()).toHaveLength(1));
+    showPeople(listed(UPLOADED));
+
+    await answer.answer();
+    expect(useTheFlame()).toBeEnabled();
+    expect(reads()).toBe(0);
   });
 });
 

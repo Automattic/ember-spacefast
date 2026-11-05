@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { NO_STORAGE } from "../src/files/uploads";
-import { api, apiWith, avatarVersionOf, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, WITH_THE_FLAME, workspaceSql, type Session } from "./support";
+import { api, apiWith, avatarVersionOf, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, stopTheClock, WITH_THE_FLAME, workspaceSql, type Session } from "./support";
 
 // @ember's avatar, which administrators replace on the Ember AI card while it's on, and take away again
 // to bring back Ember's flame.
@@ -175,18 +175,24 @@ describe("@ember's avatar", () => {
     expect(await storedAvatar()).toEqual(unchanged);
   });
 
-  it("has a later address after each change, even one in the same second as the last, as browsers keep the picture they have at one", async () => {
+  it("has a later address after each change, even one in the same second as the last, which nothing after takes back, as browsers keep the picture they have at one", async () => {
     const ada = await setUp();
-    // Turning Ember AI on, uploading a picture and taking it away, all in the same second.
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    // Turning Ember AI on, uploading a picture, turning Ember AI off and on again and taking the picture away, all at once.
+    stopTheClock();
     await turnOn(ada);
     const flame = (await listedEmber(ada)).avatarUrl;
     const pictured = (await uploadMoon(ada)).avatarUrl;
+    await turnOff(ada);
+    await turnOn(ada);
+    const back = (await listedEmber(ada)).avatarUrl;
     const { assistant } = (await (await useTheFlame(ada)).json()) as AssistantChanged;
 
-    const versions = [flame, pictured, assistant.avatarUrl].map(avatarVersionOf);
-    expect(versions).toEqual([...versions].sort((a, b) => a - b));
-    expect(new Set(versions).size).toBe(3);
+    const pictures = [flame, pictured, assistant.avatarUrl].map(avatarVersionOf);
+    expect(pictures).toEqual([...pictures].sort((a, b) => a - b));
+    expect(new Set(pictures).size).toBe(3);
+    // The same picture, at the address it had or a later one.
+    expect(avatarVersionOf(back)).toBeGreaterThanOrEqual(avatarVersionOf(pictured));
+    expect(avatarVersionOf(back)).toBeLessThan(avatarVersionOf(assistant.avatarUrl));
     expect((await listedEmber(ada)).avatarUrl).toBe(assistant.avatarUrl);
     expect((await served(assistant.avatarUrl, ada)).headers.get("Content-Type")).toBe("image/svg+xml");
   });

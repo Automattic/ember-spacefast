@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useEffectEvent, useState } from "react";
 import { ASSISTANT_ID, AVATAR_TOO_LARGE, MAX_AVATAR_SIZE, type WorkspaceSettings } from "@ember/protocol";
 import {
   cannotSearchWith,
@@ -21,6 +21,7 @@ import {
   changeAssistantAvatar,
   changeAssistantSettings,
   changeWebSearch,
+  fetchWorkspaceSettings,
   forgetAssistant,
   isSignedOut,
   removeAssistantAvatar,
@@ -89,7 +90,7 @@ interface Props {
   assistant: WorkspaceSettings["assistant"];
   /** Opens Set up Ember AI. */
   onSetUp: () => void;
-  /** Shows that Ember AI is off, once turning it off has. */
+  /** Shows that Ember AI is off, once turning it off has, or once it's found to be. */
   onStopped: () => void;
   /** Shows Ember AI as a change to its models, dials or Search the web leaves it, or as it was again when the change fails. */
   onChanged: (assistant: Assistant) => void;
@@ -124,6 +125,28 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
 
   // The picked picture's address is let go of once the saved one takes its place.
   useEffect(() => () => void (pickedAvatar && URL.revokeObjectURL(pickedAvatar)), [pickedAvatar]);
+
+  // Another tab may change @ember's avatar, which the people directory hears of: Ember AI is read again
+  // then, for whether an administrator uploaded the one it has now.
+  const listedAvatarUrl = people.get(ASSISTANT_ID)?.avatarUrl;
+  const changedElsewhere =
+    assistant !== null && !savingAvatar && listedAvatarUrl !== undefined && avatarVersionOf(listedAvatarUrl) > avatarVersionOf(assistant.avatarUrl);
+  const showRead = useEffectEvent(({ assistant: read }: WorkspaceSettings) => (read ? onChanged(read) : onStopped()));
+  const readFailed = useEffectEvent((error: unknown) => onFailed(error));
+  useEffect(() => {
+    if (!changedElsewhere) return;
+    let stopped = false;
+    fetchWorkspaceSettings().then(
+      (settings) => {
+        if (!stopped) showRead(settings);
+      },
+      (error: unknown) => {
+        // A read that's been replaced, or that outlived the card, only reports a session that's ended, which goes to sign in.
+        if (!stopped || isSignedOut(error)) readFailed(error);
+      },
+    );
+    return () => void (stopped = true);
+  }, [changedElsewhere, listedAvatarUrl]);
 
   /** Shows Ember AI as `changed` at once, and saves it with `save`, showing it as it was, `shown`, again if it isn't saved. */
   const saveShown = (shown: Assistant, changed: Assistant, save: () => Promise<Assistant>) => {
@@ -264,7 +287,7 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
             </button>
           </div>
           <Avatar
-            src={pickedAvatar ?? latestAvatarUrl(assistant.avatarUrl, people.get(ASSISTANT_ID)?.avatarUrl)}
+            src={pickedAvatar ?? latestAvatarUrl(assistant.avatarUrl, listedAvatarUrl)}
             uploaded={assistant.avatar}
             disabled={busy}
             onChoose={saveAvatar}

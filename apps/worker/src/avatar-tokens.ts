@@ -66,12 +66,15 @@ export async function directoryOf<Entry extends DirectoryEntry>(entries: Entry[]
 }
 
 /**
- * When the picture of someone who last changed at `updatedAt` changes at `now`: then, or the second after
- * `updatedAt`'s, where that's later. Their avatar's address counts whole seconds, and browsers keep the
- * picture they have at an address, so a picture changed in the same second as the last change needs a
- * later one.
+ * The time to change the picture of someone who last changed at `updatedAt`: now, once it's a later second
+ * than that. Their avatar's address counts whole seconds, and browsers keep the picture they have at an
+ * address, so a change in the same second as the last waits for the next. Waiting, rather than dating it a
+ * second ahead, keeps every change in the past, so a change that follows, dated now, can't take the
+ * address back to one an earlier picture had.
  */
-export function avatarChangedAt(updatedAt: string, now: number): string {
+export async function avatarChangeTime(updatedAt: string): Promise<number> {
   const nextSecond = (Math.floor(Date.parse(updatedAt) / 1000) + 1) * 1000;
-  return new Date(Math.max(now, nextSecond)).toISOString();
+  // Changes are dated by this clock, so that's a second away at most.
+  if (Date.now() < nextSecond) await scheduler.wait(Math.min(nextSecond - Date.now(), 1000));
+  return Math.max(Date.now(), nextSecond);
 }
