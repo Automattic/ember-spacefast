@@ -123,10 +123,13 @@ function deploy(
     RESEND_API_KEY: _resendKey,
     CLOUDFLARE_ACCOUNT_ID: _accountId,
     EMBER_ADOPT_D1_DATABASE: _adopted,
+    GIT_DIR: _gitDir,
     ...shell
   } = process.env;
+  // The script reads git's origin, which for this repository's own script would be the origin of whichever clone runs the suite, so git there finds no repository.
+  const git = script === SCRIPT ? { GIT_DIR: path.join(dir, "no-repository") } : {};
   const run = spawnSync(process.execPath, [script, ...args], {
-    env: { ...shell, PATH: `${dir}:${process.env.PATH}`, LISTING, OUT: dir, DEPLOY_STATUS: String(deployStatus), TARGETS: JSON.stringify([WORKER_URL]), ...env },
+    env: { ...shell, ...git, PATH: `${dir}:${process.env.PATH}`, LISTING, OUT: dir, DEPLOY_STATUS: String(deployStatus), TARGETS: JSON.stringify([WORKER_URL]), ...env },
     encoding: "utf8",
   });
   const secrets = output("secrets.json");
@@ -645,11 +648,30 @@ describe("Updates for a copy made with Deploy to Cloudflare", () => {
     ["git names no origin", undefined],
     ["the copy is on GitLab", "https://gitlab.com/someone/my-ember.git"],
     ["the checkout is of Ember's own repository", "https://github.com/NYLLON-SOFTWARE/ember-cloudflare.git"],
-  ])("says where Ember's workflow is when %s, and how to update elsewhere", (_, origin) => {
+  ])("says where Ember's workflow is when %s, and how to update elsewhere, telling the Worker of no copy", (_, origin) => {
     const { logs } = deploy(EVERY_SECRET, [], { script: checkout({ origin }) });
     expect(logs).toContain(`On GitHub, add ${WORKFLOW} to it as Ember has it, https://github.com/NYLLON-SOFTWARE/ember-cloudflare/blob/main/${WORKFLOW}`);
     expect(logs).toContain("elsewhere, update it with apps/worker/scripts/update-ember.ts");
     expect(logs).not.toContain("/new/");
+    expect(output("deploy-args")).toBe("");
+  });
+
+  it.each([
+    [false, {}, "--var GITHUB_REPOSITORY:someone/my-ember --var GIT_BRANCH:main --var UPDATE_WORKFLOW:false"],
+    [true, { WORKERS_CI_BRANCH: "release/v1#stable" }, "--var GITHUB_REPOSITORY:someone/my-ember --var GIT_BRANCH:release/v1#stable --var UPDATE_WORKFLOW:true"],
+  ])(
+    "tells the Worker the copy's repository, the branch that deploys and whether it has the workflow (%s), without the clone's credentials, for the release card",
+    (workflow, branch, vars) => {
+      const script = checkout({ origin: "https://x-access-token:ghs_clone-only@github.com/someone/my-ember.git", workflow });
+      expect(deploy(EVERY_SECRET, [], { script, env: { CI: "true", WORKERS_CI: "1", ...branch } }).status).toBe(0);
+      expect(output("deploy-args")).toBe(vars);
+    },
+  );
+
+  it("keeps the vars a deploy's options give over the copy's own", () => {
+    const script = checkout({ origin: "git@github.com:someone/my-ember.git", workflow: true });
+    deploy(EVERY_SECRET, ["--var", "GIT_BRANCH:production", "--var=UPDATE_WORKFLOW:false"], { script });
+    expect(output("deploy-args")).toBe("--var GIT_BRANCH:production --var=UPDATE_WORKFLOW:false --var GITHUB_REPOSITORY:someone/my-ember");
   });
 
   it("says nothing of the workflow to a copy that has it, nor when wrangler fails to deploy", () => {

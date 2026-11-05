@@ -453,7 +453,7 @@ async function release(request: Request, env: Env, afresh: boolean): Promise<Res
   const administrator = credentials && (await workspace(env).canAdminister(credentials));
   if (administrator === null) return problem(401, "Not signed in");
   if (!administrator) return problem(403, "Only administrators can change the workspace");
-  return json((await releaseCheck(afresh)) satisfies ReleaseCheck, { headers: { "Cache-Control": "no-store" } });
+  return json((await releaseCheck(env, afresh)) satisfies ReleaseCheck, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** The workspace's custom CSS, for the Custom CSS page, which only administrators can open. */
