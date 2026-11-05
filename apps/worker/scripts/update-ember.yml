@@ -30,12 +30,12 @@ jobs:
     timeout-minutes: 10
     steps:
       # Pinned to commits, not tags, because this job can push to the repository: a moved tag can't
-      # change what runs. These are the commits v4 pointed at.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # change what runs. These are the commits the tags beside them pointed at.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # All of it: the copy's first commit and its updates' say which of Ember's it has.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Update
