@@ -125,7 +125,8 @@ is for, since `wrangler.jsonc` gives Previews none of Ember's bindings and no ad
 Ember tells its administrators too: while a newer release is out, Admin on the rail has a dot, and
 General, in Community settings, names the release, with its notes and how to update. To know, the
 Worker asks GitHub for the page of Ember's latest release once an administrator has Ember open, telling
-it nothing but the version it is, and keeps the answer for six hours.
+it nothing but the version it is, and keeps the answer for six hours, but asks again each time an
+administrator opens Admin, at most once a minute.
 
 A new GitHub repository doesn't let workflows open pull requests, so until yours does, the workflow
 opens an issue instead, with a link that opens the pull request for you to merge. To have it open them
