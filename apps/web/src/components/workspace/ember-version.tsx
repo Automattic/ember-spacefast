@@ -16,11 +16,12 @@ const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 /** How a copy made with Deploy to Cloudflare updates, which the card says while a newer release is out. */
 export const HOW_COPIES_UPDATE =
   "A copy made with Deploy to Cloudflare gets a pull request for each release from its Update Ember workflow, every Monday or when it's run from the repository's Actions tab, once the workflow is added to the copy, as How to update says. Merging it updates Ember.";
+/** Where the workflow's update goes instead of a pull request, as update-ember.ts files it. */
+const UNLESS_IT_CANT =
+  "Where GitHub doesn't yet let it open pull requests, as in a new repository, it opens an issue instead, with a link that opens the pull request for you to merge.";
 /** And how this copy updates, where the Worker knows it has the workflow, or that it hasn't. */
-export const HOW_THIS_COPY_UPDATES =
-  "This copy gets a pull request for each release from its Update Ember workflow every Monday. To update now, open the workflow on GitHub, choose Run workflow, and merge the pull request it opens.";
-export const HOW_TO_ADD_THE_WORKFLOW =
-  "This copy has no Update Ember workflow yet, which brings each release as a pull request. Add it on GitHub, where it's filled in for you to commit, then run it from the repository's Actions tab and merge the pull request it opens.";
+export const HOW_THIS_COPY_UPDATES = `This copy gets a pull request for each release from its Update Ember workflow every Monday. To update now, open the workflow on GitHub, choose Run workflow, and merge the pull request it opens. ${UNLESS_IT_CANT}`;
+export const HOW_TO_ADD_THE_WORKFLOW = `This copy has no Update Ember workflow yet, which brings each release as a pull request. Add it on GitHub, where it's filled in for you to commit, then run it from the repository's Actions tab and merge the pull request it opens. ${UNLESS_IT_CANT}`;
 
 /** Where the workflow is in a copy. */
 const WORKFLOW_FILE = ".github/workflows/update-ember.yml";
