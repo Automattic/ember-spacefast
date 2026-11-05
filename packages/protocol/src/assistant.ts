@@ -182,7 +182,7 @@ export const PAGES_READ_PER_ANSWER = 3;
  * from, that one among them, in the order they were added, the most each dial goes to for anyone's
  * questions, and what @ember does on the web: what it may while Search the web is on, nothing while it's
  * off, or null when the model that answers everyone can't, as only Anthropic's and OpenAI's models have
- * tools for it that AI Gateway passes on.
+ * tools for it that AI Gateway passes on. Then @ember's avatar.
  */
 export interface AssistantSettings {
   accountId: string;
@@ -190,9 +190,17 @@ export interface AssistantSettings {
   models: AssistantModel[];
   most: AnswerLevels;
   webTools: WebTool[] | null;
+  /** @ember's avatar, as the people directory gives it (`DirectoryUser.avatarUrl`): the picture an administrator uploaded, or Ember's flame. */
+  avatarUrl: string;
+  /** Whether an administrator uploaded @ember's avatar, which Use Ember's flame takes away, though one that can't be resized shows the flame. */
+  avatar: boolean;
 }
 
-/** What `PATCH /api/account/assistant` answers once it has saved a change, and `DELETE /api/account/assistant/models` a model's removal: Ember AI as it is then. */
+/**
+ * What `PATCH /api/account/assistant` answers once it has saved a change, `DELETE /api/account/assistant/models`
+ * a model's removal, and `PUT` and `DELETE /api/account/assistant/avatar` a change to @ember's avatar: Ember AI
+ * as it is then.
+ */
 export interface AssistantChanged {
   assistant: AssistantSettings;
 }

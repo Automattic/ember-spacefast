@@ -365,6 +365,11 @@ export interface AvatarOwner {
   avatar: StoredPicture | null;
 }
 
+/** Someone as the people directory lists them, with the avatar they've uploaded, or a bot was given. */
+export interface PicturedEntry extends DirectoryEntry {
+  avatar: StoredPicture | null;
+}
+
 /** What changing a room changed, and who's in it then. */
 export interface SavedRoomChange {
   /** Whether its name, kind or icon changed. */
@@ -1671,6 +1676,9 @@ const DEACTIVATE = `UPDATE users SET status = ${DEACTIVATED}, email_address = re
 
 /** Someone as the directory lists them, whatever their status. */
 const PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ?`;
+
+/** The same, with the avatar they've uploaded, or a bot was given. */
+const PERSON_WITH_AVATAR = `SELECT id, name, bio, role, status, updated_at, avatar_key, avatar_variant FROM users WHERE id = ?`;
 
 /**
  * The IP addresses recorded on someone's sessions, each once, without none or blanks.
@@ -3076,6 +3084,12 @@ export class WorkspaceStore {
   async avatarOwner(userId: UserId): Promise<AvatarOwner | null> {
     const [row] = await this.db.all<{ name: string; role: number } & AvatarColumns>(`SELECT name, role, avatar_key, avatar_variant FROM users WHERE id = ?`, userId);
     return row ? { name: row.name, bot: ROLES[row.role] === "bot", avatar: avatarOf(row) } : null;
+  }
+
+  /** Someone with the avatar they've uploaded, or a bot was given, whatever their status, or null if nobody has id `userId`. */
+  async personWithAvatar(userId: UserId): Promise<PicturedEntry | null> {
+    const [row] = await this.db.all<DirectoryRow & AvatarColumns>(PERSON_WITH_AVATAR, userId);
+    return row ? { ...directoryEntry(row), avatar: avatarOf(row) } : null;
   }
 
   /** Someone with their profile and the avatar they've uploaded, whatever their status, or null if nobody has id `userId`. */

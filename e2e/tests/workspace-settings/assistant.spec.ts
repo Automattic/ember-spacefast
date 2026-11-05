@@ -1,13 +1,13 @@
 import { DEFAULT_LEVELS, TOP_LEVELS } from "@ember/protocol/assistant";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
-import { administratorSession, cookieHeader, editorField, expect, SAME_ORIGIN, signInAsAdministrator, test, useOwnAddress } from "../../fixtures";
+import { administratorSession, cookieHeader, drawnPicture, editorField, expect, SAME_ORIGIN, shownPicture, signInAsAdministrator, test, useOwnAddress } from "../../fixtures";
 import { AI_GATEWAY_ACCOUNT } from "../../projects/workspace-settings";
 import { FOUND, HELLO, SOURCE, startFakeGateway, type FakeGateway } from "./fake-gateway";
 
 // The AI assistant tab's Ember AI card, Set up Ember AI and Add a model, and @ember answering, on the
 // second test server, which lists Cloudflare's model catalog and asks models through the AI Gateway this
-// spec fakes. Each test leaves the workspace as a new one is: Ember AI off, and its dials where they
-// start, with no model picked.
+// spec fakes. Each test leaves the workspace as a new one is: Ember AI off, its dials where they start,
+// with no model picked, and @ember's avatar Ember's flame.
 
 let gateway: FakeGateway;
 test.beforeAll(async () => void (gateway = await startFakeGateway()));
@@ -20,6 +20,9 @@ test.afterEach(async ({ request }) => {
   expect([200, 409], await unlimited.text()).toContain(unlimited.status());
   const unpicked = await request.patch("/api/users/me/assistant", { data: { ...DEFAULT_LEVELS, model: null }, headers });
   expect(unpicked.status(), await unpicked.text()).toBe(200);
+  // @ember's avatar stays while Ember AI is off, and can be taken away only while it's on.
+  const flame = await request.delete("/api/account/assistant/avatar", { headers });
+  expect([200, 409], await flame.text()).toContain(flame.status());
   const forgotten = await request.delete("/api/account/assistant", { headers });
   expect(forgotten.status(), await forgotten.text()).toBe(200);
 });
@@ -198,6 +201,43 @@ test.describe("Ember AI", () => {
 
     await askEmber(page, "Which model are you?");
     expect(gateway.asked.at(-1)).toMatchObject({ path: `/accounts/${AI_GATEWAY_ACCOUNT.accountId}/ai/v1/messages`, body: { model: "anthropic/claude-sonnet-5.5" } });
+  });
+
+  test("the administrator uploads a picture as @ember's avatar, which an open room shows at once, and brings back Ember's flame", async ({ page, request }) => {
+    const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "@cf/zai-org/glm-4.7-flash" }, headers: await asAdministrator(request) });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const card = await openAssistant(page);
+    const avatar = card.getByRole("img", { name: "@ember's avatar" });
+    const useTheFlame = card.getByRole("button", { name: "Use Ember's flame" });
+    await expect(card).toContainText("Choose a picture of your own in place of Ember's flame.");
+    await expect(useTheFlame).toHaveCount(0);
+    expect(await shownPicture(avatar)).toMatchObject({ type: expect.stringMatching(/^image\/svg\+xml/) });
+    const flame = (await avatar.getAttribute("src"))!;
+    // @ember's answer in general, open in another tab.
+    const room = await page.context().newPage();
+    await askEmber(room, "Who's this?");
+    const answersAvatar = room.getByRole("article").last().locator('img[src^="/users/ember."]');
+    await expect(answersAvatar).toHaveAttribute("src", flame);
+
+    await card.getByLabel("Upload @ember's avatar").setInputFiles(await drawnPicture(page, "robot.png", 640, 640));
+    await expect(page.getByRole("alert")).toHaveText("Changes saved.");
+    await expect(useTheFlame).toBeVisible();
+    await expect(avatar).not.toHaveAttribute("src", flame);
+    const uploaded = (await avatar.getAttribute("src"))!;
+    // The variant the administrator's browser made of it, 512×512.
+    expect(await shownPicture(avatar)).toEqual({ type: "image/webp", width: 512, height: 512 });
+    // The room shows it without loading again.
+    await expect(answersAvatar).toHaveAttribute("src", uploaded);
+    expect(await shownPicture(answersAvatar)).toEqual({ type: "image/webp", width: 512, height: 512 });
+
+    // Straight away, which can be the same second, and the address is new all the same.
+    await useTheFlame.click();
+    await expect(useTheFlame).toHaveCount(0);
+    await expect(avatar).not.toHaveAttribute("src", uploaded);
+    expect(await shownPicture(avatar)).toMatchObject({ type: expect.stringMatching(/^image\/svg\+xml/) });
+    await expect(answersAvatar).toHaveAttribute("src", (await avatar.getAttribute("src"))!);
+    expect(await shownPicture(answersAvatar)).toMatchObject({ type: expect.stringMatching(/^image\/svg\+xml/) });
+    await room.close();
   });
 
   test("the administrator turns Ember AI off, once they're sure", async ({ page, request }) => {

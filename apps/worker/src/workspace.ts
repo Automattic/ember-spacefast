@@ -82,7 +82,7 @@ import {
 } from "@ember/protocol/assistant";
 import { WEB_TOOLS_IN, type Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
-import { directoryOf, versionOf } from "./avatar-tokens";
+import { avatarChangedAt, directoryOf, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";
 import { botKeyOf, isBotToken, newBotToken } from "./bots/keys";
 import { openDb, type Db } from "./db";
@@ -271,8 +271,8 @@ const accountOf = ({
   navigationIcons,
 });
 
-/** Ember AI as the AI assistant tab shows `account`'s to administrators, or null while it's off. */
-const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount, "assistant" | "assistantMost">): AssistantSettings | null =>
+/** Ember AI as the AI assistant tab shows `account`'s to administrators, but for @ember's avatar, or null while it's off. */
+const assistantSettingsOf = ({ assistant, assistantMost }: Pick<JoinableAccount, "assistant" | "assistantMost">): Omit<AssistantSettings, "avatarUrl" | "avatar"> | null =>
   assistant && {
     accountId: assistant.accountId,
     model: assistant.model,
@@ -830,7 +830,7 @@ export class Workspace extends DurableObject<Env> {
       invitations,
       emailDomains: canAdminister ? account.emailDomains : [],
       addresses: canAdminister ? { deployed: account.deployedAddress, others: account.otherAddresses } : { deployed: null, others: [] },
-      assistant: canAdminister ? assistantSettingsOf(account) : null,
+      assistant: canAdminister ? await this.assistantSettings(account) : null,
     };
   }
 
@@ -1036,7 +1036,7 @@ export class Workspace extends DurableObject<Env> {
       };
       const changed = await this.saveAccount({ ...account, assistant }, (now) => (assistant ? this.store.turnOnAssistant(assistant, now) : this.store.turnOffAssistant(now)));
       await this.publishPerson(ASSISTANT_ID);
-      return { assistant: assistantSettingsOf(changed) };
+      return { assistant: await this.assistantSettings(changed) };
     });
   }
 
@@ -1124,7 +1124,7 @@ export class Workspace extends DurableObject<Env> {
       if (!assistant) return "off";
       if (modelId === assistant.model) return "everyone's";
       const models = assistant.models.filter(({ id }) => id !== modelId);
-      if (models.length === assistant.models.length) return { assistant: assistantSettingsOf(account)! };
+      if (models.length === assistant.models.length) return { assistant: (await this.assistantSettings(account))! };
       return this.storeAssistant(account, { ...assistant, models });
     });
   }
@@ -1132,7 +1132,45 @@ export class Workspace extends DurableObject<Env> {
   /** Stores Ember AI as `assistant` has it, while it's on, and the most of each dial as `most`, answering Ember AI as the AI assistant tab then shows it. */
   private async storeAssistant(account: JoinableAccount, assistant: SavedAssistant, most = account.assistantMost): Promise<{ assistant: AssistantSettings }> {
     const changed = await this.storeAccount({ ...account, assistant, assistantMost: most }, () => this.store.changeAssistant(assistant, most));
-    return { assistant: assistantSettingsOf(changed)! };
+    return { assistant: (await this.assistantSettings(changed))! };
+  }
+
+  /**
+   * Gives @ember `avatar`, which R2 has stored under a key `reservePicture` reserved, in place of Ember's
+   * flame or the one it had, or takes the one it was given away with null, bringing back the flame, as the
+   * administrator `credentials` signs in, answering Ember AI as the AI assistant tab then shows it: "off"
+   * while it's off, "forbidden" for anyone else, and null without a valid session. R2 deletes the avatar
+   * it had, and everyone's workspace sockets hear of the change, which gives @ember's avatar a new address.
+   * The avatar stays while Ember AI is off, as @ember's messages do.
+   */
+  async changeAssistantAvatar(credentials: Credentials, avatar: StoredPicture | null): Promise<{ assistant: AssistantSettings } | "off" | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      if (!account.assistant) return "off";
+      // Turning Ember AI on adds @ember, so it's there.
+      const ember = (await this.store.personWithAvatar(ASSISTANT_ID))!;
+      const previous = ember.avatar?.key ?? null;
+      // Taking away an avatar that isn't there changes nothing.
+      if (avatar !== null || previous !== null) {
+        const now = Date.now();
+        await this.store.changeAvatar(ASSISTANT_ID, avatar, previous, avatarChangedAt(ember.updatedAt, now), now);
+        if (previous) await this.wakeAt(now);
+        await this.publishPerson(ASSISTANT_ID);
+      }
+      return { assistant: (await this.assistantSettings(account))! };
+    });
+  }
+
+  /**
+   * Ember AI as the AI assistant tab shows `account`'s to administrators, with @ember's avatar, or null
+   * while it's off. Turning it on adds @ember, in the batch that saves it, so it's there while it's on.
+   */
+  private async assistantSettings(account: Pick<JoinableAccount, "assistant" | "assistantMost">): Promise<AssistantSettings | null> {
+    const settings = assistantSettingsOf(account);
+    if (!settings) return null;
+    const ember = await this.store.personWithAvatar(ASSISTANT_ID);
+    if (!ember) throw new Error("Ember AI is on without @ember");
+    const { avatarUrl } = await this.directoryUser(ember);
+    return { ...settings, avatarUrl, avatar: ember.avatar !== null };
   }
 
   /**
@@ -2411,7 +2449,8 @@ export class Workspace extends DurableObject<Env> {
       if (changes.name !== undefined && takesReservedName(bot.name, changes.name)) return "name reserved";
       const now = Date.now();
       const previous = avatar && ((await this.store.avatarOwner(botId))?.avatar?.key ?? null);
-      await this.store.changeBot(botId, changes, new Date(now).toISOString(), avatar && { avatar, previous, dueAt: now });
+      const changedAt = avatar ? avatarChangedAt(bot.updatedAt, now) : new Date(now).toISOString();
+      await this.store.changeBot(botId, changes, changedAt, avatar && { avatar, previous, dueAt: now });
       if (previous) await this.wakeAt(now);
       const changed = (await this.store.activeBot(botId))!;
       if (changed.name !== bot.name || avatar) {
@@ -2705,7 +2744,7 @@ export class Workspace extends DurableObject<Env> {
       // Removing an avatar that isn't there changes nothing.
       if (avatar === null && person.avatar === null) return this.yourProfile(person, session);
       const now = Date.now();
-      const updatedAt = new Date(now).toISOString();
+      const updatedAt = avatarChangedAt(person.updatedAt, now);
       const previous = person.avatar?.key ?? null;
       await this.store.changeAvatar(user.id, avatar, previous, updatedAt, now);
       if (previous) await this.wakeAt(now);

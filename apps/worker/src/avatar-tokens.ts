@@ -55,3 +55,14 @@ export async function directoryOf<Entry extends DirectoryEntry>(entries: Entry[]
     }),
   );
 }
+
+/**
+ * When the picture of someone who last changed at `updatedAt` changes at `now`: then, or the second after
+ * `updatedAt`'s, where that's later. Their avatar's address counts whole seconds, and browsers keep the
+ * picture they have at an address, so a picture changed in the same second as the last change needs a
+ * later one.
+ */
+export function avatarChangedAt(updatedAt: string, now: number): string {
+  const nextSecond = (Math.floor(Date.parse(updatedAt) / 1000) + 1) * 1000;
+  return new Date(Math.max(now, nextSecond)).toISOString();
+}

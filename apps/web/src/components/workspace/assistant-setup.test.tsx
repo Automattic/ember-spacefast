@@ -28,7 +28,15 @@ const GREETING = "Hello, team! I'm Ember, here whenever you mention @ember.";
 const savedOf = ({ accountId, model, modelName: name }: Pick<Setup, "accountId" | "model" | "modelName">): AssistantSettings => {
   const format = ASSISTANT_MODELS.find(({ id }) => id === model)?.format ?? "chat";
   // Searching the web waits for Search the web to be turned on, for a model that can.
-  return { accountId, model, models: [{ id: model, name: name ?? modelName(model), format }], most: TOP_LEVELS, webTools: format === "chat" ? null : [] };
+  return {
+    accountId,
+    model,
+    models: [{ id: model, name: name ?? modelName(model), format }],
+    most: TOP_LEVELS,
+    webTools: format === "chat" ? null : [],
+    avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
+    avatar: false,
+  };
 };
 
 /** What Cloudflare's catalog lists when it can't be read, as the server answers: the models Ember knows. */

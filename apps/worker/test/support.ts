@@ -55,6 +55,15 @@ export const api = (path: string, init: RequestInit = {}) => exports.default.fet
 export const apiWith = (changes: Partial<Env>, path: string, init: RequestInit<IncomingRequestCfProperties> = {}) =>
   worker.fetch(new Request(new URL(path, origin), fromOwnPages(path, init)), { ...(env as unknown as Env), ...changes });
 
+/**
+ * What Ember AI's settings say of @ember's avatar while it's Ember's flame, as it is until an
+ * administrator uploads one: its address, at whichever version.
+ */
+export const WITH_THE_FLAME = { avatarUrl: expect.stringMatching(/^\/users\/ember\.[\w-]+\/avatar\?v=\d{14}(?:&|$)/) as string, avatar: false };
+
+/** When the owner of the avatar at `avatarUrl` last changed, as its address says (`?v=`), so a later address has a larger one. */
+export const avatarVersionOf = (avatarUrl: string) => Number(new URL(avatarUrl, origin).searchParams.get("v"));
+
 /** One of the recorded images (fixtures/README.md), by its name in fixtures/storage/. */
 export function recordedImage(name: string): Uint8Array {
   const { TEST_RECORDED_IMAGES } = env as unknown as { TEST_RECORDED_IMAGES: Record<string, string> };

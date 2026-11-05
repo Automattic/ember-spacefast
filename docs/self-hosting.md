@@ -491,6 +491,12 @@ test question before keeping the setup. @ember then joins every room open to eve
 card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
 who had it keeps it.
 
+@ember's avatar is Ember's flame until an administrator picks a picture in the Avatar section of the
+Ember AI card, which R2 keeps as it does people's avatars, and Use Ember's flame brings the flame back.
+The picture stays while Ember AI is off, as @ember's messages do. Each change gives the avatar a new
+address, even two changes in the same second, and every open page hears of it at once, so nobody's
+browser goes on showing the old picture it keeps for half an hour.
+
 The Models list on the Ember AI card has the models people can pick, at most 20, starting with the one
 Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another, Add
 a model offers the catalog's text models nobody can pick yet, asking the one chosen a test question

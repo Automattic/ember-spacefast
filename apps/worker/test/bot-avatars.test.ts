@@ -1,9 +1,9 @@
 import type { BotAnswer, Bots, BotSettings, NewWorkspace, UserId } from "@ember/protocol";
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_BOT_AVATAR } from "../src/default-bot-avatar";
 import type { Env } from "../src/env";
-import { api, apiWith, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, workspaceSql, type Session } from "./support";
+import { api, apiWith, avatarVersionOf, cookieOf, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, workspaceSql, type Session } from "./support";
 
 // Bots' avatars.
 
@@ -12,6 +12,7 @@ const files = (env as unknown as Env).FILES!;
 const LONG_AGO = "2026-01-01T00:00:00.000Z";
 
 beforeEach(freshDeploy);
+afterEach(() => vi.useRealTimers());
 
 const ada = { name: "Ada Lovelace", emailAddress: "ada@example.com", password: "analytical engine" };
 const grace = { name: "Grace Hopper", emailAddress: "grace@example.com", password: "compiler design" };
@@ -115,6 +116,19 @@ describe("Add and edit a bot", () => {
     const second = (await avatarKeyOf(bot.id))!;
     expect(second).not.toBe(first);
     await vi.waitFor(async () => expect(await storedAvatars()).toEqual([second, `${second}/512`]), { timeout: 5_000 });
+  });
+
+  it("gives a bot's avatar a later address with each change, even one in the same second as the last, as browsers keep the picture they have at one", async () => {
+    // Adding the bot and changing its avatar twice, all in the same second.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    const administrator = await setUp();
+    const added = await botOf(await addBot(administrator, botForm({ name: "Build Bot" }, null)), 201);
+    const changed = await botOf(await changeBot(administrator, added.id, botForm({})));
+    const again = await botOf(await changeBot(administrator, added.id, botForm({})));
+
+    const versions = [added, changed, again].map(({ avatarUrl }) => avatarVersionOf(avatarUrl));
+    expect(versions).toEqual([...versions].sort((a, b) => a - b));
+    expect(new Set(versions).size).toBe(3);
   });
 
   it("keeps a bot's avatar through a change that brings none", async () => {
