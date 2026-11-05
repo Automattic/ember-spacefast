@@ -11,7 +11,7 @@ import {
   type YourAssistantChanged,
 } from "@ember/protocol/assistant";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, cookieOf, freshDeploy, shown, workspaceSql, type Session } from "./support";
+import { api, cookieOf, freshDeploy, shown, WITH_THE_FLAME, workspaceSql, type Session } from "./support";
 
 // How much @ember thinks and how long it answers: the most of each, which administrators set on the
 // Ember AI card for anyone's questions, and each person's own levels, which they pick on their profile.
@@ -84,7 +84,7 @@ describe("The most @ember thinks and writes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const most: AnswerLevels = { thinking: "medium", length: "long" };
-    expect(await response.json()).toEqual({ assistant: { accountId: SETUP.accountId, model: SETUP.model, models: MODELS, most, webTools: null } } satisfies AssistantChanged);
+    expect(await response.json()).toEqual({ assistant: { accountId: SETUP.accountId, model: SETUP.model, models: MODELS, most, webTools: null, ...WITH_THE_FLAME } } satisfies AssistantChanged);
     expect(await mostShown(ada)).toEqual(most);
     expect(await (await limit(ada, { length: "short" })).json()).toMatchObject({ assistant: { most: { thinking: "medium", length: "short" } } });
     const [{ settings }] = (await workspaceSql("SELECT settings FROM accounts")) as [{ settings: string }];

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_UNANSWERED, NOTHING_ANSWERED } from "../src/assistant/gateway";
 import { API_TOKEN_CHANGED, API_TOKEN_NEEDED } from "../src/assistant/settings";
 import type { Env } from "../src/env";
-import { api, apiWith, connect, cookieOf, createRoom, freshDeploy, openWorkspaceSocket, post, shown, startDirect, workspaceSql, type Session } from "./support";
+import { api, apiWith, connect, cookieOf, createRoom, freshDeploy, openWorkspaceSocket, post, shown, startDirect, WITH_THE_FLAME, workspaceSql, type Session } from "./support";
 
 // Ember AI's setup on the AI assistant tab, the @ember account it adds, and its reserved name.
 
@@ -133,7 +133,7 @@ describe("Ember AI", () => {
       const response = await setUpAssistant(administrator, { ...SETUP, accountId: ` ${ACCOUNT_ID.toUpperCase()} `, apiToken: ` ${API_TOKEN}\n` });
       expect(response.status, await response.clone().text()).toBe(200);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [] }, greeting: HELLO } satisfies AssistantSaved);
+      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
 
       // Claude takes Anthropic's Messages, with the instructions as its system prompt.
       expect(requests).toEqual([{ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, gateway: "default", body: expect.any(Object) as unknown }]);
@@ -156,7 +156,7 @@ describe("Ember AI", () => {
         web_tools_asked_at: expect.any(String) as unknown,
       });
       expect(JSON.stringify(await workspaceSql("SELECT * FROM accounts"))).not.toContain(API_TOKEN);
-      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [] });
+      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], ...WITH_THE_FLAME });
       expect(await assistantSettings(member)).toBeNull();
     });
 
@@ -240,6 +240,7 @@ describe("Ember AI", () => {
         models: [{ id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses" }],
         most: TOP_LEVELS,
         webTools: [],
+        ...WITH_THE_FLAME,
       });
       expect(requests.map(({ url, authorization }) => [url, authorization])).toEqual([
         [`${CLOUDFLARE_API}/messages`, `Bearer ${API_TOKEN}`],

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { WorkspaceSettings } from "@ember/protocol";
+import { useContext, useEffect, useEffectEvent, useState } from "react";
+import { ASSISTANT_ID, AVATAR_TOO_LARGE, MAX_AVATAR_SIZE, type WorkspaceSettings } from "@ember/protocol";
 import {
   cannotSearchWith,
   MAX_ASSISTANT_MODELS,
@@ -12,14 +12,30 @@ import {
   type AssistantSettings as Assistant,
   type WebTool,
 } from "@ember/protocol/assistant";
+import { useFlash } from "@/components/flash";
 import { Switch } from "@/components/ui/switch";
+import { PeopleContext } from "@/hooks/use-directory";
 import { useMounted } from "@/hooks/use-mounted";
-import { ApiError, changeAssistantSettings, changeWebSearch, forgetAssistant, isSignedOut, removeAssistantModel } from "@/lib/api";
+import {
+  ApiError,
+  changeAssistantAvatar,
+  changeAssistantSettings,
+  changeWebSearch,
+  fetchWorkspaceSettings,
+  forgetAssistant,
+  isSignedOut,
+  removeAssistantAvatar,
+  removeAssistantModel,
+} from "@/lib/api";
+import { avatarVariantOf } from "@/lib/previews";
 import { cn } from "@/lib/utils";
 import { AddAssistantModel } from "./add-assistant-model";
 import { searchTurnedOff } from "./assistant-setup";
 import { BUTTON } from "./email-settings";
 import { LevelDials } from "./level-dials";
+import { PictureField } from "./picture-picker";
+import { CHANGES_SAVED } from "./settings-page";
+import { avatarVersionOf } from "./user-avatar";
 
 // The Ember AI card on the AI assistant tab, for administrators: whether @ember, an AI assistant in every
 // room open to everyone, runs on a model through Cloudflare AI Gateway, and which. Its switch says
@@ -27,12 +43,13 @@ import { LevelDials } from "./level-dials";
 // switches open setup that's missing, as the project's owner asked (2026-10-26), and turning it off takes
 // @ember out of every room and forgets the API token and the models people could pick. Change opens the
 // setup with the account and model as they are. While it's on, the card says what @ember sends the model,
-// which its provider reads, lists the models people can pick on their profile, the one that answers
-// everyone else chosen, with Add a model and each other's Remove, has Search the web's switch, which
-// turns on once the model that answers everyone has searched the web for a test question, saying what it
-// found, or opens the setup for a model that can't search, and the dials of the most @ember may think and
-// write for anyone's question. Each change saves at once. While one saves, Ember AI can't be turned off
-// or changed, so that the save's answer can't show it as it was.
+// which its provider reads, shows @ember's avatar, which a picture picked replaces, as the project's owner
+// asked (2026-11-05), and Use Ember's flame takes away again, lists the models people can pick on their
+// profile, the one that answers everyone else chosen, with Add a model and each other's Remove, has Search
+// the web's switch, which turns on once the model that answers everyone has searched the web for a test
+// question, saying what it found, or opens the setup for a model that can't search, and the dials of the
+// most @ember may think and write for anyone's question. Each change saves at once. While one saves,
+// Ember AI can't be turned off or changed, so that the save's answer can't show it as it was.
 
 /** What @ember sends the model as it answers, which the card says while Ember AI is on. */
 export const WHAT_EMBER_SENDS = "Mention @ember, or write to it directly, and it answers, sending the thread, or the room's latest messages, through Cloudflare to the model.";
@@ -57,6 +74,12 @@ export function webSearchOn(webTools: WebTool[], models: readonly AssistantModel
 /** What the card says while the model called `name` searches the web for Search the web's test question. */
 export const searchingWith = (name: string) => `Asking ${name} something it has to search the web for…`;
 
+/** What the card says of @ember's avatar while it's Ember's flame. */
+export const AVATAR_EXPLAINED = "Everyone sees it beside @ember's answers. Choose a picture of your own in place of Ember's flame.";
+
+/** What it says once an administrator has uploaded one. */
+export const UPLOADED_AVATAR_EXPLAINED = "Everyone sees it beside @ember's answers. Choose another picture, or go back to Ember's flame.";
+
 /** What turning Ember AI off asks first. */
 export const CONFIRM_STOP_ASSISTANT =
   "Are you sure you want to turn off Ember AI? @ember will leave every room, and Ember will forget the API token and the models people can pick.";
@@ -67,7 +90,7 @@ interface Props {
   assistant: WorkspaceSettings["assistant"];
   /** Opens Set up Ember AI. */
   onSetUp: () => void;
-  /** Shows that Ember AI is off, once turning it off has. */
+  /** Shows that Ember AI is off, once turning it off has, or once it's found to be. */
   onStopped: () => void;
   /** Shows Ember AI as a change to its models, dials or Search the web leaves it, or as it was again when the change fails. */
   onChanged: (assistant: Assistant) => void;
@@ -92,8 +115,38 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
   // Whether Search the web is turning on or off, while it saves.
   const [turningWeb, setTurningWeb] = useState<boolean | null>(null);
   const [webTest, setWebTest] = useState<WebTest | null>(null);
-  const busy = stopping || saving || turningWeb !== null;
+  /** The address of the picture picked for @ember's avatar, shown while it saves. */
+  const [pickedAvatar, setPickedAvatar] = useState<string | null>(null);
+  const [savingAvatar, setSavingAvatar] = useState(false);
+  const busy = stopping || saving || savingAvatar || turningWeb !== null;
+  const people = useContext(PeopleContext);
+  const flash = useFlash();
   const mounted = useMounted();
+
+  // The picked picture's address is let go of once the saved one takes its place.
+  useEffect(() => () => void (pickedAvatar && URL.revokeObjectURL(pickedAvatar)), [pickedAvatar]);
+
+  // Another tab may change @ember's avatar, which the people directory hears of: Ember AI is read again
+  // then, for whether an administrator uploaded the one it has now.
+  const listedAvatarUrl = people.get(ASSISTANT_ID)?.avatarUrl;
+  const changedElsewhere =
+    assistant !== null && !savingAvatar && listedAvatarUrl !== undefined && avatarVersionOf(listedAvatarUrl) > avatarVersionOf(assistant.avatarUrl);
+  const showRead = useEffectEvent(({ assistant: read }: WorkspaceSettings) => (read ? onChanged(read) : onStopped()));
+  const readFailed = useEffectEvent((error: unknown) => onFailed(error));
+  useEffect(() => {
+    if (!changedElsewhere) return;
+    let stopped = false;
+    fetchWorkspaceSettings().then(
+      (settings) => {
+        if (!stopped) showRead(settings);
+      },
+      (error: unknown) => {
+        // A read that's been replaced, or that outlived the card, only reports a session that's ended, which goes to sign in.
+        if (!stopped || isSignedOut(error)) readFailed(error);
+      },
+    );
+    return () => void (stopped = true);
+  }, [changedElsewhere, listedAvatarUrl]);
 
   /** Shows Ember AI as `changed` at once, and saves it with `save`, showing it as it was, `shown`, again if it isn't saved. */
   const saveShown = (shown: Assistant, changed: Assistant, save: () => Promise<Assistant>) => {
@@ -149,6 +202,33 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
       },
     );
   };
+
+  /** Saves `file` as @ember's avatar, once a picture is picked. */
+  const saveAvatar = (file: File) => {
+    if (file.size > MAX_AVATAR_SIZE) return flash("alert", AVATAR_TOO_LARGE);
+    setPickedAvatar(URL.createObjectURL(file));
+    showAvatar(avatarVariantOf(file).then((variant) => changeAssistantAvatar({ file, variant })), CHANGES_SAVED);
+  };
+
+  /** Shows @ember's avatar as `change` saves it, flashing `notice` once it has. */
+  function showAvatar(change: Promise<Assistant>, notice?: string) {
+    setSavingAvatar(true);
+    change.then(
+      (saved) => {
+        onChanged(saved);
+        if (!mounted.current) return;
+        setSavingAvatar(false);
+        setPickedAvatar(null);
+        if (notice) flash("notice", notice);
+      },
+      (error: unknown) => {
+        if (!mounted.current && !isSignedOut(error)) return;
+        setSavingAvatar(false);
+        setPickedAvatar(null);
+        onFailed(error);
+      },
+    );
+  }
 
   /** Opens the setup, whose model, once it's saved, may not be the one the card said searched, or didn't. */
   const setUp = () => {
@@ -206,6 +286,14 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
               Change
             </button>
           </div>
+          <Avatar
+            src={pickedAvatar ?? latestAvatarUrl(assistant.avatarUrl, listedAvatarUrl)}
+            uploaded={assistant.avatar}
+            disabled={busy}
+            onChoose={saveAvatar}
+            // Use Ember's flame: no confirmation first, and no notice after, as Remove icon.
+            onRemove={() => showAvatar(removeAssistantAvatar())}
+          />
           <Models
             assistant={assistant}
             disabled={busy}
@@ -225,6 +313,35 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
         </>
       )}
     </section>
+  );
+}
+
+/** @ember's avatar as the card last saw it, or as the people directory has it, when another tab has changed it since. */
+const latestAvatarUrl = (shown: string, listed: string | undefined) => (listed && avatarVersionOf(listed) > avatarVersionOf(shown) ? listed : shown);
+
+/**
+ * @ember's avatar, while Ember AI is on: the picture `src` in a circle with a camera on its corner, which
+ * picks a picture to replace it at once, as your avatar on your profile, and Use Ember's flame, which
+ * takes away the picture an administrator `uploaded`, where one did.
+ */
+function Avatar({ src, uploaded, disabled, onChoose, onRemove }: { src: string; uploaded: boolean; disabled: boolean; onChoose: (file: File) => void; onRemove: () => void }) {
+  return (
+    <div className="flex items-center gap-x-[2ch] border-t pt-4">
+      <PictureField id="assistant_avatar" src={src} alt="@ember's avatar" label="Upload @ember's avatar" size="small" disabled={disabled} onChoose={onChoose} />
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">Avatar</h3>
+          <p id="assistant_avatar-description" className={NOTE}>
+            {uploaded ? UPLOADED_AVATAR_EXPLAINED : AVATAR_EXPLAINED}
+          </p>
+        </div>
+        {uploaded && (
+          <button type="button" disabled={disabled} onClick={onRemove} className={BUTTON}>
+            Use Ember's flame
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

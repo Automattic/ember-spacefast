@@ -28,8 +28,11 @@ import {
   type YourAssistantChanged,
 } from "@ember/protocol/assistant";
 import { credentialsOf } from "../auth";
+import { storeAvatar } from "../avatars";
 import { jsonBodyOf } from "../bodies";
 import type { Env } from "../env";
+import { pictureFormOf } from "../files/pictures";
+import { NO_STORAGE } from "../files/uploads";
 import { formAnswer } from "../pages";
 import { workspace, type Credentials } from "../workspace";
 import { catalogOf } from "./catalog";
@@ -37,9 +40,9 @@ import { ask, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefus
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
 // workspace settings, the models people can pick, which administrators add there from Cloudflare's
-// catalog, what @ember may do on the web, and @ember's answers to each person, which they set the most
-// of there, and each person picks the levels and model of on their profile. They answer JSON for the
-// card, its dialogs and the profile.
+// catalog, what @ember may do on the web, @ember's avatar, and @ember's answers to each person, which
+// they set the most of there, and each person picks the levels and model of on their profile. They
+// answer JSON for the card, its dialogs and the profile.
 
 const problem = (status: number, message: string) => Response.json({ error: message }, { status });
 
@@ -225,6 +228,37 @@ export async function changeAssistantSettings(request: Request, env: Env): Promi
   if (changed === "off") return problem(409, ASSISTANT_OFF);
   if (changed === "not listed") return problem(422, MODEL_NOT_LISTED);
   return Response.json(changed satisfies AssistantChanged, { headers: PRIVATE });
+}
+
+/**
+ * `PUT /api/account/assistant/avatar`: gives @ember the avatar the form brings, as a picture chosen on the
+ * Ember AI card does while it's on, in place of Ember's flame or the one it had, answering Ember AI as it
+ * is then. It's the form your own avatar comes in, its `avatar` and `variant` parts the picture. Someone
+ * who isn't an administrator hears so before the picture is read.
+ */
+export async function changeAssistantAvatar(request: Request, env: Env): Promise<Response> {
+  const credentials = await administratorOf(request, env);
+  if (credentials instanceof Response) return credentials;
+  if (!env.FILES) return problem(503, NO_STORAGE);
+  const form = await pictureFormOf(request);
+  if (!(form instanceof FormData)) return problem(form.status, form.error);
+  const avatar = await storeAvatar(env, env.FILES, form);
+  if ("error" in avatar) return problem(avatar.status, avatar.error);
+  return assistantAvatarAnswer(await workspace(env).changeAssistantAvatar(credentials, avatar));
+}
+
+/** `DELETE /api/account/assistant/avatar`: takes away the avatar @ember was given, as Use Ember's flame does, answering Ember AI as it is then. */
+export async function removeAssistantAvatar(request: Request, env: Env): Promise<Response> {
+  const credentials = await credentialsOf(request, env);
+  return assistantAvatarAnswer(credentials && (await workspace(env).changeAssistantAvatar(credentials, null)));
+}
+
+/** What a change to @ember's avatar answers: Ember AI as it is then, or why it was refused. */
+function assistantAvatarAnswer(changed: AssistantChanged | "off" | "forbidden" | null): Response {
+  if (!changed) return problem(401, NOT_SIGNED_IN);
+  if (changed === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
+  if (changed === "off") return problem(409, ASSISTANT_OFF);
+  return Response.json(changed, { headers: PRIVATE });
 }
 
 /**

@@ -110,6 +110,9 @@ interface Answers {
 /** The workspace's logo once one is uploaded. */
 const LOGO = "/account/logo?v=20261017120000";
 
+/** @ember's avatar while it's Ember's flame. */
+const EMBER_FLAME = "/users/ember.abc/avatar?v=20261101120000";
+
 /** Answers the page's requests as the server would for `settings`, or as `answers` says. */
 function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, removed, ordered, logoSaved }: Answers = {}) {
   let { account, emailDomains: keptDomains, email, turnstile, assistant } = settings;
@@ -179,7 +182,15 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
         return Response.json({ turnstile });
       case "PUT /api/account/assistant": {
         const { accountId, model, modelName: name } = JSON.parse(String(init?.body)) as AssistantSetup;
-        assistant = { accountId, model, models: [{ id: model, name: name ?? modelName(model), format: "chat" }], most: assistant?.most ?? TOP_LEVELS, webTools: null };
+        assistant = {
+          accountId,
+          model,
+          models: [{ id: model, name: name ?? modelName(model), format: "chat" }],
+          most: assistant?.most ?? TOP_LEVELS,
+          webTools: null,
+          avatarUrl: assistant?.avatarUrl ?? EMBER_FLAME,
+          avatar: assistant?.avatar ?? false,
+        };
         return Response.json({ assistant, greeting: "Hello, team!" });
       }
       case "PATCH /api/account/assistant": {
@@ -1703,6 +1714,8 @@ describe("Ember AI", () => {
     models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
     most: TOP_LEVELS,
     webTools: null,
+    avatarUrl: EMBER_FLAME,
+    avatar: false,
   };
 
   it("gives administrators the Ember AI card, whose switch sets up Ember AI, naming the model it saved", async () => {

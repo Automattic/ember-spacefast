@@ -22,7 +22,7 @@ import {
 } from "@ember/protocol";
 import { applyD1Migrations, reset, runInDurableObject, type D1Migration } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import { ADDRESS_HEADER, AUTHORIZED_AT_HEADER, BANNED_HEADER, ROOM_HEADER, SESSION_HEADER, USER_HEADER, type ChatRoom } from "../src/chat-room";
 import { toBase64, toBase64url, urlsafeDecode64 } from "../src/encoding";
 import type { Env } from "../src/env";
@@ -54,6 +54,25 @@ export const api = (path: string, init: RequestInit = {}) => exports.default.fet
 /** The same request, to a Worker whose bindings differ from this suite's by `changes`. `path` may be a whole URL. */
 export const apiWith = (changes: Partial<Env>, path: string, init: RequestInit<IncomingRequestCfProperties> = {}) =>
   worker.fetch(new Request(new URL(path, origin), fromOwnPages(path, init)), { ...(env as unknown as Env), ...changes });
+
+/**
+ * What Ember AI's settings say of @ember's avatar while it's Ember's flame, as it is until an
+ * administrator uploads one: its address, at whichever version.
+ */
+export const WITH_THE_FLAME = { avatarUrl: expect.stringMatching(/^\/users\/ember\.[\w-]+\/avatar\?v=\d{14}(?:&|$)/) as string, avatar: false };
+
+/** When the owner of the avatar at `avatarUrl` last changed, as its address says (`?v=`), so a later address has a larger one. */
+export const avatarVersionOf = (avatarUrl: string) => Number(new URL(avatarUrl, origin).searchParams.get("v"));
+
+/**
+ * Stops the clock, for the Workspace too, which then moves only as far as anything waits, at once: what
+ * happens next happens in the same second, but for what waits for a later one. `vi.useRealTimers` and
+ * `vi.restoreAllMocks` start it again.
+ */
+export function stopTheClock(): void {
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+  vi.spyOn(scheduler, "wait").mockImplementation(async (ms) => void vi.setSystemTime(Date.now() + ms));
+}
 
 /** One of the recorded images (fixtures/README.md), by its name in fixtures/storage/. */
 export function recordedImage(name: string): Uint8Array {

@@ -91,12 +91,14 @@ import {
 import { directoryOf } from "./avatar-tokens";
 import {
   addAssistantModel,
+  changeAssistantAvatar,
   changeAssistantSettings,
   changeWebSearch,
   changeYourAssistant,
   deployedAccountIdOf,
   forgetAssistant,
   listAssistantModels,
+  removeAssistantAvatar,
   removeAssistantModel,
   saveAssistant,
 } from "./assistant/settings";
@@ -1002,6 +1004,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/assistant/models" && request.method === "POST") return () => addAssistantModel(request, env);
   if (pathname === "/api/account/assistant/models" && request.method === "DELETE") return () => removeAssistantModel(request, env);
   if (pathname === "/api/account/assistant/web_search" && request.method === "PUT") return () => changeWebSearch(request, env);
+  if (pathname === "/api/account/assistant/avatar" && request.method === "PUT") return () => changeAssistantAvatar(request, env);
+  if (pathname === "/api/account/assistant/avatar" && request.method === "DELETE") return () => removeAssistantAvatar(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);
   if (pathname === "/api/account/custom_domain_lookups" && request.method === "POST") return () => lookUpCustomDomain(request, env);
   if (pathname === LOGO_PATH && request.method === "PUT") return () => changeLogo(request, env);

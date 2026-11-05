@@ -556,6 +556,20 @@ export async function removeAssistantModel(model: string): Promise<AssistantChan
   return (await request<AssistantChanged>("/api/account/assistant/models", { method: "DELETE", body: JSON.stringify({ model }) })).assistant;
 }
 
+/**
+ * Gives @ember the avatar `photo` is, in place of Ember's flame or the one it had, answering Ember AI as
+ * it is then. Fails with a 409 ApiError while Ember AI is off, and a 403 one for anyone but an
+ * administrator.
+ */
+export async function changeAssistantAvatar(photo: ChosenPhoto): Promise<AssistantChanged["assistant"]> {
+  return (await request<AssistantChanged>("/api/account/assistant/avatar", { method: "PUT", body: photoForm(photo) })).assistant;
+}
+
+/** Takes away the avatar @ember was given, bringing back Ember's flame, answering Ember AI as it is then. Fails as `changeAssistantAvatar` does. */
+export async function removeAssistantAvatar(): Promise<AssistantChanged["assistant"]> {
+  return (await request<AssistantChanged>("/api/account/assistant/avatar", { method: "DELETE" })).assistant;
+}
+
 /** Turns Ember AI off, forgetting its API token. Fails with a 403 ApiError for anyone but an administrator. */
 export async function forgetAssistant(): Promise<null> {
   return (await request<AssistantForgotten>("/api/account/assistant", { method: "DELETE" })).assistant;

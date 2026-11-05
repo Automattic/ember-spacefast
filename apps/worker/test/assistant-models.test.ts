@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTES, PICKED_MODEL_NOTES } from "../src/assistant/answers";
 import { CATALOG_UNANSWERED } from "../src/assistant/catalog";
 import { API_TOKEN_NEEDED, SETUP_CHANGED } from "../src/assistant/settings";
-import { api, connect, cookieOf, freshDeploy, post, shown, workspaceSql, workspaceStub, type Client, type Session } from "./support";
+import { api, connect, cookieOf, freshDeploy, post, shown, WITH_THE_FLAME, workspaceSql, workspaceStub, type Client, type Session } from "./support";
 
 // The models @ember can answer with: the text models Cloudflare's catalog lists, which Set up Ember AI and
 // Add a model list, the ones administrators let people pick on the Ember AI card, the one among them that
@@ -200,6 +200,7 @@ const settingsWith = (models: AssistantModel[], model = models[0]!.id): Assistan
   models,
   most: TOP_LEVELS,
   webTools: models.find(({ id }) => id === model)?.format === "chat" ? null : [],
+  ...WITH_THE_FLAME,
 });
 
 /** @ember's answers to someone who picked `model`, or none, among `models`, the first of them answering everyone, at the levels everyone starts with. */

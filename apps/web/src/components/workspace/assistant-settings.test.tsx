@@ -1,8 +1,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSettings } from "@ember/protocol";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ASSISTANT_ID, AVATAR_TOO_LARGE, MAX_AVATAR_SIZE, type DirectoryUser, type WorkspaceSettings } from "@ember/protocol";
 import {
   ASSISTANT_MODELS,
   ASSISTANT_OFF,
@@ -20,12 +20,31 @@ import {
   type WebSearchChanged,
   type WebTool,
 } from "@ember/protocol/assistant";
+import { FlashProvider } from "@/components/flash";
+import { PeopleContext, type People } from "@/hooks/use-directory";
 import { ApiError } from "@/lib/api";
-import { AssistantSettings, CONFIRM_STOP_ASSISTANT, LIMITS_EXPLAINED, MODELS_EXPLAINED, searchingWith, WEB_SEARCH_OFF, webSearchOn, WHAT_EMBER_SENDS } from "./assistant-settings";
+import {
+  AssistantSettings,
+  AVATAR_EXPLAINED,
+  CONFIRM_STOP_ASSISTANT,
+  LIMITS_EXPLAINED,
+  MODELS_EXPLAINED,
+  searchingWith,
+  UPLOADED_AVATAR_EXPLAINED,
+  WEB_SEARCH_OFF,
+  webSearchOn,
+  WHAT_EMBER_SENDS,
+} from "./assistant-settings";
 import { searchTurnedOff } from "./assistant-setup";
 import { CATALOG_UNREAD } from "./model-picker";
+import { CHANGES_SAVED } from "./settings-page";
+
+vi.mock("@/lib/previews", () => ({ avatarVariantOf: vi.fn(async () => new Blob(["variant"], { type: "image/webp" })) }));
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+/** @ember's avatar while it's Ember's flame, and once an administrator has uploaded a picture. */
+const FLAME = "/users/ember.abc/avatar?v=20261101120000";
+const UPLOADED = "/users/ember.abc/avatar?v=20261105120000";
 
 /** The model `id`, as Ember knows it, or else as it would know one it doesn't. */
 function known(id: string): AssistantModel {
@@ -44,6 +63,8 @@ const on = (model: string, most: AnswerLevels = TOP_LEVELS, others: string[] = [
   models: [model, ...others].map(known),
   most,
   webTools,
+  avatarUrl: FLAME,
+  avatar: false,
 });
 
 type Answer<T = void> = (given: T) => Response | Promise<Response>;
@@ -55,8 +76,10 @@ const CATALOG: AssistantCatalog = {
 };
 
 /**
- * Answers turning Ember AI off, changing it, taking a model out, listing Cloudflare's catalog and adding a
- * model as the server would, or as `stopped`, `changed`, `removed`, `listed` and `added` say.
+ * Answers turning Ember AI off, changing it, taking a model out, listing Cloudflare's catalog, adding a
+ * model, and uploading @ember's avatar and taking it away as the server would, or as `stopped`, `changed`,
+ * `removed`, `listed`, `added`, `pictured` and `unpictured` say, and reading Ember AI again as another
+ * tab's upload left it, or as `read` says.
  */
 function serve({
   stopped = () => Response.json({ assistant: null }),
@@ -64,21 +87,30 @@ function serve({
   removed = () => Response.json({ assistant: on("@cf/zai-org/glm-4.7-flash") }),
   listed = () => Response.json(CATALOG),
   added = ({ model }) => Response.json({ assistant: on("anthropic/claude-sonnet-5.5", TOP_LEVELS, [model]), greeting: "Hello! I'm here to help." }),
+  pictured = () => Response.json({ assistant: { ...on("anthropic/claude-sonnet-5.5"), avatarUrl: UPLOADED, avatar: true } }),
+  unpictured = () => Response.json({ assistant: on("anthropic/claude-sonnet-5.5") }),
+  read = () => Response.json({ assistant: { ...on("anthropic/claude-sonnet-5.5"), avatarUrl: UPLOADED, avatar: true } }),
 }: {
   stopped?: Answer;
   changed?: Answer<AssistantChanges>;
   removed?: Answer<string>;
   listed?: Answer;
   added?: Answer<NewAssistantModel>;
+  pictured?: Answer<FormData>;
+  unpictured?: Answer;
+  read?: Answer;
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const request = `${init?.method} ${String(input)}`;
+    const request = `${init?.method ?? "GET"} ${String(input)}`;
     const body = () => JSON.parse(String(init?.body)) as unknown;
     if (request === "DELETE /api/account/assistant") return stopped();
     if (request === "PATCH /api/account/assistant") return changed(body() as AssistantChanges);
     if (request === "DELETE /api/account/assistant/models") return removed((body() as { model: string }).model);
     if (request === "POST /api/account/assistant/catalog") return listed();
     if (request === "POST /api/account/assistant/models") return added(body() as NewAssistantModel);
+    if (request === "PUT /api/account/assistant/avatar") return pictured(init?.body as FormData);
+    if (request === "DELETE /api/account/assistant/avatar") return unpictured();
+    if (request === "GET /api/account") return read();
     throw new Error(`Unexpected request for ${request}`);
   });
 }
@@ -90,11 +122,39 @@ function held(response: () => Response) {
   return { answered: () => answered, answer: () => act(async () => answer()) };
 }
 
-/** The card, for a workspace whose Ember AI is `assistant`. */
-function showCard(assistant: WorkspaceSettings["assistant"]) {
+/**
+ * The card, for a workspace whose Ember AI is `assistant`, with everyone the people directory lists,
+ * `people`, as the workspace has them, which `showPeople` changes.
+ */
+function showCard(assistant: WorkspaceSettings["assistant"], people: People = new Map()) {
   const callbacks = { onSetUp: vi.fn(), onStopped: vi.fn(), onChanged: vi.fn(), onFailed: vi.fn() };
-  render(<AssistantSettings assistant={assistant} {...callbacks} />);
-  return { ...callbacks, user: userEvent.setup() };
+  const shown = (listed: People) => (
+    <PeopleContext value={listed}>
+      <FlashProvider workspace>
+        <AssistantSettings assistant={assistant} {...callbacks} />
+      </FlashProvider>
+    </PeopleContext>
+  );
+  const { rerender } = render(shown(people));
+  return { ...callbacks, user: userEvent.setup(), showPeople: (listed: People) => rerender(shown(listed)) };
+}
+
+/** The card, showing Ember AI as each change to it leaves it, as the settings page does, with `people` as `showCard` has them. */
+function showLiveCard(assistant: Assistant, people: People = new Map()) {
+  const callbacks = { onSetUp: vi.fn(), onStopped: vi.fn(), onFailed: vi.fn() };
+  function Live() {
+    const [shown, setShown] = useState(assistant);
+    return <AssistantSettings assistant={shown} onChanged={setShown} {...callbacks} />;
+  }
+  const shown = (listed: People) => (
+    <PeopleContext value={listed}>
+      <FlashProvider workspace>
+        <Live />
+      </FlashProvider>
+    </PeopleContext>
+  );
+  const { rerender } = render(shown(people));
+  return { ...callbacks, user: userEvent.setup(), showPeople: (listed: People) => rerender(shown(listed)) };
 }
 
 const card = () => screen.getByRole("region", { name: "Ember AI" });
@@ -167,6 +227,172 @@ describe("Ember AI", () => {
     expect(onStopped).not.toHaveBeenCalled();
     expect(assistantSwitch()).toBeChecked();
     expect(assistantSwitch()).toBeEnabled();
+  });
+});
+
+describe("Avatar", () => {
+  const avatar = () => within(card()).getByRole("img", { name: "@ember's avatar" });
+  const picker = () => within(card()).getByLabelText("Upload @ember's avatar");
+  const useTheFlame = () => within(card()).queryByRole("button", { name: "Use Ember's flame" });
+  const SONNET = on("anthropic/claude-sonnet-5.5");
+  const PICTURED: Assistant = { ...SONNET, avatarUrl: UPLOADED, avatar: true };
+  const moon = () => new File(["moon"], "moon.jpg", { type: "image/jpeg" });
+  /** What each picture saved sent, in order. */
+  const uploads = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([input, init]) => `${init?.method} ${String(input)}` === "PUT /api/account/assistant/avatar")
+      .map(([, init]) => init?.body as FormData);
+  /** How many times Ember AI was read again. */
+  const reads = () => vi.mocked(fetch).mock.calls.filter(([input, init]) => String(input) === "/api/account" && init?.method === undefined).length;
+  /** @ember as the people directory lists it, with its avatar at `avatarUrl`. */
+  const listed = (avatarUrl: string): People =>
+    new Map([[ASSISTANT_ID, { id: ASSISTANT_ID, name: "Ember", bio: null, role: "bot", status: "active", avatarUrl } satisfies DirectoryUser]]);
+
+  beforeEach(() => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:moon");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  });
+
+  it("shows Ember's flame while Ember AI is on, which a picture picked replaces", () => {
+    serve();
+    showCard(SONNET);
+    expect(avatar()).toHaveAttribute("src", FLAME);
+    expect(picker()).toBeEnabled();
+    expect(picker()).toHaveAttribute("type", "file");
+    expect(picker()).toHaveAttribute("accept", "image/*");
+    expect(picker()).toHaveAccessibleDescription(AVATAR_EXPLAINED);
+    // Nothing to take away while it's the flame.
+    expect(useTheFlame()).toBeNull();
+  });
+
+  it("has none while Ember AI is off", () => {
+    serve();
+    showCard(null);
+    expect(within(card()).queryByRole("img")).toBeNull();
+  });
+
+  it("saves a picture as soon as it's picked, showing it meanwhile, with its variant and a notice", async () => {
+    const answer = held(() => Response.json({ assistant: PICTURED }));
+    serve({ pictured: answer.answered });
+    const { user, onFailed } = showLiveCard(SONNET);
+    await user.upload(picker(), moon());
+
+    await waitFor(() => expect(uploads()).toHaveLength(1));
+    expect(avatar()).toHaveAttribute("src", "blob:moon");
+    // Nothing else changes while it saves, so that its answer can't show Ember AI as it was.
+    expect(picker()).toBeDisabled();
+    expect(assistantSwitch()).toBeDisabled();
+    expect(within(card()).getByRole("button", { name: "Change" })).toBeDisabled();
+    const [sent] = uploads();
+    expect(sent!.get("avatar")).toMatchObject({ name: "moon.jpg", type: "image/jpeg" });
+    expect(sent!.get("variant")).toMatchObject({ type: "image/webp" });
+
+    await answer.answer();
+    expect(await screen.findByRole("alert")).toHaveTextContent(CHANGES_SAVED);
+    expect(avatar()).toHaveAttribute("src", UPLOADED);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:moon");
+    expect(picker()).toBeEnabled();
+    expect(picker()).toHaveAccessibleDescription(UPLOADED_AVATAR_EXPLAINED);
+    expect(useTheFlame()).toBeEnabled();
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("brings back Ember's flame with Use Ember's flame, saying nothing", async () => {
+    const flameAgain = "/users/ember.abc/avatar?v=20261105130000";
+    const fetch = serve({ unpictured: () => Response.json({ assistant: { ...SONNET, avatarUrl: flameAgain } }) });
+    const { user } = showLiveCard(PICTURED);
+    expect(avatar()).toHaveAttribute("src", UPLOADED);
+    await user.click(useTheFlame()!);
+
+    await waitFor(() => expect(useTheFlame()).toBeNull());
+    expect(fetch).toHaveBeenCalledWith("/api/account/assistant/avatar", expect.objectContaining({ method: "DELETE" }));
+    expect(avatar()).toHaveAttribute("src", flameAgain);
+    expect(picker()).toHaveAccessibleDescription(AVATAR_EXPLAINED);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says a picture over 16 MB is too large without sending it", async () => {
+    serve();
+    const { user, onChanged } = showCard(SONNET);
+    const huge = moon();
+    Object.defineProperty(huge, "size", { value: MAX_AVATAR_SIZE + 1 });
+    await user.upload(picker(), huge);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(AVATAR_TOO_LARGE);
+    expect(uploads()).toEqual([]);
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(avatar()).toHaveAttribute("src", FLAME);
+  });
+
+  it("leaves a picture that couldn't be saved to the page's alerts, showing the avatar as it was", async () => {
+    serve({ pictured: () => Response.json({ error: "Ember isn't set up to store files" }, { status: 503 }) });
+    const { user, onChanged, onFailed } = showCard(SONNET);
+    await user.upload(picker(), moon());
+
+    await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(503, "Ember isn't set up to store files")));
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(avatar()).toHaveAttribute("src", FLAME);
+    expect(picker()).toBeEnabled();
+  });
+
+  it("can't be changed while another change saves, so that its answer can't show the avatar as it was", async () => {
+    const answer = held(() => Response.json({ assistant: { ...SONNET, most: { ...TOP_LEVELS, thinking: "low" } } }));
+    serve({ changed: answer.answered });
+    const { user } = showCard(PICTURED);
+    await user.click(within(card()).getByRole("radio", { name: "Low" }));
+    expect(picker()).toBeDisabled();
+    expect(useTheFlame()).toBeDisabled();
+    await answer.answer();
+    expect(picker()).toBeEnabled();
+    expect(useTheFlame()).toBeEnabled();
+  });
+
+  it("shows the avatar as another tab changes it, once the people directory hears, reading Ember AI again for Use Ember's flame", async () => {
+    serve();
+    const { showPeople, onFailed } = showLiveCard(SONNET, listed("/users/ember.abc/avatar?v=20261031120000"));
+    // The directory can list an avatar from before the card's settings were read.
+    expect(avatar()).toHaveAttribute("src", FLAME);
+    expect(reads()).toBe(0);
+    showPeople(listed(UPLOADED));
+    expect(avatar()).toHaveAttribute("src", UPLOADED);
+
+    expect(await within(card()).findByRole("button", { name: "Use Ember's flame" })).toBeEnabled();
+    expect(picker()).toHaveAccessibleDescription(UPLOADED_AVATAR_EXPLAINED);
+    expect(reads()).toBe(1);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("takes away Use Ember's flame once another tab brings back the flame", async () => {
+    const flameAgain = "/users/ember.abc/avatar?v=20261105130000";
+    serve({ read: () => Response.json({ assistant: { ...SONNET, avatarUrl: flameAgain } }) });
+    const { showPeople } = showLiveCard(PICTURED, listed(UPLOADED));
+    expect(useTheFlame()).toBeEnabled();
+    showPeople(listed(flameAgain));
+
+    await waitFor(() => expect(useTheFlame()).toBeNull());
+    expect(avatar()).toHaveAttribute("src", flameAgain);
+    expect(picker()).toHaveAccessibleDescription(AVATAR_EXPLAINED);
+  });
+
+  it("shows Ember AI off once it's read again after another tab turns it off", async () => {
+    serve({ read: () => Response.json({ assistant: null }) });
+    const { showPeople, onStopped } = showLiveCard(PICTURED, listed(UPLOADED));
+    showPeople(listed("/users/ember.abc/avatar?v=20261105130000"));
+    await waitFor(() => expect(onStopped).toHaveBeenCalledTimes(1));
+  });
+
+  it("doesn't read Ember AI again for a picture it saves itself, which the directory may hear of before its answer", async () => {
+    const answer = held(() => Response.json({ assistant: PICTURED }));
+    serve({ pictured: answer.answered });
+    const { user, showPeople } = showLiveCard(SONNET, listed(FLAME));
+    await user.upload(picker(), moon());
+    await waitFor(() => expect(uploads()).toHaveLength(1));
+    showPeople(listed(UPLOADED));
+
+    await answer.answer();
+    expect(useTheFlame()).toBeEnabled();
+    expect(reads()).toBe(0);
   });
 });
 
@@ -394,17 +620,6 @@ describe("Search the web", () => {
   /** What the server answers once it has turned Search the web `on` with `webTools`, or off. */
   const turned = (on_: boolean, webTools: WebTool[] = ["search", "read"]) =>
     Response.json({ assistant: on(SONNET, TOP_LEVELS, [], on_ ? webTools : []), found: on_ ? FOUND : null } satisfies WebSearchChanged);
-
-  /** The card, showing Ember AI as each change to it leaves it, as the settings page does. */
-  function showLiveCard(assistant: Assistant) {
-    const callbacks = { onSetUp: vi.fn(), onStopped: vi.fn(), onFailed: vi.fn() };
-    function Live() {
-      const [shown, setShown] = useState(assistant);
-      return <AssistantSettings assistant={shown} onChanged={setShown} {...callbacks} />;
-    }
-    render(<Live />);
-    return { ...callbacks, user: userEvent.setup() };
-  }
 
   it("is off for a model that can search until it's turned on, saying what turning it on lets @ember do", () => {
     serveWebSearch(() => turned(true));
