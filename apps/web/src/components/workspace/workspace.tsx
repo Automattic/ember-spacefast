@@ -303,8 +303,9 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   // doesn't wait for them. If they fail to, the first page that needs them tries again.
   const listed = rooms !== null;
   useEffect(() => (listed ? whenIdle(() => void loadRarePages().catch(() => {})) : undefined), [listed]);
-  // And for an administrator, whether a newer release of Ember is out, which the rail's Admin marks.
-  const release = useReleaseCheck(administrator, listed);
+  // And for an administrator, whether a newer release of Ember is out, which the rail's Admin marks, asked
+  // afresh each time Admin opens.
+  const release = useReleaseCheck(administrator, listed, settings !== null);
   const newRelease = release?.newest?.newer ? release.newest.release : null;
 
   // On a phone, the drawer closes as New direct message opens.

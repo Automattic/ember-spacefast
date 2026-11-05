@@ -444,14 +444,14 @@ async function lookUpCustomDomain(request: Request, env: Env): Promise<Response>
 
 /**
  * The release this Ember is, and the newest one GitHub names, for an administrator, as General settings
- * says, telling them when a newer one is out.
+ * says, telling them when a newer one is out: as GitHub last said, or `afresh`, as opening Admin asks.
  */
-async function release(request: Request, env: Env): Promise<Response> {
+async function release(request: Request, env: Env, afresh: boolean): Promise<Response> {
   const credentials = await credentialsOf(request, env);
   const administrator = credentials && (await workspace(env).canAdminister(credentials));
   if (administrator === null) return problem(401, "Not signed in");
   if (!administrator) return problem(403, "Only administrators can change the workspace");
-  return json((await releaseCheck()) satisfies ReleaseCheck, { headers: { "Cache-Control": "no-store" } });
+  return json((await releaseCheck(afresh)) satisfies ReleaseCheck, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** The workspace's custom CSS, for the Custom CSS page, which only administrators can open. */
@@ -1006,7 +1006,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/custom_domain_lookups" && request.method === "POST") return () => lookUpCustomDomain(request, env);
   if (pathname === LOGO_PATH && request.method === "PUT") return () => changeLogo(request, env);
   if (pathname === LOGO_PATH && request.method === "DELETE") return () => removeLogo(request, env);
-  if (pathname === "/api/account/release" && request.method === "GET") return () => release(request, env);
+  if (pathname === "/api/account/release" && request.method === "GET") return () => release(request, env, false);
+  if (pathname === "/api/account/release_checks" && request.method === "POST") return () => release(request, env, true);
   if (pathname === "/api/account/custom_styles" && request.method === "GET") return () => customStyles(request, env);
   if (pathname === "/api/account/custom_styles" && request.method === "PATCH") return () => changeCustomStyles(request, env);
   if (pathname === "/api/account/room_order" && request.method === "PUT") return () => setSharedOrder(request, env);

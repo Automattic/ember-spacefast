@@ -380,10 +380,16 @@ export async function lookUpCustomDomain(domain: string): Promise<CustomDomainLo
 
 /**
  * The release this Ember is, and the newest one GitHub names, as General settings says, null when GitHub
- * didn't name one. Fails with a 403 ApiError for anyone but an administrator.
+ * didn't name one, as GitHub last told the Worker, which asks it again every six hours. Fails with a 403
+ * ApiError for anyone but an administrator.
  */
 export async function checkForRelease(): Promise<ReleaseCheck> {
   return request<ReleaseCheck>("/api/account/release");
+}
+
+/** The same, once the Worker has asked GitHub again, as opening Admin has it do, unless it asked in the last minute. */
+export async function checkForReleaseAfresh(): Promise<ReleaseCheck> {
+  return request<ReleaseCheck>("/api/account/release_checks", { method: "POST" });
 }
 
 /** A logo chosen for the workspace, with the variants made of it, or null where none could be made (`logoVariantsOf`). */
