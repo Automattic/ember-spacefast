@@ -66,15 +66,18 @@ export async function directoryOf<Entry extends DirectoryEntry>(entries: Entry[]
 }
 
 /**
- * The time to change the picture of someone who last changed at `updatedAt`: now, once it's a later second
- * than that. Their avatar's address counts whole seconds, and browsers keep the picture they have at an
- * address, so a change in the same second as the last waits for the next. Waiting, rather than dating it a
- * second ahead, keeps every change in the past, so a change that follows, dated now, can't take the
- * address back to one an earlier picture had.
+ * A change to someone's picture in the same second as their last change, which waits `ms` for the next.
+ * Their avatar's address counts whole seconds, and browsers keep the picture they have at an address.
+ * Waiting, rather than dating the change a second ahead, keeps every change in the past, so a change
+ * that follows, dated now, can't take the address back to one an earlier picture had.
  */
-export async function avatarChangeTime(updatedAt: string): Promise<number> {
-  const nextSecond = (Math.floor(Date.parse(updatedAt) / 1000) + 1) * 1000;
-  // Changes are dated by this clock, so that's a second away at most.
-  if (Date.now() < nextSecond) await scheduler.wait(Math.min(nextSecond - Date.now(), 1000));
-  return Math.max(Date.now(), nextSecond);
+export class TooSoon {
+  constructor(readonly ms: number) {}
+}
+
+/** TooSoon, for a change made `now` to the picture of someone who last changed at `updatedAt`, or null once it's a later second. */
+export function tooSoonAfter(updatedAt: string, now: number): TooSoon | null {
+  const wait = (Math.floor(Date.parse(updatedAt) / 1000) + 1) * 1000 - now;
+  // Changes are dated by this clock, so that's a second at most; one dated by another clock, ahead of it, isn't waited for.
+  return wait > 0 && wait <= 1000 ? new TooSoon(wait) : null;
 }

@@ -179,6 +179,27 @@ describe("Upload an avatar", () => {
     expect((await listed(ada, ada.user.id)).avatarUrl).toBe(removed.avatarUrl);
   });
 
+  it("waits for the next second out of line, holding up nobody else's change", async () => {
+    stopTheClock();
+    const ada = await signIn("Ada Lovelace");
+    const grace = await signIn("Grace Hopper");
+    const initials = (await listed(ada, ada.user.id)).avatarUrl;
+    // Ada's photo comes in the same second as she joined, so it waits, until the test lets it go. It
+    // looks to see, as a promise the Workspace waits for can't be kept from outside it.
+    let held = true;
+    vi.mocked(scheduler.wait).mockImplementationOnce(async (ms) => {
+      while (held) await new Promise((resolve) => setTimeout(resolve, 10));
+      vi.setSystemTime(Date.now() + ms);
+    });
+    const uploading = uploadMoon(ada);
+    await vi.waitFor(() => expect(scheduler.wait).toHaveBeenCalledTimes(1));
+
+    expect((await saveBio(grace, "Rear admiral")).status).toBe(200);
+    held = false;
+    const { profile } = await uploading;
+    expect(avatarVersionOf(profile.avatarUrl)).toBeGreaterThan(avatarVersionOf(initials));
+  });
+
   it("keeps any file, serving the initials for one Campfire doesn't resize, whatever it's named", async () => {
     const ada = await signIn("Ada Lovelace");
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>';
