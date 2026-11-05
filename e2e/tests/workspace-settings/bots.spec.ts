@@ -190,7 +190,7 @@ test.describe("Delete a bot", () => {
 });
 
 test.describe("Bots post messages", () => {
-  test("a bot's command posts to its room as the bot, which shows there at once, and the bot reads it back", async ({ page }) => {
+  test("a bot's command posts to its room as the bot, which shows there at once by its round avatar, and the bot reads it back", async ({ page }) => {
     const name = `Build Bot ${crypto.randomUUID().slice(0, 8)}`;
     const url = await openGeneralFor(page, name);
     const text = `Deploy finished ${crypto.randomUUID().slice(0, 8)}`;
@@ -199,6 +199,9 @@ test.describe("Bots post messages", () => {
     const message = page.getByRole("article").filter({ hasText: text });
     await expect(message).toBeVisible();
     await expect(message).toContainText(name);
+    // A circle, where a person's avatar in a message is a square with rounded corners.
+    const avatar = message.locator("[aria-hidden=true]").first();
+    await expect.poll(() => avatar.evaluate((image: HTMLElement) => parseFloat(getComputedStyle(image).borderRadius) >= image.offsetWidth / 2)).toBe(true);
 
     const read = await page.request.get(url);
     expect(read.status()).toBe(200);
