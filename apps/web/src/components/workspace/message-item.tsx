@@ -165,13 +165,14 @@ function ReplyContext({ message, thread }: { message: Message; thread?: ThreadPl
 /**
  * A message deleted while its thread has replies, which keeps its place for them: no author, time, text,
  * actions or reactions, and its thread's summary under it, outside its thread. A blank square stands in
- * for its avatar, so it doesn't read as the message before it going on.
+ * for its avatar, with the space above a run's first message, so it doesn't read as the message before
+ * it going on.
  */
 function DeletedMessage({ message, thread, open }: { message: Message; thread?: ThreadPlace; open?: boolean }) {
   return (
     <article
       className={cn(
-        "group/message relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-2 px-5 max-md:grid-cols-[30px_minmax(0,1fr)] max-md:gap-x-2.5 max-md:px-3",
+        "group/message relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-2 px-5 pt-1 max-md:grid-cols-[30px_minmax(0,1fr)] max-md:gap-x-2.5 max-md:px-3",
         open && "bg-hover",
       )}
     >
@@ -265,6 +266,9 @@ export const MessageItem = memo(function MessageItem({ message, me, threaded: fo
       aria-busy={(pending && !upload?.error) || undefined}
       className={cn(
         "group/message relative grid grid-cols-[36px_minmax(0,1fr)] gap-x-2 px-5 hover:bg-message-hover max-md:grid-cols-[30px_minmax(0,1fr)] max-md:gap-x-2.5 max-md:px-3",
+        // A message that starts a run has 4px more above it, so a new author starts 12px below the
+        // message before, while one person's messages stay 8px apart.
+        !threaded && "pt-1",
         // Where Message options is 44px, each message is at least as tall as it, so the buttons of short
         // messages in a row don't overlap.
         "touch:min-h-11",
@@ -377,6 +381,7 @@ export const MessageItem = memo(function MessageItem({ message, me, threaded: fo
           message={message}
           nodes={quoted}
           row={article}
+          threaded={threaded}
           editable={mine || me.administrator}
           // A reply shown in the room opens its own thread, which its parent's is.
           threadPath={thread ? undefined : threadPath(message.roomId, message.parentId ?? message.id)}

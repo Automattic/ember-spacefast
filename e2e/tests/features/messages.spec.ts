@@ -131,6 +131,23 @@ test.describe("Message rows", () => {
     }
   });
 
+  test("leaves 12px above a new author's message and 8px between one person's", async ({ members, participant }) => {
+    await (await participant("Grace")).sayAll(["Grace starts", "Grace goes on"]);
+    const ada = await members.signIn("Ada");
+    await ada.send("Ada answers");
+    await expect(ada.message("Ada answers")).not.toHaveAttribute("aria-busy");
+    const text = (message: string) => ada.message(message).locator(".message-content");
+    // From the bottom of one message's text to the top of the next one's first line, which is its author's
+    // name where it starts a run.
+    const gap = async (above: Locator, below: Locator) => {
+      const [upper, lower] = [await box(above), await box(below)];
+      return lower.y - (upper.y + upper.height);
+    };
+
+    await expect.poll(() => gap(text("Grace starts"), text("Grace goes on"))).toBe(8);
+    await expect.poll(() => gap(text("Grace goes on"), ada.message("Ada answers").getByRole("heading", { level: 3 }))).toBe(12);
+  });
+
   test("tints the row under the pointer without moving anything, in light and dark", async ({ members, participant }) => {
     await (await participant("Grace")).say("Point at me");
     for (const [colorScheme, tint] of [
