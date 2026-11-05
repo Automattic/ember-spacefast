@@ -202,8 +202,8 @@ const settingsWith = (models: AssistantModel[], model = models[0]!.id): Assistan
   webTools: models.find(({ id }) => id === model)?.format === "chat" ? null : [],
 });
 
-/** @ember's answers to someone who picked `model`, among `models`, the first of them answering everyone, at the levels everyone starts with. */
-const yoursWith = (models: AssistantModel[], model = models[0]!.id): YourAssistant => ({ levels: DEFAULT_LEVELS, most: TOP_LEVELS, model, defaultModel: models[0]!.id, models });
+/** @ember's answers to someone who picked `model`, or none, among `models`, the first of them answering everyone, at the levels everyone starts with. */
+const yoursWith = (models: AssistantModel[], model: string | null = null): YourAssistant => ({ levels: DEFAULT_LEVELS, most: TOP_LEVELS, model, defaultModel: models[0]!.id, models });
 
 beforeEach(freshDeploy);
 afterEach(() => vi.restoreAllMocks());
@@ -455,7 +455,7 @@ describe("Your model", () => {
     expect((await yoursShown(grace))?.model).toBe(GPT.id);
   });
 
-  it("follows the one that answers everyone once you pick that one, or none", async () => {
+  it("follows the one that answers everyone while you pick none, whichever administrators choose", async () => {
     const ada = await setUp();
     const grace = await joinAsGrace();
     cloudflare();
@@ -463,13 +463,31 @@ describe("Your model", () => {
     await added(ada, GPT);
     await added(ada, DEEPSEEK);
 
-    await pick(grace, { model: CLAUDE.id });
+    await pick(grace, { model: GPT.id });
+    expect(await (await pick(grace, { model: null })).json()).toEqual({ assistant: yoursWith([CLAUDE, GPT, DEEPSEEK]) });
+    expect(await workspaceSql("SELECT assistant_model FROM users WHERE id = ?", grace.user.id)).toEqual([{ assistant_model: null }]);
     await change(ada, { model: DEEPSEEK.id });
-    expect((await yoursShown(grace))?.model).toBe(DEEPSEEK.id);
+    expect(await yoursShown(grace)).toEqual({ ...yoursWith([CLAUDE, GPT, DEEPSEEK]), defaultModel: DEEPSEEK.id });
+  });
+
+  it("stays yours once administrators choose it to answer everyone, and once they choose another, as does the one they chose, picked", async () => {
+    const ada = await setUp();
+    const grace = await joinAsGrace();
+    cloudflare();
+    await turnOn(ada);
+    await added(ada, GPT);
+    await added(ada, DEEPSEEK);
 
     await pick(grace, { model: GPT.id });
-    expect(await (await pick(grace, { model: null })).json()).toEqual({ assistant: { ...yoursWith([CLAUDE, GPT, DEEPSEEK], DEEPSEEK.id), defaultModel: DEEPSEEK.id } });
-    expect(await workspaceSql("SELECT assistant_model FROM users WHERE id = ?", grace.user.id)).toEqual([{ assistant_model: null }]);
+    await change(ada, { model: GPT.id });
+    expect(await yoursShown(grace)).toEqual({ ...yoursWith([CLAUDE, GPT, DEEPSEEK], GPT.id), defaultModel: GPT.id });
+    await change(ada, { model: DEEPSEEK.id });
+    expect((await yoursShown(grace))?.model).toBe(GPT.id);
+
+    expect(await (await pick(grace, { model: DEEPSEEK.id })).json()).toEqual({ assistant: { ...yoursWith([CLAUDE, GPT, DEEPSEEK], DEEPSEEK.id), defaultModel: DEEPSEEK.id } });
+    expect(await workspaceSql("SELECT assistant_model FROM users WHERE id = ?", grace.user.id)).toEqual([{ assistant_model: DEEPSEEK.id }]);
+    await change(ada, { model: CLAUDE.id });
+    expect((await yoursShown(grace))?.model).toBe(DEEPSEEK.id);
   });
 
   it("is the one that answers everyone while yours is removed, and yours again once it's added back", async () => {
@@ -536,6 +554,24 @@ describe("@ember's answers", () => {
     expect(await askedAs(grace)).toEqual(["An answer.", CLAUDE.id]);
   });
 
+  it("come from the model you picked once administrators choose it to answer everyone, and once they choose another", async () => {
+    const ada = await setUp();
+    const grace = await joinAsGrace();
+    cloudflare();
+    await turnOn(ada);
+    await added(ada, GPT);
+    await pick(grace, { model: GPT.id });
+    await change(ada, { model: GPT.id });
+    vi.restoreAllMocks();
+    expect(await askedAs(grace)).toEqual(["An answer.", GPT.id]);
+
+    cloudflare();
+    await change(ada, { model: CLAUDE.id });
+    vi.restoreAllMocks();
+    expect(await askedAs(grace)).toEqual(["An answer.", GPT.id]);
+    expect(await askedAs(ada)).toEqual(["An answer.", CLAUDE.id]);
+  });
+
   it("say you can pick another model when the one you picked can't answer", async () => {
     const ada = await setUp();
     const grace = await joinAsGrace();
@@ -559,5 +595,11 @@ describe("@ember's answers", () => {
     expect(await noted(grace, 429)).toBe(NOTES.busy);
     expect(await noted(ada, 403)).toBe(NOTES.model);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Ember AI's model ${GPT.id} didn't answer message`));
+
+    // Once it answers everyone, it's still Grace's to change, as administrators choosing another wouldn't.
+    cloudflare();
+    await change(ada, { model: GPT.id });
+    expect(await noted(grace, 403)).toBe(PICKED_MODEL_NOTES.model);
+    expect(await noted(ada, 403)).toBe(NOTES.model);
   });
 });

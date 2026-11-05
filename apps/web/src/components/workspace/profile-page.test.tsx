@@ -32,11 +32,11 @@ const ada = { id: "u1", name: "Ada Lovelace", administrator: false };
 /** Ada's avatar as the profile loads it: her initials, until she uploads one. */
 const INITIALS = "/users/t0k3n/avatar?v=1";
 const profile: Profile = { name: "Ada Lovelace", emailAddress: "ada@example.com", bio: "Wrote the first program", avatarUrl: INITIALS, avatar: false, password: true, membershipNeeded: true, memberful: null, assistant: null };
-/** Ada's levels of @ember's dials while Ember AI is on: where they start, up to Medium thinking, with the one model people can pick. */
+/** Ada's levels of @ember's dials while Ember AI is on: where they start, up to Medium thinking, with the one model people can pick, which she leaves to administrators. */
 const LEVELS: YourAssistant = {
   levels: { thinking: "low", length: "medium" },
   most: { thinking: "medium", length: "long" },
-  model: "@cf/zai-org/glm-4.7-flash",
+  model: null,
   defaultModel: "@cf/zai-org/glm-4.7-flash",
   models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
 };
@@ -572,34 +572,46 @@ describe("Your model on your profile", () => {
     serve({
       loaded: () => Response.json({ profile: { ...profile, assistant: PICKING }, transferId: LOADED_LINK } satisfies ProfileAnswer),
       leveled:
-        leveled ?? (({ model, ...levels }) => Response.json({ assistant: { ...PICKING, model: model ?? PICKING.defaultModel, levels: { ...PICKING.levels, ...levels } } })),
+        leveled ?? (({ model, ...levels }) => Response.json({ assistant: { ...PICKING, model: model === undefined ? PICKING.model : model, levels: { ...PICKING.levels, ...levels } } })),
     });
 
-  it("has a Model menu of the models administrators let people pick, set at yours, the default named so", async () => {
+  it("has a Model menu of Default, naming the administrators' choice, then the models they let people pick, set at yours", async () => {
     picking();
     showPage();
     await loaded();
     expect(section()).toHaveTextContent(
       "Which model @ember answers you with, how much it thinks first, and how long its answers are, up to the most an administrator allows.",
     );
-    expect(within(menu()).getAllByRole("option").map((option) => option.textContent)).toEqual(["GLM-4.7 Flash (default)", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
+    expect(within(menu()).getAllByRole("option").map((option) => option.textContent)).toEqual(["Default (GLM-4.7 Flash)", "GLM-4.7 Flash", "Claude Sonnet 5.5", "GPT-6.1 Sol"]);
     expect(menu()).toHaveValue("anthropic/claude-sonnet-5.5");
     expect(menu()).toHaveAccessibleDescription(DEFAULT_MODEL_EXPLAINED);
     expect(menu().compareDocumentPosition(within(section()).getByRole("group", { name: "Thinking" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("saves a model as soon as it's picked, the default as following the administrators' choice", async () => {
+  it("is set at Default while you leave your model to administrators", async () => {
+    serve({ loaded: () => Response.json({ profile: { ...profile, assistant: { ...PICKING, model: null } }, transferId: LOADED_LINK } satisfies ProfileAnswer) });
+    showPage();
+    await loaded();
+    expect(menu()).toHaveValue("");
+    expect(within(menu()).getByRole("option", { selected: true })).toHaveTextContent("Default (GLM-4.7 Flash)");
+  });
+
+  it("saves a model as soon as it's picked, Default as following the administrators' choice, and their model picked by name as yours", async () => {
     picking();
     const { user } = showPage();
     await loaded();
     await user.selectOptions(menu(), "GPT-6.1 Sol");
     expect(menu()).toHaveValue("openai/gpt-6.1-sol");
     await waitFor(() => expect(menu()).toBeEnabled());
-    await user.selectOptions(menu(), "GLM-4.7 Flash (default)");
+    await user.selectOptions(menu(), "Default (GLM-4.7 Flash)");
+    expect(menu()).toHaveValue("");
+    await waitFor(() => expect(menu()).toBeEnabled());
+    // The model administrators chose, picked by name, stays yours once they choose another.
+    await user.selectOptions(menu(), "GLM-4.7 Flash");
     await waitFor(() => expect(menu()).toBeEnabled());
     expect(menu()).toHaveValue("@cf/zai-org/glm-4.7-flash");
     const sent = vi.mocked(fetch).mock.calls.filter(([path]) => path === "/api/users/me/assistant").map(([, init]) => JSON.parse(String(init?.body)));
-    expect(sent).toEqual([{ model: "openai/gpt-6.1-sol" }, { model: null }]);
+    expect(sent).toEqual([{ model: "openai/gpt-6.1-sol" }, { model: null }, { model: "@cf/zai-org/glm-4.7-flash" }]);
   });
 
   it("says why a model wasn't saved, showing yours as it was", async () => {

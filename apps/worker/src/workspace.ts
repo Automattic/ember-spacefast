@@ -305,11 +305,10 @@ const levelsOf = (picked: AssistantPicks | null, most: AnswerLevels): AnswerLeve
   withinMost({ thinking: picked?.thinking ?? DEFAULT_LEVELS.thinking, length: picked?.length ?? DEFAULT_LEVELS.length }, most);
 
 /**
- * The model someone who `picked` one has @ember answer them with instead of the one `assistant` answers
- * everyone with: theirs while it's one of the models people can pick, or else null.
+ * The model someone who `picked` one has @ember answer them with instead of whichever `assistant` answers
+ * everyone with: theirs while it's one of the models people can pick, even that one, or else null.
  */
-const pickedModelOf = (assistant: SavedAssistant, picked: AssistantPicks | null): SavedModel | null =>
-  (picked?.model !== assistant.model && assistant.models.find(({ id }) => id === picked?.model)) || null;
+const pickedModelOf = (assistant: SavedAssistant, picked: AssistantPicks | null): SavedModel | null => assistant.models.find(({ id }) => id === picked?.model) ?? null;
 
 /**
  * @ember's answers to someone who `picked` their levels and model, as their profile shows them with
@@ -318,7 +317,7 @@ const pickedModelOf = (assistant: SavedAssistant, picked: AssistantPicks | null)
 function yourAssistantOf(account: Pick<JoinableAccount, "assistant" | "assistantMost"> | null, picked: AssistantPicks | null): YourAssistant | null {
   if (!account?.assistant) return null;
   const { assistant, assistantMost: most } = account;
-  return { levels: levelsOf(picked, most), most, model: pickedModelOf(assistant, picked)?.id ?? assistant.model, defaultModel: assistant.model, models: assistant.models };
+  return { levels: levelsOf(picked, most), most, model: pickedModelOf(assistant, picked)?.id ?? null, defaultModel: assistant.model, models: assistant.models };
 }
 
 /**
@@ -1140,8 +1139,9 @@ export class Workspace extends DurableObject<Env> {
    * Changes how much @ember thinks and how long it answers the person `credentials` signs in, and the
    * model it answers them with, by `changes`, answering @ember's answers to them as their profile then
    * shows them: "not listed" for a model people can't pick, which changes nothing, or null without a
-   * valid session. Picking the model @ember answers everyone with leaves theirs to administrators, and a
-   * model is kept only while Ember AI is on, when there are models to pick.
+   * valid session. A null model leaves theirs to administrators, whichever they choose, while a model
+   * stays theirs, even the one @ember answers everyone with, and is kept only while Ember AI is on, when
+   * there are models to pick.
    */
   async changeYourAssistant(credentials: Credentials, changes: YourAssistantChanges): Promise<{ assistant: YourAssistant | null } | "not listed" | null> {
     const session = await this.session(credentials);
@@ -1149,7 +1149,7 @@ export class Workspace extends DurableObject<Env> {
     const { model, ...levels } = changes;
     const assistant = (await this.joinableAccount())?.assistant;
     if (typeof model === "string" && assistant && !assistant.models.some(({ id }) => id === model)) return "not listed";
-    const picked = model === undefined || !assistant ? levels : { ...levels, model: model === assistant.model ? null : model };
+    const picked = model === undefined || !assistant ? levels : { ...levels, model };
     await this.store.changeAssistantPicks(session.user.id, picked);
     const [account, picks] = await Promise.all([this.joinableAccount(), this.store.assistantPicks(session.user.id)]);
     return { assistant: yourAssistantOf(account, picks) };

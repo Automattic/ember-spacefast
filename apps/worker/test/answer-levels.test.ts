@@ -21,8 +21,8 @@ const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api
 /** The models people can pick once Ember AI is on: its own, alone. */
 const MODELS = [{ id: SETUP.model, name: "GLM-4.7 Flash", format: "chat" as const }];
 
-/** @ember's answers to someone at `levels`, under `most`, as their profile shows them, with Ember AI's model. */
-const yours = (levels: AnswerLevels, most: AnswerLevels): YourAssistant => ({ levels, most, model: SETUP.model, defaultModel: SETUP.model, models: MODELS });
+/** @ember's answers to someone at `levels`, under `most`, as their profile shows them, who leaves their model to administrators. */
+const yours = (levels: AnswerLevels, most: AnswerLevels): YourAssistant => ({ levels, most, model: null, defaultModel: SETUP.model, models: MODELS });
 
 const as = (session?: Session | null): Record<string, string> => (session ? { Cookie: session.cookie } : {});
 

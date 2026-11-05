@@ -200,13 +200,14 @@ export interface AssistantChanged {
 /**
  * @ember's answers to you while Ember AI is on, as your profile shows them: the levels of each dial,
  * yours, or where they start until you pick, no higher than the most administrators allow, which it
- * shows too, the model it answers you with, yours while it's one people can pick, or else the one
- * administrators chose for everyone, and the models you can pick from, that one among them.
+ * shows too, the model you picked, while it's one people can pick, even the one administrators chose
+ * for everyone, or else null, when @ember answers you with whichever they choose, the one they chose,
+ * and the models you can pick from, that one among them.
  */
 export interface YourAssistant {
   levels: AnswerLevels;
   most: AnswerLevels;
-  model: string;
+  model: string | null;
   defaultModel: string;
   models: AssistantModel[];
 }
