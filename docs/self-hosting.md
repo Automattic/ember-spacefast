@@ -491,15 +491,16 @@ test question before keeping the setup. @ember then joins every room open to eve
 card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
 who had it keeps it.
 
-The Models list on the Ember AI card has the models people can pick, at most 20, starting with the
-one Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another,
-Add a model offers the catalog's text models nobody can pick yet, asking the one chosen a test
-question before adding it, and Remove takes one out. Each person picks theirs from the Model menu
-under Ember AI on their profile, which shows while there's more than one, and picking the default
-follows the administrators' choice of it. Someone whose model is removed gets the default again, and
-their pick back if it's added again. Changing the model in Set up Ember AI puts the one chosen in
-place of the old default, and turning Ember AI off forgets the list. When the model someone picked
-has run out of credits or won't take the question, @ember's note says they can pick another.
+The Models list on the Ember AI card has the models people can pick, at most 20, starting with the one
+Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another, Add
+a model offers the catalog's text models nobody can pick yet, asking the one chosen a test question
+before adding it, and Remove takes one out. Each person picks theirs from the Model menu under Ember
+AI on their profile, which shows while there's more than one: Default follows the administrators'
+choice, whichever model they choose, and a model picked by name stays theirs, even the one that's the
+default. Someone whose model is removed gets the default again, and their pick back if it's added
+again. Changing the model in Set up Ember AI puts the one chosen in place of the old default, and
+turning Ember AI off forgets the list. When the model someone picked has run out of credits or won't
+take the question, @ember's note says they can pick another.
 
 Mention @ember in a room or a thread, or write to it in a DM, and it answers there: in the thread when
 it's asked in one, typing while its model answers. It reads the thread, its first message and latest

@@ -189,8 +189,8 @@ test.describe("Ember AI", () => {
     // On their profile, they pick it, which Ember keeps.
     await page.goto("/users/me/profile");
     const yours = page.getByRole("region", { name: "Ember AI", exact: true }).getByRole("combobox", { name: "Model" });
-    await expect(yours.getByRole("option")).toHaveText(["GLM-4.7 Flash (default)", "Claude Sonnet 5.5"]);
-    await expect(yours).toHaveValue("@cf/zai-org/glm-4.7-flash");
+    await expect(yours.getByRole("option")).toHaveText(["Default (GLM-4.7 Flash)", "GLM-4.7 Flash", "Claude Sonnet 5.5"]);
+    await expect(yours).toHaveValue("");
     await yours.selectOption("anthropic/claude-sonnet-5.5");
     await expect(yours).toBeEnabled();
     await page.reload();

@@ -828,7 +828,7 @@ export interface Profile {
    * who has nothing to connect.
    */
   memberful: boolean | null;
-  /** How much @ember thinks and how long it answers you, and the most each may be, and the model it answers you with, and the others you can pick, or null while Ember AI is off. */
+  /** How much @ember thinks and how long it answers you, and the most each may be, and the model you picked, if you did, and the ones you can pick, or null while Ember AI is off. */
   assistant: YourAssistant | null;
 }
 
