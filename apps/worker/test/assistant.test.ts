@@ -462,21 +462,21 @@ describe("Ember AI", () => {
       expect(await storedAssistant()).toMatchObject({ name: "Ember", status: 0 });
     });
 
-    it("has Ember's flame as its picture", async () => {
+    it("has Ember's flame on the sunset as its picture", async () => {
       const administrator = await setUp();
       fakeGateway();
       await saved(administrator);
       vi.restoreAllMocks();
-      const flame = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 3);
+      const flame = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" fill="#FF5F0F"/></svg>';
       const builtFiles = {
         fetch: async (input: Request | string | URL) =>
-          new URL(input instanceof Request ? input.url : input).pathname === "/ember-icon.png" ? new Response(flame) : new Response("Not found", { status: 404 }),
+          new URL(input instanceof Request ? input.url : input).pathname === "/assistant-avatar.svg" ? new Response(flame) : new Response("Not found", { status: 404 }),
       } as unknown as Fetcher;
       const { avatarUrl } = (await inDirectory(administrator, ASSISTANT_ID))!;
       const response = await apiWith({ ASSETS: builtFiles }, avatarUrl, { headers: as(administrator) });
       expect(response.status).toBe(200);
-      expect(response.headers.get("Content-Type")).toBe("image/png");
-      expect(new Uint8Array(await response.arrayBuffer())).toEqual(flame);
+      expect(response.headers.get("Content-Type")).toBe("image/svg+xml");
+      expect(await response.text()).toBe(flame);
     });
   });
 });

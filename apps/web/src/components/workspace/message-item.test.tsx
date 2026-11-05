@@ -106,6 +106,12 @@ const optionsOn = (body: string) => within(screen.getByText(body).closest("artic
 /** The open bar of a message's actions. */
 const actionBar = () => screen.getByRole("group", { name: "Message actions" });
 
+/** The buttons and links on the open bar, in order. */
+const barControls = () => [...actionBar().firstElementChild!.querySelectorAll<HTMLElement>("button, a")];
+
+/** What each of the open bar's buttons and links is called, in order: its label, or a reaction's emoji and name. */
+const barNames = () => barControls().map((control) => control.getAttribute("aria-label") ?? control.textContent);
+
 /** The reactions under the one message shown. */
 const reactions = () => within(screen.getByRole("list", { name: "Reactions" }));
 
@@ -232,16 +238,7 @@ describe("Download and share files", () => {
   it("offers Download in place of Quote among a file message's actions", async () => {
     const { user } = show(fileMessage(), { me: grace });
     await user.click(optionsOn("Q3 report.pdf"));
-    const bar = actionBar().firstElementChild!;
-    expect([...bar.querySelectorAll("button, a")].map((control) => control.getAttribute("title"))).toEqual([
-      "Thumbs up",
-      "Clapping",
-      "Waving hand",
-      "Reply in thread",
-      "Download",
-      "Copy link",
-      "More reactions",
-    ]);
+    expect(barNames()).toEqual(["👍Thumbs up", "👏Clapping", "👋Waving hand", "Reply in thread", "Download", "Copy link", "More reactions"]);
     const download = within(actionBar()).getByRole("link", { name: "Download" });
     expect(download).toHaveAttribute("href", report.downloadUrl);
     expect(download).toHaveClass("ios-pwa:hidden");
@@ -251,7 +248,7 @@ describe("Download and share files", () => {
     const share = sharing();
     const { user, article } = show(fileMessage(), { me: grace });
     await user.click(optionsOn("Q3 report.pdf"));
-    expect([...actionBar().firstElementChild!.querySelectorAll("button, a")].map((control) => control.getAttribute("title"))).toContain("Share");
+    expect(barNames()).toContain("Share");
     await user.click(within(actionBar()).getByRole("button", { name: "Share" }));
     await vi.waitFor(() => expect(share).toHaveBeenCalledOnce());
     expect(fetch).toHaveBeenLastCalledWith(report.url);
@@ -433,15 +430,7 @@ describe("Edit a message", () => {
   it("puts Edit before More reactions, and Delete in the editor", async () => {
     const { user } = show(message({ creator: grace }), { administrator: true });
     await user.click(optionsOn("Hello"));
-    expect(within(actionBar()).getAllByRole("button").map((b) => b.title)).toEqual([
-      "Thumbs up",
-      "Clapping",
-      "Waving hand",
-      "Quote",
-      "Copy link",
-      "Edit",
-      "More reactions",
-    ]);
+    expect(barNames()).toEqual(["👍Thumbs up", "👏Clapping", "👋Waving hand", "Reply in thread", "Quote", "Copy link", "Edit", "More reactions"]);
   });
 
   it("edits in place of the message, starting from its text, and Ctrl or Cmd+Enter saves", async () => {
@@ -556,16 +545,7 @@ describe("Message action bar", () => {
     await user.click(options);
     expect(options).toHaveAttribute("aria-expanded", "true");
     expect(options).toHaveAttribute("aria-controls", actionBar().id);
-    const bar = actionBar().firstElementChild!;
-    expect([...bar.querySelectorAll("button, a")].map((control) => control.getAttribute("title"))).toEqual([
-      "Thumbs up",
-      "Clapping",
-      "Waving hand",
-      "Reply in thread",
-      "Quote",
-      "Copy link",
-      "More reactions",
-    ]);
+    expect(barNames()).toEqual(["👍Thumbs up", "👏Clapping", "👋Waving hand", "Reply in thread", "Quote", "Copy link", "More reactions"]);
 
     await user.click(options);
     expect(options).toHaveAttribute("aria-expanded", "false");
@@ -704,6 +684,41 @@ describe("Message action bar", () => {
     await pressAction(user, "Edit");
     expect(screen.queryByRole("button", { name: "Message options" })).not.toBeInTheDocument();
   });
+
+  it("leaves Quote and Copy link to More actions with a mouse", () => {
+    withMouse();
+    const { article } = show(message(), { me: grace });
+    fireEvent.pointerEnter(article, { pointerType: "mouse" });
+    expect(barNames()).toEqual(["👍Thumbs up", "👏Clapping", "👋Waving hand", "Reply in thread", "More reactions"]);
+  });
+
+  it("names each button in a tooltip the moment the pointer reaches it, and shuts it as the pointer leaves", async () => {
+    withMouse();
+    const { article, user } = show(message());
+    fireEvent.pointerEnter(article, { pointerType: "mouse" });
+    const named: (string | null)[] = [];
+    for (const control of [...barControls(), optionsOn("Hello")]) {
+      await user.hover(control);
+      named.push(screen.getByRole("tooltip").textContent);
+    }
+    expect(named).toEqual(["Thumbs up", "Clapping", "Waving hand", "Reply in thread", "Edit", "More reactions", "More actions"]);
+    await user.unhover(optionsOn("Hello"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    await user.click(within(actionBar()).getByRole("button", { name: "More reactions" }));
+    await user.hover(within(screen.getByRole("group", { name: "More reactions" })).getByRole("button", { name: "New boost" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("New boost");
+  });
+
+  it("names nothing as focus reaches a button, so Escape shuts the actions at once", async () => {
+    const { user } = show(message());
+    await user.click(optionsOn("Hello"));
+    await user.keyboard("{Tab}");
+    expect(within(actionBar()).getByRole("button", { name: "Thumbs up" })).toHaveFocus();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(optionsOn("Hello")).toHaveAttribute("aria-expanded", "false");
+  });
 });
 
 describe("More actions on a message", () => {
@@ -726,7 +741,8 @@ describe("More actions on a message", () => {
     const options = optionsOn("Hello");
     fireEvent.pointerEnter(article, { pointerType: "mouse" });
     expect(screen.queryByRole("group", { name: "More actions" })).not.toBeInTheDocument();
-    expect(options).toHaveAttribute("title", "More actions");
+    await user.hover(options);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("More actions");
 
     await user.click(options);
     expect(items()).toEqual(["Quote", "Copy text", "Copy link"]);
@@ -875,8 +891,23 @@ describe("More actions on a message", () => {
     await user.click(optionsOn("Hello"));
     await user.click(optionsOn("Hello"));
     expect(optionsOn("Hello")).toHaveAttribute("aria-expanded", "false");
-    expect(optionsOn("Hello")).not.toHaveAttribute("title");
     expect(screen.queryByRole("group", { name: "More actions" })).not.toBeInTheDocument();
+    // Nor is a tooltip, which fingers can't show.
+    await user.hover(optionsOn("Hello"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("names Message options for what it opens with a mouse: More actions as the bar's last button, or else the bar", async () => {
+    withMouse();
+    const { user } = show(message());
+    await user.hover(optionsOn("Hello"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("More actions");
+
+    // A reaction shuts the bar under the pointer.
+    await user.click(within(actionBar()).getByRole("button", { name: "Thumbs up" }));
+    await user.hover(optionsOn("Hello"));
+    expect(optionsOn("Hello")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Message options");
   });
 });
 
@@ -1075,7 +1106,7 @@ describe("React to a message", () => {
     await pressAction(user, "More reactions");
     const tray = screen.getByRole("group", { name: "More reactions" });
     expect(tray).toHaveTextContent(/^More reactions/);
-    expect(within(tray).getAllByRole("button").map((b) => b.title)).toEqual(["Muscle", "Red heart", "Face with tears of joy", "Party popper", "Fire", "New boost"]);
+    expect(within(tray).getAllByRole("button").map((b) => b.textContent)).toEqual(["💪Muscle", "❤️Red heart", "😂Face with tears of joy", "🎉Party popper", "🔥Fire", "New boost"]);
     await user.click(within(tray).getByRole("button", { name: "Fire" }));
     expect(actions.boost).toHaveBeenCalledWith("m1", "🔥");
     expect(screen.queryByRole("group", { name: "Message actions" })).not.toBeInTheDocument();
