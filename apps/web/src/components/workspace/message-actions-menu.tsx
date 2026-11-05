@@ -58,6 +58,8 @@ interface Props {
   nodes: DisplayNode[];
   /** The message's row: hovering it opens the bar with a mouse, and the bar overlaps its top edge. */
   row: RefObject<HTMLElement | null>;
+  /** Whether the message follows on from the one before, rather than starting a run, whose row has 4px more above it. */
+  threaded: boolean;
   /** Whether Edit and Delete message show: on your own messages, and on everyone's for administrators. */
   editable: boolean;
   /**
@@ -97,7 +99,7 @@ export interface MessageActionsHandle {
  * With a mouse, Message options then opens More actions under the bar, as Slack's does: Quote, Copy text,
  * Copy link, and on messages you can change, Edit message and Delete message.
  */
-export function MessageActionsMenu({ message, nodes, row, editable, threadPath, onReact, onQuote, onEdit, onDelete, onNewBoost, ref }: Props) {
+export function MessageActionsMenu({ message, nodes, row, threaded, editable, threadPath, onReact, onQuote, onEdit, onDelete, onNewBoost, ref }: Props) {
   const [open, setOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -359,12 +361,13 @@ export function MessageActionsMenu({ message, nodes, row, editable, threadPath, 
         // moment with a mouse, and half shown for fingers.
         "opacity-0 touch:opacity-50 group-hover/message:opacity-100! group-focus-within/message:opacity-100! aria-expanded:opacity-100!",
         "[@media(hover:hover)_and_(pointer:fine)]:transition-opacity [@media(hover:hover)_and_(pointer:fine)]:delay-150 [@media(hover:hover)_and_(pointer:fine)]:duration-150 [@media(hover:hover)_and_(pointer:fine)]:ease-in-out",
-        // Message options: at the top right of the message's text, 6px further out for fingers. With a
-        // mouse, the open bar keeps room for it as its last button, which stays shaded while More actions
-        // is open, as More reactions does while its tray is.
+        // Message options: at the top right of the message's text, 6px further out for fingers, so 4px
+        // lower on a run's first message, whose text starts 4px lower in its row. With a mouse, the open bar
+        // keeps room for it as its last button, which stays shaded while More actions is open, as More
+        // reactions does while its tray is.
         pinned
           ? "fixed top-(--trigger-top) left-(--trigger-left) z-31"
-          : "absolute -top-1.5 right-5 max-md:right-3 touch:-top-[11px] touch:translate-x-1.5",
+          : cn("absolute right-5 max-md:right-3 touch:translate-x-1.5", threaded ? "-top-1.5 touch:-top-[11px]" : "-top-0.5 touch:-top-[7px]"),
         pinned && actionsOpen && "bg-hover",
       )}
     >

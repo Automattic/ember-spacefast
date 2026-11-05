@@ -381,6 +381,7 @@ export const MessageItem = memo(function MessageItem({ message, me, threaded: fo
           message={message}
           nodes={quoted}
           row={article}
+          threaded={threaded}
           editable={mine || me.administrator}
           // A reply shown in the room opens its own thread, which its parent's is.
           threadPath={thread ? undefined : threadPath(message.roomId, message.parentId ?? message.id)}
