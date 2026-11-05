@@ -1,4 +1,5 @@
-import { EMBER_REPOSITORY, type ReleaseCheck } from "@ember/protocol";
+import { EMBER_REPOSITORY, type CopyOnGitHub, type ReleaseCheck } from "@ember/protocol";
+import type { Env } from "./env";
 import { releaseNameOf, VERSION } from "./version";
 
 // Whether a newer release of Ember is out, which General settings tells administrators, with how to
@@ -49,13 +50,14 @@ export function forgetNewestRelease(): void {
 
 /**
  * What General settings says of releases: this Ember's, and the newest on GitHub, with whether it's newer,
- * or null when GitHub didn't name one. GitHub is asked again only once what it said last is no longer
- * kept, or for a check made `afresh` a minute after this isolate last asked, in a subrequest for each
- * address it redirects to. Requests that find it due at the same time each ask, since a subrequest
- * belongs to the request that made it, which can end first, but one that hears no release doesn't
- * replace a release another heard meanwhile, or one that's still kept.
+ * or null when GitHub didn't name one, and the copy this is on GitHub, which it says how to update. GitHub
+ * is asked again only once what it said last is no longer kept, or for a check made `afresh` a minute
+ * after this isolate last asked, in a subrequest for each address it redirects to. Requests that find it
+ * due at the same time each ask, since a subrequest belongs to the request that made it, which can end
+ * first, but one that hears no release doesn't replace a release another heard meanwhile, or one that's
+ * still kept.
  */
-export async function releaseCheck(afresh = false): Promise<ReleaseCheck> {
+export async function releaseCheck(env: Env, afresh = false): Promise<ReleaseCheck> {
   if (!heard || Date.now() >= heard.until || (afresh && Date.now() >= askedAt + AFRESH_AFTER_MS)) {
     askedAt = Date.now();
     const release = await newestOnGitHub().catch((error: unknown) => {
@@ -68,7 +70,21 @@ export async function releaseCheck(afresh = false): Promise<ReleaseCheck> {
   return {
     release: releaseNameOf(VERSION),
     newest: newest && { release: releaseNameOf(newest.version), notes: newest.page, newer: isNewer(newest.version, VERSION) },
+    copy: copyOf(env),
   };
+}
+
+/** A repository's `owner/name`, in the characters GitHub allows in each. */
+const REPOSITORY = /^[\w-]+\/[\w.-]+$/;
+
+/**
+ * The copy of Ember this is on GitHub, as `pnpm run deploy` told the Worker, or null where it didn't,
+ * as it doesn't for Ember's own repository, nor for a deploy by any other means.
+ */
+function copyOf(env: Env): CopyOnGitHub | null {
+  const repository = env.GITHUB_REPOSITORY?.trim() ?? "";
+  const branch = env.GIT_BRANCH?.trim() ?? "";
+  return REPOSITORY.test(repository) && branch ? { repository, branch, workflow: env.UPDATE_WORKFLOW === "true" } : null;
 }
 
 /** Ember's newest release, as GitHub's page for its latest redirects to that release's, or null when it doesn't. */

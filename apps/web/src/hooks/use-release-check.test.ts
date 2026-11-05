@@ -11,6 +11,7 @@ vi.mock("@/lib/api", () => ({ checkForRelease: vi.fn(), checkForReleaseAfresh: v
 const newestIs = (newest: string): ReleaseCheck => ({
   release: "0.1",
   newest: { release: newest, notes: `https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v${newest}.0`, newer: true },
+  copy: null,
 });
 
 /** The browser's idle callbacks, which run when a test says, unless they're cancelled first. */

@@ -54,7 +54,11 @@ Worker goes to, as `CLOUDFLARE_ACCOUNT_ID`, which a Worker can't find out by its
 [Set up Ember AI](#ember-ai) to fill in: the account the `CLOUDFLARE_ACCOUNT_ID` environment
 variable names, if it's set, or else the only one your login reaches, as a Deploy to Cloudflare
 build's token does. A login that reaches several gives none, unless you set the variable, and the
-field starts blank.
+field starts blank. Where git's origin is a copy of Ember on GitHub, as a Deploy to Cloudflare build's
+is, the deploy tells the Worker about it in three variables, for General's release card to link to
+its Update Ember workflow ([Updating](#updating)): `GITHUB_REPOSITORY`, the copy's `owner/name`;
+`GIT_BRANCH`, the branch that deploys, Workers Builds' or else `main`; and `UPDATE_WORKFLOW`, `true`
+where the copy has the workflow. A `--var` of the same name keeps its own value.
 
 Whoever deployed Ember sets it up, and nobody else. After Deploy to Cloudflare, open the Worker's
 address and type the setup password you gave the form: `/first_run` asks for it before the
@@ -123,10 +127,13 @@ pull request's branch as a Preview, and the pull request shows whether it built;
 is for, since `wrangler.jsonc` gives Previews none of Ember's bindings and no address.
 
 Ember tells its administrators too: while a newer release is out, Admin on the rail has a dot, and
-General, in Community settings, names the release, with its notes and how to update. To know, the
-Worker asks GitHub for the page of Ember's latest release once an administrator has Ember open, telling
-it nothing but the version it is, and keeps the answer for six hours, but asks again each time an
-administrator opens Admin, at most once a minute.
+General, in Community settings, names the release, with its notes and how to update. For a copy the
+deploy told the Worker about, **Open GitHub action to update** opens the copy's Update Ember workflow
+on GitHub, where **Run workflow** opens the pull request now, or, while the copy has no workflow,
+**Add GitHub action to update** opens GitHub's editor with it filled in, as the build log's link does.
+To know, the Worker asks GitHub for the page of Ember's latest release once an administrator has Ember
+open, telling it nothing but the version it is, and keeps the answer for six hours, but asks again
+each time an administrator opens Admin, at most once a minute.
 
 A new GitHub repository doesn't let workflows open pull requests, so until yours does, the workflow
 opens an issue instead, with a link that opens the pull request for you to merge. To have it open them

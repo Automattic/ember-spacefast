@@ -770,6 +770,19 @@ export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.m
 export interface ReleaseCheck {
   release: string;
   newest: { release: string; notes: string; newer: boolean } | null;
+  /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
+  copy: CopyOnGitHub | null;
+}
+
+/**
+ * A copy of Ember on GitHub, as its deploy tells the Worker: its repository, as `owner/name`, the branch
+ * that deploys, and whether it has the Update Ember workflow, for General's release card to link to
+ * running it, or to adding it.
+ */
+export interface CopyOnGitHub {
+  repository: string;
+  branch: string;
+  workflow: boolean;
 }
 
 /** The roles an administrator can give someone with the crown on workspace settings. Bots stay bots. */
