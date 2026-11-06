@@ -85,7 +85,7 @@ describe("Chat bots page", () => {
       screen.getByText(
         "Chat bots let other apps and services post in your rooms, and reply when people talk to them. " +
           "Each of a bot's rooms gets two addresses below, one for posting text or a file and one that takes a Slack incoming webhook's payload. " +
-          "Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers.",
+          "Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers within 30 seconds.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Add a chat bot" })).toHaveAttribute("href", "/account/bots/new");

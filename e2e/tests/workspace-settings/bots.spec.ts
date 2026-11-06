@@ -28,7 +28,7 @@ async function addBot(page: Page, name: string, webhookUrl = "") {
   await page.getByRole("link", { name: "Add a chat bot" }).click();
   await expect(page).toHaveURL(/\/account\/bots\/new$/);
   await page.getByRole("textbox", { name: "Bot name" }).fill(name);
-  await page.getByRole("textbox", { name: "Webhook URL" }).fill(webhookUrl);
+  await page.getByRole("textbox", { name: "Webhook URL", exact: true }).fill(webhookUrl);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page).toHaveURL(/\/account\/bots$/);
 }
@@ -104,11 +104,16 @@ test.describe("Add and edit a bot", () => {
     const general = botNamed(page, name).getByRole("group", { name: "general", exact: true });
     await expect(general.getByRole("textbox", { name: "curl command for posting messages" })).toHaveValue(COMMAND);
     await expect(general.getByRole("textbox", { name: "curl command for posting attachments" })).toHaveValue(/^curl -F "attachment=@\/path\/to\/file" https:/);
+    const command = await general.getByRole("textbox", { name: "curl command for posting messages" }).inputValue();
 
     await botNamed(page, name).getByRole("link", { name: `Edit ${name}` }).click();
     await expect(page).toHaveURL(/\/account\/bots\/[^/]+\/edit$/);
     await expect(page.getByRole("textbox", { name: "Bot name" })).toHaveValue(name);
-    await expect(page.getByRole("textbox", { name: "Webhook URL" })).toHaveValue("https://ci.example.com/hook");
+    await expect(page.getByRole("textbox", { name: "Webhook URL", exact: true })).toHaveValue("https://ci.example.com/hook");
+    // Its settings give the same commands, a room at a time.
+    const incoming = page.getByRole("region", { name: "Incoming" });
+    await incoming.getByRole("combobox", { name: "Room" }).selectOption({ label: "general" });
+    await expect(incoming.getByRole("group", { name: "general", exact: true }).getByRole("textbox", { name: "curl command for posting messages" })).toHaveValue(command);
     const renamed = `Deploy Bot ${crypto.randomUUID().slice(0, 8)}`;
     await page.getByRole("textbox", { name: "Bot name" }).fill(renamed);
     await page.getByRole("button", { name: "Save changes" }).click();
