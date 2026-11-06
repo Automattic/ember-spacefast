@@ -43,10 +43,10 @@ export function useAdministratorsOnly(onFailed: (error: unknown) => void) {
 }
 
 /**
- * The Chat bots page: Add a chat bot, then each active bot by name, with a link to its settings and, for
- * each room it's in, the commands that post to the room as it, which their buttons copy. Go Back returns
- * to workspace settings. A bot deleted or renamed elsewhere leaves or is renamed here as soon as the
- * people directory hears of it.
+ * The Chat bots page: what bots do, in short, and Add a chat bot, then each active bot by name, with a
+ * link to its settings and, for each room it's in, the commands that post to the room as it, which their
+ * buttons copy. Go Back returns to workspace settings. A bot deleted or renamed elsewhere leaves or is
+ * renamed here as soon as the people directory hears of it.
  */
 export function BotsPage({ onFailed }: { onFailed: (error: unknown) => void }) {
   const [bots, setBots] = useState<Bot[] | null>(null);
@@ -76,7 +76,11 @@ export function BotsPage({ onFailed }: { onFailed: (error: unknown) => void }) {
             <h1 className="text-[23px] leading-[1.3] font-[650]">Chat bots</h1>
             <TranslationButton translations="chat_bots" />
           </div>
-          <p className="text-muted-foreground">With Chat bots, other sites and services can post updates directly to Ember.</p>
+          <p className="mb-4 text-muted-foreground">
+            Chat bots let other apps and services post in your rooms, and reply when people talk to them.
+            Each of a bot's rooms gets two addresses below, one for posting text or a file and one that takes a Slack incoming webhook's payload.
+            Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers.
+          </p>
           <Button asChild className={PRIMARY_BUTTON}>
             <PageLink href={NEW_BOT_PATH} aria-label="Add a chat bot">
               <Plus className="h-5 w-[1.3em]" />
