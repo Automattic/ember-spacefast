@@ -74,7 +74,8 @@ nothing for downloads.
 Point Alertmanager, Grafana, your CI pipeline, or anything else that posts to a Slack incoming webhook
 at Ember instead. Every bot gets a Slack-compatible webhook URL for each of its rooms, which takes the
 same payloads, with Slack's formatting, attachments and Block Kit cards. Bots can answer too: mention
-one, or DM it, and Ember sends the message to the bot's own webhook and posts its reply.
+one, or DM it, and Ember sends the message to the bot's own webhook and posts what it answers within
+30 seconds.
 
 ![Alerts from a monitoring bot, firing and resolved, in the Support room](docs/screenshots/bots.png)
 

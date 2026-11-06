@@ -79,7 +79,7 @@ export function BotsPage({ onFailed }: { onFailed: (error: unknown) => void }) {
           <p className="mb-4 text-muted-foreground">
             Chat bots let other apps and services post in your rooms, and reply when people talk to them.
             Each of a bot's rooms gets two addresses below, one for posting text or a file and one that takes a Slack incoming webhook's payload.
-            Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers.
+            Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers within 30 seconds.
           </p>
           <Button asChild className={PRIMARY_BUTTON}>
             <PageLink href={NEW_BOT_PATH} aria-label="Add a chat bot">
@@ -133,12 +133,21 @@ function BotItem({ bot }: { bot: Bot }) {
  * fieldset with the room's name on its border.
  */
 function RoomCommands({ room, botKey }: { room: BotRoom; botKey: string }) {
-  const url = new URL(botMessagesPath(room.id, botKey), location.origin).href;
   return (
     <fieldset className="flex min-w-0 flex-col gap-x-[1ch] gap-y-4 rounded-[10px] border border-muted-foreground px-[1ch] py-4">
       <legend className="mx-auto flex max-w-full min-w-0 justify-center px-[1ch] text-start">
         <strong className="truncate">{room.name}</strong>
       </legend>
+      <PostingCommands room={room} botKey={botKey} />
+    </fieldset>
+  );
+}
+
+/** The commands that post to `room` as the bot whose key is `botKey`, and its Slack-compatible webhook, each with a button that copies it. */
+export function PostingCommands({ room, botKey }: { room: BotRoom; botKey: string }) {
+  const url = new URL(botMessagesPath(room.id, botKey), location.origin).href;
+  return (
+    <>
       <Command
         icon={<ChatBubbleEmpty className="size-6 flex-none" />}
         command={curlTextLine(url)}
@@ -157,7 +166,7 @@ function RoomCommands({ room, botKey }: { room: BotRoom; botKey: string }) {
         label="Slack-compatible webhook URL"
         copyLabel="Copy Slack-compatible webhook URL"
       />
-    </fieldset>
+    </>
   );
 }
 
@@ -166,7 +175,8 @@ function Command({ icon, command, label, copyLabel }: { icon: ReactNode; command
     <div className="flex items-center gap-x-[1ch]">
       {icon}
       <div className="min-w-0 grow">
-        <input type="text" value={command} aria-label={label} readOnly className={INPUT} />
+        {/* A command is there to be copied, so Enter in one doesn't send a form around it, as the bot form is. */}
+        <input type="text" value={command} aria-label={label} readOnly onKeyDown={(event) => event.key === "Enter" && event.preventDefault()} className={INPUT} />
       </div>
       {/* `.txt-small`, which draws the icon smaller. */}
       <div className="text-[0.8rem]">
