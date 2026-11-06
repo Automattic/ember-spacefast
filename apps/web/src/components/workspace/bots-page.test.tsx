@@ -84,7 +84,7 @@ describe("Chat bots page", () => {
     expect(
       screen.getByText(
         "Chat bots let other apps and services post in your rooms, and reply when people talk to them. " +
-          "Each of a bot's rooms gets its own address below, which takes text, a file or a Slack incoming webhook's payload. " +
+          "Each of a bot's rooms gets two addresses below, one for posting text or a file and one that takes a Slack incoming webhook's payload. " +
           "Give a bot a webhook URL, and Ember sends it every message that @mentions it or is sent to it in a DM, then posts whatever it answers.",
       ),
     ).toBeInTheDocument();
