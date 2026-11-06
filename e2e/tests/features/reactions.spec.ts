@@ -4,15 +4,13 @@ import { expect, test, type Member } from "./fixtures";
 /** The reactions under the message whose text includes `text`, as `member` sees them. */
 const reactions = (member: Member, text: string) => member.message(text).getByRole("list", { name: "Reactions" });
 
-/** Reacts to the message whose text includes `text` from its bar, which the pointer opens as it comes back to the message. */
+/** Reacts to the message whose text includes `text` from its bar. */
 async function react(member: Member, text: string, name: string) {
-  await member.composer().hover();
   await (await member.actions(text)).getByRole("button", { name }).click();
 }
 
 /** Opens New boost's form on the message whose text includes `text`, from its bar's tray, and returns its field. */
 async function newBoost(member: Member, text: string): Promise<Locator> {
-  await member.composer().hover();
   const bar = await member.actions(text);
   await bar.getByRole("button", { name: "More reactions" }).click();
   await bar.getByRole("button", { name: "New boost" }).click();

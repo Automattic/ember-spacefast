@@ -429,6 +429,8 @@ test.describe("Message action bar", () => {
     expect((await box(tray)).y).toBeGreaterThan(quickBefore.y);
     await ada.page.keyboard.press("Tab");
     await expect(tray.getByRole("button", { name: "Muscle" })).toBeFocused();
+    // The click shut the tooltip that named More reactions as the pointer reached it, which takes Escape until it has faded.
+    await expect(ada.page.getByRole("tooltip")).toHaveCount(0);
     await ada.page.keyboard.press("Escape");
     await expect(tray).toBeHidden();
     await expect(more).toBeFocused();
