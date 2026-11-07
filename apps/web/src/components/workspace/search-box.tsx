@@ -25,7 +25,7 @@ import { navigate, pageMark } from "@/hooks/use-route";
 import { clearSearches, fetchSearch, isSignedOut, recordSearch } from "@/lib/api";
 import { roomName } from "@/lib/directs";
 import { opensFind } from "@/lib/keyboard";
-import { FLAG_LABELS, keepAnswer, modifierTyped, withTypedFilters, type TypedModifier } from "@/lib/search";
+import { FLAG_LABELS, keepAnswer, modifierTyped, withoutFromMe, withTypedFilters, type TypedModifier } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { returnFocus } from "./new-direct-dialog";
 import { UserAvatar } from "./user-avatar";
@@ -336,7 +336,8 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
         type(before);
         return scopeTo({ in: option.room.id });
       case "person":
-        type(before);
+        // In place of a from:me typed before, which would otherwise win as the search is made.
+        type(withoutFromMe(before));
         return scopeTo({ from: option.person.id });
       case "flag":
         type(before);

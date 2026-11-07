@@ -52,6 +52,9 @@ export function withTypedFilters(search: Search, meId: string): Search {
   return normalizedSearch({ ...search, ...filters, q: words });
 }
 
+/** `text` without the `from:me` typed in full in it, whose place a person picked for From takes. */
+export const withoutFromMe = (text: string) => text.replace(/(^|\s)from:@?me(?=\s|$)/giu, "").trim();
+
 /** What marks the words a match matched in its text: each one whole, however it's cased, longest first. */
 export function marksFor(words: readonly string[]): RegExp | null {
   const marked = words.filter((word) => word !== "");

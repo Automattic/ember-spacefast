@@ -1,6 +1,6 @@
 import type { SearchResults } from "@ember/protocol";
 import { describe, expect, it } from "vitest";
-import { flagNamed, keepAnswer, marksFor, modifierTyped, sameSearch, takeAnswer, withTypedFilters } from "./search";
+import { flagNamed, keepAnswer, marksFor, modifierTyped, sameSearch, takeAnswer, withoutFromMe, withTypedFilters } from "./search";
 
 /** What `marks` marks in `text`. */
 const marked = (marks: RegExp | null, text: string) => [...text.matchAll(marks!)].map((match) => match[0]);
@@ -38,6 +38,12 @@ describe("Modifiers as they're typed", () => {
     // The others are words until the box's list names what they mean.
     expect(withTypedFilters({ q: "from:Priya in:general has:pin" }, "u1")).toEqual({ q: "from:Priya in:general has:pin" });
     expect(withTypedFilters({ q: "launch", in: "general" }, "u1")).toEqual({ q: "launch", in: "general" });
+  });
+
+  it("takes from:me typed in full out of what's typed, for someone picked in its place", () => {
+    expect(withoutFromMe("from:me deploy FROM:@me notes")).toBe("deploy notes");
+    expect(withoutFromMe("deploy from:me")).toBe("deploy");
+    expect(withoutFromMe("from:mel deploy:from:me")).toBe("from:mel deploy:from:me");
   });
 });
 

@@ -292,6 +292,16 @@ describe("Search filters", () => {
     expect(screen.getByText("No people match.")).toBeVisible();
   });
 
+  it("searches for someone picked from from:'s list, in place of a from:me typed before", async () => {
+    serve();
+    const { user } = showBox();
+    await user.keyboard("from:me deploy from:gr{Enter}");
+    expect(tokens()).toEqual(["from:Grace Hopper"]);
+    expect(field()).toHaveValue("deploy");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(here()).toBe("/searches?q=deploy&from=u2"));
+  });
+
   it("completes from: with people who've been deactivated or suspended too, but not anyone banned, whatever the case of what's typed", async () => {
     serve();
     const left = (id: string, name: string, status: DirectoryUser["status"]): DirectoryUser => ({ ...person(id, name), status });

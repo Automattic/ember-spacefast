@@ -256,6 +256,13 @@ describe("Search results mark what a search matched", () => {
     expect(within(content).getByRole("link", { name: "the launch notes" }).querySelector("mark")).toHaveTextContent("launch");
   });
 
+  it("marks a word in each part of it that formatting splits, but not a part of a longer word, nor words across blocks", () => {
+    const content = showMarked("<p><strong>de</strong>ploy, <em>re</em>deploy <span>dep</span><s>loy</s></p><p>de</p><p>ploy</p>", ["deploy"]);
+    expect([...content.querySelectorAll("mark[data-search-match]")].map((mark) => mark.textContent)).toEqual(["de", "ploy", "dep", "loy"]);
+    expect(content.querySelector("strong mark")).toHaveTextContent("de");
+    expect(content.textContent).toBe("deploy, redeploy deploydeploy");
+  });
+
   it("keeps the words it matched in a code block marked once the code is highlighted", async () => {
     const content = showMarked('<pre data-language="javascript">const deploy = "deploy now";</pre>', ["deploy"]);
     await highlighted(content);
