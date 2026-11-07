@@ -15,7 +15,7 @@ import {
   type UserId,
 } from "@ember/protocol";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatRoom } from "../src/chat-room";
 import type { Env } from "../src/env";
@@ -38,6 +38,7 @@ import {
   searchSql,
   shown,
   signIn,
+  standInForRooms,
   upload,
   workspaceSql,
   workspaceStub,
@@ -428,6 +429,41 @@ describe("Search messages", () => {
     await runRoomAlarm(room);
     await caughtUp(room);
     for (const filter of [{ from: ada.me.id }, { hasLink: true }, { withMe: true }] as const) expect(await found(ada.session, { q: "medlar", ...filter }), JSON.stringify(filter)).toEqual([message.id]);
+  });
+
+  it("has every room index its messages again on its own once the update that asks for it restarts the Workspace", async () => {
+    const errors = vi.spyOn(console, "error");
+    const room = await freshRoom("updated");
+    const ada = await connect(room, "Ada");
+    const message = await post(ada, "quince cheese");
+    await caughtUp(room);
+    // As a message the index took before it kept what filters need is, in the search that missed it.
+    await searchSql("UPDATE search_messages SET creator_id = NULL");
+    const fromAda = { q: "", in: room, from: ada.me.id };
+    expect(await found(ada.session, fromAda)).toEqual([]);
+
+    // The update's migration queues every room due at once, and the deploy restarts the Workspace.
+    await workspaceSql(MIGRATIONS.find(({ name }) => name === "0047_search_filters.sql")!.sql);
+    await evictDurableObject(workspaceStub());
+    await vi.waitFor(async () => expect(await found(ada.session, fromAda)).toEqual([message.id]), { timeout: 5_000 });
+    expect(await workspaceSql("SELECT count(*) AS n FROM pending_reindexes")).toEqual([{ n: 0 }]);
+    expect(errors).not.toHaveBeenCalledWith("Could not schedule the outbox's deliveries", expect.anything());
+  });
+
+  it("asks the rooms one run of the alarm leaves to index their messages again right after", async () => {
+    const asked: RoomId[] = [];
+    const giveBack = await standInForRooms({ reindex: async (roomId) => void asked.push(roomId) });
+    try {
+      // More rooms than a run asks, all due at once, as the update's migration queues them in a busy workspace.
+      const rooms = Array.from({ length: 45 }, (_, i) => `room-${i}`);
+      await workspaceSql("INSERT INTO pending_reindexes (room_id, due_at) SELECT value, 0 FROM json_each(?)", JSON.stringify(rooms));
+
+      await runInDurableObject(workspaceStub(), (instance: Workspace) => instance.alarm());
+      await vi.waitFor(async () => expect(await workspaceSql("SELECT count(*) AS n FROM pending_reindexes")).toEqual([{ n: 0 }]), { timeout: 5_000 });
+      expect(asked.toSorted()).toEqual(rooms.toSorted());
+    } finally {
+      await giveBack();
+    }
   });
 
   it("takes each room's changes in order, so a call that arrives late changes nothing, and numbers messages by when they were written", async () => {
