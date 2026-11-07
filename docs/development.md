@@ -111,8 +111,10 @@ and may skip any number of releases or go back one, so:
   leaves: drop a column or table a release after the code stops using it.
 - `.github/workflows/update-ember.yml` stays as it is, since an update can't change a copy's
   workflows: change `apps/worker/scripts/update-ember.ts`, which updates bring, instead. Its copy
-  beside that script, which the deploy offers copies without the workflow, as Deploy to
-  Cloudflare's are, is the same file, as a test checks.
+  beside that script, which the deploy and General's release card offer copies without the
+  workflow, as Deploy to Cloudflare's are, is the same file, as CI checks. The tests read that
+  copy, never `.github`, since a copy's `.github` keeps its own workflow, or none, and a copy's
+  owner may run them.
 - Ember's other workflows run only in its own repository, and `pnpm run deploy` stays the deploy
   command, which every copy's Workers Builds runs.
 

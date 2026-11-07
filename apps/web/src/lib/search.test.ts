@@ -1,6 +1,6 @@
 import type { SearchResults } from "@ember/protocol";
 import { describe, expect, it } from "vitest";
-import { flagNamed, keepAnswer, marksFor, modifierTyped, sameSearch, takeAnswer, withoutFromMe, withTypedFilters } from "./search";
+import { flagNamed, keepAnswer, marksFor, modifierTyped, sameSearch, takeAnswer, withoutFlag, withoutFromMe, withTypedFilters } from "./search";
 
 /** What `marks` marks in `text`. */
 const marked = (marks: RegExp | null, text: string) => [...text.matchAll(marks!)].map((match) => match[0]);
@@ -44,6 +44,13 @@ describe("Modifiers as they're typed", () => {
     expect(withoutFromMe("from:me deploy FROM:@me notes")).toBe("deploy notes");
     expect(withoutFromMe("deploy from:me")).toBe("deploy");
     expect(withoutFromMe("from:mel deploy:from:me")).toBe("from:mel deploy:from:me");
+  });
+
+  it("takes the modifiers typed in full for one flag out of what's typed, for its chip turned off", () => {
+    expect(withoutFlag("has:link deploy HAS:LINK notes has:file", "hasLink")).toBe("deploy notes has:file");
+    expect(withoutFlag("deploy is:thread", "inThread")).toBe("deploy");
+    expect(withoutFlag("with:me deploy with:@me", "withMe")).toBe("deploy with:@me");
+    expect(withoutFlag("has:links deploy:has:link has:", "hasLink")).toBe("has:links deploy:has:link has:");
   });
 });
 
