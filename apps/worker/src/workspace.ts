@@ -3300,10 +3300,13 @@ export class Workspace extends DurableObject<Env> {
     }
   }
 
-  /** Sets the alarm for `time`, unless it's already set for sooner. */
+  /**
+   * Sets the alarm for `time`, unless it's already set for sooner, and for now if `time` has passed:
+   * the runtime refuses an alarm at 0, the time the migrations that reindex every room queue them for.
+   */
   private async wakeAt(time: number): Promise<void> {
     const alarm = await this.ctx.storage.getAlarm();
-    if (alarm === null || alarm > time) await this.ctx.storage.setAlarm(time);
+    if (alarm === null || alarm > time) await this.ctx.storage.setAlarm(Math.max(time, Date.now()));
   }
 
   /**
