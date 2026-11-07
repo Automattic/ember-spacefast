@@ -9,7 +9,7 @@ import { dateLabel, dateTimeLabel, timeline } from "@/lib/messages";
 import type { Focus, RoomState } from "@/lib/room-state";
 import { cn } from "@/lib/utils";
 import { InvitationCard } from "./invitation-card";
-import { RecentCustomReactions, recentCustomReactions } from "./message-boosts";
+import { mockVariant, RecentCustomReactions, recentCustomReactions } from "./message-boosts";
 import { MessageItem, type MessageActions, type MessageEditors, type ThreadPlace } from "./message-item";
 
 /**
@@ -144,8 +144,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
   // messages first, unless it's a permalink's, whose message goes in the middle.
   const [drawnAll, setDrawnAll] = useState(false);
   const items = timeline(state.messages);
-  // MOCK: the custom reactions design 5 offers.
-  const recentCustom = useMemo(() => recentCustomReactions(state.messages), [state.messages]);
+  // MOCK: the custom reactions design 5 offers, worked out only where it shows.
+  const recentCustom = useMemo(() => (mockVariant() === 5 ? recentCustomReactions(state.messages) : []), [state.messages]);
   const newestFirst = !drawnAll && !state.focus?.messageId && items.length > FIRST_DRAWN;
 
   const nearEnd = (el: HTMLElement) => !state.hasNewer && el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;

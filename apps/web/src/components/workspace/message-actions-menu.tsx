@@ -68,7 +68,8 @@ interface Props {
    * thread, whose own composer is there to reply in.
    */
   threadPath?: string;
-  onReact: (emoji: string) => void;
+  /** Sends a reaction, answering whether it was sent. */
+  onReact: (emoji: string) => boolean;
   /** Writes a reply in the composer, given the quote it starts with. */
   onQuote: (quote: string) => void;
   onEdit: () => void;
@@ -154,6 +155,13 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
     closeAfterReacting();
   };
 
+  // MOCK 4: a reaction you've typed stays in its field where it can't be sent, as the Custom reaction form's does.
+  const reactWithOwn = (content: string) => {
+    if (!onReact(content)) return false;
+    closeAfterReacting();
+    return true;
+  };
+
   // Quote and Edit close the bar too, as their `message-actions#close` does, and take focus themselves, as
   // the thread Reply in thread opens does.
   const quote = (quoted: string) => {
@@ -180,9 +188,10 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
     if (!onDelete()) trigger.current?.focus({ preventScroll: true });
   };
 
+  // The first emoji, past design 4's X (MOCK).
   const focusFirstReaction = () => {
     focusingTray.current = false;
-    tray.current?.querySelector("button")?.focus({ preventScroll: true });
+    tray.current?.querySelector<HTMLElement>("[data-reactions] button")?.focus({ preventScroll: true });
   };
 
   const focusFirstAction = () => {
@@ -483,7 +492,7 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
             ) : (
               <span className="mx-[3px] mb-[5px] block text-[11px] leading-normal font-medium text-muted-foreground">More reactions</span>
             )}
-            <div className={cn("flex flex-wrap", mockVariant() === 4 && "justify-between")}>
+            <div data-reactions className={cn("flex flex-wrap", mockVariant() === 4 && "justify-between")}>
               {REACTIONS.slice(QUICK_REACTION_COUNT).map(([emoji, title]) => (
                 <Reaction key={emoji} emoji={emoji} title={title} onClick={() => react(emoji)} />
               ))}
@@ -496,7 +505,7 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
                 </ActionTooltip>
               )}
             </div>
-            {mockVariant() === 4 && <TrayField onReact={react} />}
+            {mockVariant() === 4 && <TrayField onReact={reactWithOwn} />}
           </div>
           <div
             ref={actionsPanel}
@@ -564,9 +573,9 @@ function ActionTooltip({ label, children }: { label: string; children: ReactElem
 
 /**
  * MOCK 4, In the tray: a field under More reactions' emoji for a reaction of your own, with Send in it. Enter
- * or Send adds it and closes the bar, as an emoji does.
+ * or Send adds it and closes the bar, as an emoji does, answering whether it was sent.
  */
-function TrayField({ onReact }: { onReact: (content: string) => void }) {
+function TrayField({ onReact }: { onReact: (content: string) => boolean }) {
   const [value, setValue] = useState("");
   const left = 16 - value.length;
   return (
@@ -574,9 +583,7 @@ function TrayField({ onReact }: { onReact: (content: string) => void }) {
       className="mt-1.5 flex h-9 min-w-0 items-center gap-1.5 rounded-[9px] border bg-background pr-1 pl-2.5 transition-shadow duration-150 focus-within:ring-2 focus-within:ring-selected-dark touch:h-11 touch:pr-0"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!/^\S/.test(value)) return;
-        onReact(value);
-        setValue("");
+        if (/^\S/.test(value) && onReact(value)) setValue("");
       }}
     >
       <input

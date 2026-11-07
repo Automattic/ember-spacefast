@@ -316,20 +316,23 @@ function Remaining({ value, className }: { value: string; className?: string }) 
   return <span className={cn("shrink-0 text-[11px] leading-none whitespace-nowrap text-muted-foreground tabular-nums", left === 0 && "text-negative", className)}>{left} left</span>;
 }
 
-/** The field every redesign shares: up to 16 characters that can't start with a space, named Custom reaction. */
+/**
+ * The field every redesign shares: up to 16 characters that can't start with a space, named Custom reaction,
+ * or by the label for its `id` where it has one.
+ */
 function ReactionField({
+  id,
   fieldRef,
   value,
   onValue,
   placeholder = "Emoji or a short message",
-  labelled = false,
   className,
 }: {
+  id?: string;
   fieldRef?: Ref<HTMLInputElement>;
   value: string;
   onValue: (value: string) => void;
   placeholder?: string;
-  labelled?: boolean;
   className?: string;
 }) {
   const hint = useId();
@@ -337,8 +340,8 @@ function ReactionField({
     <>
       <input
         ref={fieldRef}
-        id={labelled ? "mock-custom-reaction" : undefined}
-        aria-label={labelled ? undefined : "Custom reaction"}
+        id={id}
+        aria-label={id ? undefined : "Custom reaction"}
         name="content"
         type="text"
         autoFocus
@@ -460,6 +463,7 @@ function SlimReaction({ fieldRef, onAdd, onCancel }: FormProps) {
  */
 function PopoverReaction({ fieldRef, onAdd, onCancel }: FormProps) {
   const { form, value, setValue, onSubmit, onKeyDown } = useReactionForm({ onAdd, onCancel });
+  const field = useId();
   return (
     <div
       data-mock-form
@@ -467,14 +471,14 @@ function PopoverReaction({ fieldRef, onAdd, onCancel }: FormProps) {
     >
       <form ref={form} onSubmit={onSubmit} onKeyDown={onKeyDown} className="grid gap-1">
         <div className="flex items-center gap-2 pl-1.5">
-          <label htmlFor="mock-custom-reaction" className="text-[11px] leading-normal font-medium text-muted-foreground">
+          <label htmlFor={field} className="text-[11px] leading-normal font-medium text-muted-foreground">
             Custom reaction
           </label>
           <Remaining value={value} className="ml-auto" />
           <CloseButton onClick={onCancel} className={cn("size-6 touch:size-11", value.length < MAX_BOOST_LENGTH - 5 && "ml-auto")} />
         </div>
         <div className={cn(FIELD_BOX, "mx-0.5 h-9 px-2.5 touch:h-11")}>
-          <ReactionField fieldRef={fieldRef} value={value} onValue={setValue} labelled className="flex-1 text-sm" />
+          <ReactionField id={field} fieldRef={fieldRef} value={value} onValue={setValue} className="flex-1 text-sm" />
         </div>
       </form>
     </div>
