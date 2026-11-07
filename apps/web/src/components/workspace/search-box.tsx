@@ -124,8 +124,8 @@ export function RoomMark({ room, size }: { room: Room | null; size: number }) {
   );
 }
 
-/** How a token looks: a small rounded box, a line of the field tall. */
-const TOKEN = "inline-flex max-w-[16em] min-w-0 shrink-0 items-center gap-1 rounded-md bg-hover px-1.5 py-0.5 text-[13px] leading-5 font-medium text-foreground";
+/** How a token looks: a small rounded box, a line of the field tall, whose name is cut short where a line is too narrow. */
+const TOKEN = "inline-flex max-w-[16em] min-w-0 items-center gap-1 rounded-md bg-hover px-1.5 py-0.5 text-[13px] leading-5 font-medium text-foreground";
 
 /**
  * A filter's token: its icon and what it says, and where it can be taken away, a × after them, as the
@@ -177,6 +177,26 @@ function tokensOf(filters: SearchFilters, names: SearchNames): FilterToken[] {
 /** A search's filters as tokens, each with a × that takes it away when `onRemove` is given. */
 export function SearchTokens({ filters, names, onRemove }: { filters: SearchFilters; names: SearchNames; onRemove?: (filter: keyof SearchFilters) => void }) {
   return tokensOf(filters, names).map(({ filter, label, icon }) => <Token key={filter} icon={icon} label={label} onRemove={onRemove && (() => onRemove(filter))} />);
+}
+
+/**
+ * A search on one line: its tokens, and then its words, which stay whole while they take less than most
+ * of the line, as the tokens give way first, their names cut short, and then cut off where even their
+ * icons don't fit, as every filter at once on a narrow phone.
+ */
+export function SearchLine({ search, names, className }: { search: Search; names: SearchNames; className?: string }) {
+  const filters = filtersOf(search);
+  const filtered = hasFilters(filters);
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+      {filtered && (
+        <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+          <SearchTokens filters={filters} names={names} />
+        </span>
+      )}
+      {search.q !== "" && <span className={cn("truncate", filtered && "max-w-[70%] shrink-0", className)}>{search.q}</span>}
+    </span>
+  );
 }
 
 /** A search as screen readers read it where it shows as tokens and words: what each token says, then the words. */
@@ -403,8 +423,9 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
         onKeyDown={(event) => {
           if (opensFind(event.nativeEvent)) setOpen(false);
         }}
-        // As tall as the screen leaves it at most, where the list gives up its height first, as on a phone on its side.
-        className="top-[max(12px,8dvh,env(safe-area-inset-top))] flex max-h-[calc(100dvh-max(12px,8dvh,env(safe-area-inset-top))-max(12px,env(safe-area-inset-bottom)))] w-[680px] max-w-[calc(100dvw-24px-env(safe-area-inset-left)-env(safe-area-inset-right))] translate-y-0 flex-col gap-0 overflow-hidden rounded-[14px] p-0 text-foreground shadow-[0_24px_80px_var(--color-dialog-shadow)] sm:max-w-[calc(100dvw-24px-env(safe-area-inset-left)-env(safe-area-inset-right))]"
+        // As tall as the screen leaves it at most, where the list gives up its height first, as on a phone on its
+        // side, and wide enough for the chips on one line, In this conversation's among them.
+        className="top-[max(12px,8dvh,env(safe-area-inset-top))] flex max-h-[calc(100dvh-max(12px,8dvh,env(safe-area-inset-top))-max(12px,env(safe-area-inset-bottom)))] w-[768px] max-w-[calc(100dvw-24px-env(safe-area-inset-left)-env(safe-area-inset-right))] translate-y-0 flex-col gap-0 overflow-hidden rounded-[14px] p-0 text-foreground shadow-[0_24px_80px_var(--color-dialog-shadow)] sm:max-w-[calc(100dvw-24px-env(safe-area-inset-left)-env(safe-area-inset-right))]"
       >
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search messages in your rooms and direct messages, or narrow a search with the filters.</DialogDescription>
@@ -580,10 +601,7 @@ function OptionContent({ option, search, names, me }: { option: Option; search: 
         <>
           <SearchIcon className="size-[18px] shrink-0 text-muted-foreground" />
           <span className="shrink-0 text-muted-foreground">Show results for</span>
-          <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-            <SearchTokens filters={filtersOf(search)} names={names} />
-            {search.q !== "" && <span className="truncate font-medium">{search.q}</span>}
-          </span>
+          <SearchLine search={search} names={names} className="font-medium" />
           <span aria-hidden className="ml-auto shrink-0 max-md:hidden touch:hidden">
             <Key>Enter</Key>
           </span>
@@ -593,10 +611,7 @@ function OptionContent({ option, search, names, me }: { option: Option; search: 
       return (
         <>
           <ClockRotateRight className="size-[18px] shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-            <SearchTokens filters={filtersOf(option.search)} names={names} />
-            {option.search.q !== "" && <span className="truncate">{option.search.q}</span>}
-          </span>
+          <SearchLine search={option.search} names={names} />
         </>
       );
     case "room":

@@ -30,7 +30,7 @@ import { FLAG_LABELS, marksFor, takeAnswer } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { MessageItem, type MessageEditors } from "./message-item";
 import { HEADER_BUTTON, PageHeader } from "./page-header";
-import { Chip, CHIPS_ROW, CONFIRM_CLEAR_SEARCHES, FLAG_ICONS, filtersOf, OpenSearchContext, RoomMark, searchLabel, SearchTokens, useSearchNames, type SearchNames } from "./search-box";
+import { Chip, CHIPS_ROW, CONFIRM_CLEAR_SEARCHES, FLAG_ICONS, OpenSearchContext, RoomMark, searchLabel, SearchLine, useSearchNames, type SearchNames } from "./search-box";
 import { SearchMarks } from "./search-marks";
 
 /** Results can't be edited or replied to, so nothing opens an editor or writes in a composer. */
@@ -193,10 +193,7 @@ export function SearchPage({ me, rooms, back, onFailed }: Props) {
         >
           <SearchIcon className="size-[18px] shrink-0 text-muted-foreground" />
           {shown ? (
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-              <SearchTokens filters={filtersOf(search)} names={names} />
-              {search.q !== "" && <span className="truncate">{search.q}</span>}
-            </span>
+            <SearchLine search={search} names={names} />
           ) : (
             <span className="text-muted-foreground">Search</span>
           )}
@@ -400,10 +397,7 @@ function RecentSearches({ searches, names, onClear }: { searches: Search[]; name
           <li key={searchKey(search)}>
             <PageLink href={searchPath(search)} aria-label={searchLabel(search, names)} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 py-1.5 text-[14px] text-foreground hover:bg-hover touch:min-h-11">
               <ClockRotateRight className="size-[18px] shrink-0 text-muted-foreground" />
-              <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                <SearchTokens filters={filtersOf(search)} names={names} />
-                {search.q !== "" && <span className="truncate">{search.q}</span>}
-              </span>
+              <SearchLine search={search} names={names} />
             </PageLink>
           </li>
         ))}
