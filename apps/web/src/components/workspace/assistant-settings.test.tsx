@@ -394,6 +394,40 @@ describe("Avatar", () => {
     expect(useTheFlame()).toBeEnabled();
     expect(reads()).toBe(0);
   });
+
+  it("drops a read begun before a change of its own, which could show Ember AI as it was before the change", async () => {
+    const read = held(() => Response.json({ assistant: PICTURED }));
+    const saved = held(() => Response.json({ assistant: { ...PICTURED, most: { ...TOP_LEVELS, thinking: "low" } } }));
+    serve({ read: read.answered, changed: saved.answered });
+    const { user } = showLiveCard(SONNET, listed(UPLOADED));
+    await waitFor(() => expect(reads()).toBe(1));
+    const low = within(card()).getByRole("radio", { name: "Low" });
+    await user.click(low);
+    await read.answer();
+    expect(low).toBeChecked();
+
+    await saved.answer();
+    expect(low).toBeChecked();
+    expect(useTheFlame()).toBeEnabled();
+    expect(reads()).toBe(1);
+  });
+
+  it("reads Ember AI again once a change of its own that dropped a read fails", async () => {
+    const first = held(() => Response.json({ assistant: PICTURED }));
+    let answered = 0;
+    serve({
+      read: () => (answered++ === 0 ? first.answered() : Response.json({ assistant: PICTURED })),
+      changed: () => Response.json({ error: "Something went wrong" }, { status: 500 }),
+    });
+    const { user, onFailed } = showLiveCard(SONNET, listed(UPLOADED));
+    await waitFor(() => expect(reads()).toBe(1));
+    await user.click(within(card()).getByRole("radio", { name: "Low" }));
+    await waitFor(() => expect(onFailed).toHaveBeenCalledOnce());
+
+    expect(await within(card()).findByRole("button", { name: "Use Ember's flame" })).toBeEnabled();
+    expect(within(card()).getByRole("radio", { name: "High" })).toBeChecked();
+    expect(reads()).toBe(2);
+  });
 });
 
 describe("Models", () => {

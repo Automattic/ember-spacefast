@@ -127,10 +127,12 @@ export function AssistantSettings({ assistant, onSetUp, onStopped, onChanged, on
   useEffect(() => () => void (pickedAvatar && URL.revokeObjectURL(pickedAvatar)), [pickedAvatar]);
 
   // Another tab may change @ember's avatar, which the people directory hears of: Ember AI is read again
-  // then, for whether an administrator uploaded the one it has now.
+  // then, for whether an administrator uploaded the one it has now, but not while a change of the card's
+  // own saves. That drops a read begun before, which could answer after the change and show Ember AI as
+  // it was. The change's answer has the avatar, or else Ember AI is read again once it's done.
   const listedAvatarUrl = people.get(ASSISTANT_ID)?.avatarUrl;
   const changedElsewhere =
-    assistant !== null && !savingAvatar && listedAvatarUrl !== undefined && avatarVersionOf(listedAvatarUrl) > avatarVersionOf(assistant.avatarUrl);
+    assistant !== null && !busy && listedAvatarUrl !== undefined && avatarVersionOf(listedAvatarUrl) > avatarVersionOf(assistant.avatarUrl);
   const showRead = useEffectEvent(({ assistant: read }: WorkspaceSettings) => (read ? onChanged(read) : onStopped()));
   const readFailed = useEffectEvent((error: unknown) => onFailed(error));
   useEffect(() => {
