@@ -115,17 +115,23 @@ test.describe("Custom reactions", () => {
     const field = await newBoost(ada, text);
     await expect(field).toHaveAttribute("maxlength", "16");
     const submit = ada.message(text).getByRole("button", { name: "Add reaction" });
-    await submit.click();
+    // Add reaction shows once something's written, and Enter sends nothing blank.
+    await expect(submit).toHaveCount(0);
+    await field.press("Enter");
     expect(await field.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+    const asWideAsItsPlaceholder = (await field.boundingBox())!.width;
     await field.fill("  ");
+    await field.press("Enter");
     expect(await field.evaluate((input: HTMLInputElement) => input.validity.patternMismatch)).toBe(true);
     await field.fill("Lovely!");
+
+    // The form is a one-line pill, its field as wide as what's written.
+    const formBox = (await ada.message(text).locator("form").boundingBox())!;
     const fieldBox = (await field.boundingBox())!;
     const submitBox = (await submit.boundingBox())!;
-    expect(fieldBox.width).toBeGreaterThanOrEqual(240);
-    expect(fieldBox.height).toBeGreaterThanOrEqual(40);
-    // The buttons have a row of their own under the field.
-    expect(submitBox.y).toBeGreaterThanOrEqual(fieldBox.y + fieldBox.height + 10);
+    expect(formBox.height).toBeLessThanOrEqual(32);
+    expect(fieldBox.width).toBeLessThan(asWideAsItsPlaceholder);
+    expect(Math.abs(submitBox.y + submitBox.height / 2 - (fieldBox.y + fieldBox.height / 2))).toBeLessThanOrEqual(1);
 
     await submit.click();
     await expect(field).toHaveCount(0);

@@ -1174,7 +1174,7 @@ describe("Custom reactions", () => {
     expect(screen.queryByRole("group", { name: "Message actions" })).not.toBeInTheDocument();
     const field = customField();
     expect(field).toHaveFocus();
-    expect(field).toHaveAttribute("placeholder", "Emoji or a short message");
+    expect(field).toHaveAttribute("placeholder", "Emoji or a word");
     expect(field).toHaveAttribute("maxlength", "16");
     expect(field).toHaveAccessibleDescription("Up to 16 characters.");
 
@@ -1184,16 +1184,34 @@ describe("Custom reactions", () => {
     expect(optionsOn("Hello")).toHaveFocus();
   });
 
-  it("won't add a blank reaction, or one that starts with a space", async () => {
+  it("offers Add reaction once something's written, but won't add a blank reaction, or one that starts with a space", async () => {
     const { actions, user } = show(message());
     await newBoost(user);
+    expect(screen.queryByRole("button", { name: "Add reaction" })).not.toBeInTheDocument();
+    // A browser's Enter won't send the field while it's empty, as that's invalid. The browser tests press it,
+    // since user-event submits a form of one field without checking it.
+    expect(customField()).toBeInvalid();
+
+    await user.type(customField(), " hi");
     await user.click(screen.getByRole("button", { name: "Add reaction" }));
-    await user.type(customField(), " hi{Enter}");
+    await user.keyboard("{Enter}");
     expect(actions.boost).not.toHaveBeenCalled();
     expect(customField()).toBeInvalid();
   });
 
-  it("cancels on Cancel or Escape, handing focus to Message options", async () => {
+  it("shows how many characters are left once five or fewer are", async () => {
+    const { user } = show(message());
+    await newBoost(user);
+    await user.type(customField(), "Ten chars!");
+    expect(screen.queryByText(/ left$/)).not.toBeInTheDocument();
+    await user.type(customField(), "1");
+    expect(screen.getByText("5 left")).toBeInTheDocument();
+    await user.type(customField(), "23456789");
+    expect(customField()).toHaveValue("Ten chars!123456");
+    expect(screen.getByText("0 left")).toBeInTheDocument();
+  });
+
+  it("cancels on its X or Escape, handing focus to Message options", async () => {
     const { actions, user } = show(message({ boosts: [boost("b1", grace, "👍")] }));
     await newBoost(user);
     // The form takes Add a boost's place.
