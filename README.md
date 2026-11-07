@@ -95,7 +95,7 @@ and narrow it as you would in Slack: to a room, to what someone wrote, to what m
 links, files or threads. Results come newest or oldest first, with the words they matched marked, and
 your recent searches are a key away.
 
-![Search results for "thanks", from rooms, threads and a DM](docs/screenshots/search.png)
+![Search results for "thanks" under Slack's filter chips, each a card naming its DM or room, with the word marked](docs/screenshots/search.png)
 
 ### On your phone
 
