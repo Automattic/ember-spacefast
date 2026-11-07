@@ -181,14 +181,20 @@ export function SearchTokens({ filters, names, onRemove }: { filters: SearchFilt
 
 /**
  * A search on one line: its tokens, and then its words, which stay whole while they take less than most
- * of the line, as the tokens give way first.
+ * of the line, as the tokens give way first, their names cut short, and then cut off where even their
+ * icons don't fit, as every filter at once on a narrow phone.
  */
 export function SearchLine({ search, names, className }: { search: Search; names: SearchNames; className?: string }) {
   const filters = filtersOf(search);
+  const filtered = hasFilters(filters);
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-      <SearchTokens filters={filters} names={names} />
-      {search.q !== "" && <span className={cn("truncate", hasFilters(filters) && "max-w-[70%] shrink-0", className)}>{search.q}</span>}
+      {filtered && (
+        <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+          <SearchTokens filters={filters} names={names} />
+        </span>
+      )}
+      {search.q !== "" && <span className={cn("truncate", filtered && "max-w-[70%] shrink-0", className)}>{search.q}</span>}
     </span>
   );
 }

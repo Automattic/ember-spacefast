@@ -53,12 +53,22 @@ test("the search box and its results fit the phone, with recent searches, chips 
   await screenIsFine();
 });
 
-test("the results page's top bar keeps the words searched for whole, cutting the filters short first", async ({ page, room, screenIsFine }) => {
-  await page.goto(`/searches?q=okapi&in=${room.id}&has=link&is=thread`);
+test("the results page's top bar keeps the words searched for whole, cutting the filters short or off first", async ({ page, room, session, screenIsFine }) => {
   const search = page.getByRole("navigation", { name: "Page" }).getByRole("button", { name: /^Change search: / });
+  /** Whether `words` show whole, inside their line, which the filters can't push them out of. */
+  const fit = (words: string) =>
+    search.getByText(words, { exact: true }).evaluate((element) => {
+      const [word, line] = [element.getBoundingClientRect(), element.parentElement!.getBoundingClientRect()];
+      return element.scrollWidth <= element.clientWidth && word.left >= line.left && word.right <= line.right + 0.5;
+    });
+
+  await page.goto(`/searches?q=okapi&in=${room.id}&has=link&is=thread`);
   await expect(search).toHaveAccessibleName(`Change search: in:${room.name} Has a link Threads only okapi`);
-  const words = search.getByText("okapi", { exact: true });
-  await expect(words).toBeVisible();
-  expect(await words.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  expect(await fit("okapi")).toBe(true);
   await screenIsFine();
+
+  // Every filter at once leaves the tokens too little room on the narrowest phones: they're cut off, not the words.
+  await page.goto(`/searches?q=okapi+zebra&in=${room.id}&from=${session.user.id}&with=me&has=link&has=file&is=thread`);
+  await expect(search).toHaveAccessibleName(`Change search: in:${room.name} from:Me Includes me Has a link Has a file Threads only okapi zebra`);
+  expect(await fit("okapi zebra")).toBe(true);
 });
