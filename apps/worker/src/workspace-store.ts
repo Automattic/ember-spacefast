@@ -14,6 +14,7 @@ import {
   isRoomIcon,
   mailboxOf,
   mailboxText,
+  parseSearch,
   suggestedCount,
   type Account,
   type BotChanges,
@@ -35,6 +36,7 @@ import {
   type RoomId,
   type RoomKind,
   type RoomSettings,
+  type Search,
   type SharedRoom,
   type SidebarRoom,
   type User,
@@ -1604,23 +1606,39 @@ const RENAME_BOT = `UPDATE users SET name = ?1, updated_at = ?2 WHERE id = ?3 AN
 const CHANGE_BOT_TOKEN = `UPDATE users SET bot_token = ?, updated_at = ? WHERE id = ?`;
 
 /**
- * Records a search as someone's newest: a search they have already moves to the front, rather than being
- * added again.
+ * Records a search, by its key (@ember/protocol `searchKey`), as someone's newest: a search they have
+ * already moves to the front, rather than being added again.
  */
-const RECORD_SEARCH = `INSERT INTO searches (user_id, query, position)
-  VALUES (?1, ?2, (SELECT coalesce(max(position), 0) + 1 FROM searches WHERE user_id = ?1))
-  ON CONFLICT (user_id, query) DO UPDATE SET position = excluded.position`;
+const RECORD_SEARCH = `INSERT INTO recent_searches (user_id, search, position)
+  VALUES (?1, ?2, (SELECT coalesce(max(position), 0) + 1 FROM recent_searches WHERE user_id = ?1))
+  ON CONFLICT (user_id, search) DO UPDATE SET position = excluded.position`;
 
 /**
  * Forgets someone's searches past their newest ?2 + 1, as Campfire's `trim_recent_searches` does, which
  * it runs as it adds one. With no more than that, the subquery finds none to keep the rest newer than,
  * and nothing goes.
  */
-const TRIM_SEARCHES = `DELETE FROM searches WHERE user_id = ?1
-  AND position < (SELECT position FROM searches WHERE user_id = ?1 ORDER BY position DESC LIMIT 1 OFFSET ?2)`;
+const TRIM_SEARCHES = `DELETE FROM recent_searches WHERE user_id = ?1
+  AND position < (SELECT position FROM recent_searches WHERE user_id = ?1 ORDER BY position DESC LIMIT 1 OFFSET ?2)`;
 
-/** Someone's recent searches, newest first. */
-const RECENT_SEARCHES_FOR_USER = `SELECT query FROM searches WHERE user_id = ? ORDER BY position DESC LIMIT ?`;
+/** Someone's recent searches, newest first, by their keys. */
+const RECENT_SEARCHES_FOR_USER = `SELECT search FROM recent_searches WHERE user_id = ? ORDER BY position DESC LIMIT ?`;
+
+/** Forgets someone's recent searches, and those from before searches had filters (migrations/0048_recent_searches.sql). */
+const forgettingSearches = (userId: UserId): Statement[] => [
+  statement(`DELETE FROM recent_searches WHERE user_id = ?`, userId),
+  statement(`DELETE FROM searches WHERE user_id = ?`, userId),
+];
+
+/** A recent search from its key, or null for one that isn't a search. */
+function recentSearchOf(key: string): Search | null {
+  try {
+    const search = parseSearch(JSON.parse(key));
+    return typeof search === "string" ? null : search.search;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Saves a browser's push subscription for someone, with its user agent, or, when they've saved one at
@@ -2401,7 +2419,7 @@ export class WorkspaceStore {
       statement(QUEUE_PERSON_SESSION_REVOCATIONS, SESSION_TAG_PREFIX, code, dueAt, userId),
       statement(LEAVE_SHARED_ROOMS, userId),
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
-      statement(`DELETE FROM searches WHERE user_id = ?`, userId),
+      ...forgettingSearches(userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
       statement(DEACTIVATE, `-deactivated-${uuid}@`, now, userId),
     ]);
@@ -2656,11 +2674,11 @@ export class WorkspaceStore {
   }
 
   /**
-   * What someone's search page needs: the rooms they're in, with the people in their DMs, as their
-   * sidebar lists them, and their recent searches, newest first, having first recorded `recording` as
-   * their newest, when it's given, in the same transaction.
+   * What someone's search needs: the rooms they're in, with the people in their DMs, as their sidebar
+   * lists them, and their recent searches, newest first, having first recorded the search whose key is
+   * `recording` as their newest, when it's given, in the same transaction.
    */
-  async searcherOf(userId: UserId, recording: string | null): Promise<{ rooms: Room[]; recent: string[] }> {
+  async searcherOf(userId: UserId, recording: string | null): Promise<{ rooms: Room[]; recent: Search[] }> {
     const records = recording === null ? [] : [statement(RECORD_SEARCH, userId, recording), statement(TRIM_SEARCHES, userId, RECENT_SEARCHES - 1)];
     const results = await this.db.batch([
       ...records,
@@ -2668,14 +2686,14 @@ export class WorkspaceStore {
       statement(DIRECT_MEMBERS_FOR_USER, userId),
       statement(RECENT_SEARCHES_FOR_USER, userId, RECENT_SEARCHES),
     ]);
-    const [rows, members, recent] = results.slice(records.length) as [SidebarRow[], DirectMemberRow[], Array<{ query: string }>];
+    const [rows, members, recent] = results.slice(records.length) as [SidebarRow[], DirectMemberRow[], Array<{ search: string }>];
     const membersByRoom = Map.groupBy(members, (member) => member.room_id);
-    return { rooms: rows.map((row) => roomOf(row, membersByRoom.get(row.id))), recent: recent.map((row) => row.query) };
+    return { rooms: rows.map((row) => roomOf(row, membersByRoom.get(row.id))), recent: recent.flatMap((row) => recentSearchOf(row.search) ?? []) };
   }
 
   /** Forgets all of someone's recent searches. */
   async clearSearches(userId: UserId): Promise<void> {
-    await this.db.run(`DELETE FROM searches WHERE user_id = ?`, userId);
+    await this.db.batch(forgettingSearches(userId));
   }
 
   /**

@@ -61,8 +61,6 @@ interface Props {
   /** What can be done to the message, or null where nothing can, as in a room that's gone. */
   actions: MessageActions | null;
   editors: MessageEditors;
-  /** The name of the message's room, which search results show it with. */
-  roomName?: string;
   /**
    * Where a message in a thread's panel is, the thread's message or a reply: there it has no summary of
    * the thread, nor Reply in thread, and a reply also sent to the room says so.
@@ -205,7 +203,7 @@ function Author({ user }: { user: User }) {
 }
 
 /** One message: a 36px avatar gutter, author and time, then the body. */
-export const MessageItem = memo(function MessageItem({ message, me, threaded: follows, editing: editorOpen, actions, editors, roomName, thread, open }: Props) {
+export const MessageItem = memo(function MessageItem({ message, me, threaded: follows, editing: editorOpen, actions, editors, thread, open }: Props) {
   const article = useRef<HTMLElement>(null);
   const menu = useRef<MessageActionsHandle>(null);
   const attachEditor = useCallback((editor: MessageEditorHandle | null) => editors.attach(message.id, editor), [editors, message.id]);
@@ -313,15 +311,6 @@ export const MessageItem = memo(function MessageItem({ message, me, threaded: fo
             <h3 className="flex min-h-[22px] items-baseline gap-2 text-[15px] leading-[22px] max-md:flex-wrap max-md:gap-x-2 max-md:gap-y-0.5 max-md:pr-[22px]">
               <Author user={message.creator} />
               {permalink}
-              {/* The room in search results: a dot,
-                  and the room's name, linking to the message as its time does, cut short rather than wrapped. */}
-              {roomName !== undefined && (
-                <span className="min-w-0 truncate text-[0.8rem] font-normal text-message-ink">
-                  · <PageLink href={permalinkOf(message)} className="text-link underline hover:not-active:brightness-130">
-                    {roomName}
-                  </PageLink>
-                </span>
-              )}
               {edited}
             </h3>
           )}

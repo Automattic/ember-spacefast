@@ -422,7 +422,7 @@ describe("Bots post messages", () => {
 
     while ((await roomSql(general, "SELECT seq FROM unindexed_messages WHERE room_id = ?", general)).length > 0) await sleep(5);
     const found = (await (await api("/api/searches?q=deploy", { headers: { Cookie: member.cookie } })).json()) as SearchResults;
-    expect(found.messages.map((message) => message.id)).toEqual([id]);
+    expect(found.matches.map(({ message }) => message.id)).toEqual([id]);
   });
 
   it("answers an empty 422 for a body that's empty or only spaces, posting nothing", async () => {
@@ -742,7 +742,7 @@ describe("Bots edit and delete their messages", () => {
     const searched = async (query: string) => {
       while ((await roomSql(general, "SELECT seq FROM unindexed_messages WHERE room_id = ?", general)).length > 0) await sleep(5);
       const found = (await (await api(`/api/searches?q=${query}`, { headers: { Cookie: member.cookie } })).json()) as SearchResults;
-      return found.messages.map((message) => message.id);
+      return found.matches.map(({ message }) => message.id);
     };
 
     expect((await editAs(bot.key, general, id, "Nightly rollback started")).status).toBe(200);

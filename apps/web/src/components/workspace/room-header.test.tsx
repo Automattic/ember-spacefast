@@ -1,5 +1,5 @@
 import { avatarSvg, type Room, type User } from "@ember/protocol";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import { PushContext, type Push } from "@/hooks/use-push";
 import { PUSH_ON } from "@/test-push";
 import { INVOLVEMENT_NOT_SAVED } from "./notification-bell";
 import { RoomHeader } from "./room-header";
+import { OpenSearchContext, type OpenSearch } from "./search-box";
 
 const people = (count: number): User[] => Array.from({ length: count }, (_, i) => ({ id: `u${i}`, name: `Person ${i}` }));
 const general: Room = { id: "general", name: "general", kind: "open", icon: null };
@@ -26,25 +27,27 @@ const statuses = () => screen.queryAllByRole("status").flatMap((status) => statu
  * The header inside the drawer's Sheet, which its menu button opens, as in the workspace, on a browser
  * with notifications on unless `push` says otherwise.
  */
-function renderHeader(props: Partial<ComponentProps<typeof RoomHeader>> = {}, onOpenChange?: (open: boolean) => void, push: Push = PUSH_ON) {
+function renderHeader(props: Partial<ComponentProps<typeof RoomHeader>> = {}, onOpenChange?: (open: boolean) => void, push: Push = PUSH_ON, openSearch: OpenSearch = () => {}) {
   return render(
     <PushContext value={push}>
-      <Sheet onOpenChange={onOpenChange}>
-        <RoomHeader
-          room={general}
-          name="general"
-          present={[]}
-          status="open"
-          offline={false}
-          favorite={false}
-          onStarred={vi.fn()}
-          involvement="mentions"
-          askForRoom={() => vi.fn()}
-          onSessionChanged={vi.fn()}
-          onFailed={vi.fn()}
-          {...props}
-        />
-      </Sheet>
+      <OpenSearchContext value={openSearch}>
+        <Sheet onOpenChange={onOpenChange}>
+          <RoomHeader
+            room={general}
+            name="general"
+            present={[]}
+            status="open"
+            offline={false}
+            favorite={false}
+            onStarred={vi.fn()}
+            involvement="mentions"
+            askForRoom={() => vi.fn()}
+            onSessionChanged={vi.fn()}
+            onFailed={vi.fn()}
+            {...props}
+          />
+        </Sheet>
+      </OpenSearchContext>
     </PushContext>,
   );
 }
@@ -160,19 +163,23 @@ describe("Room settings page", () => {
   });
 });
 
-describe("Search page", () => {
-  it("links to search before the room's settings, in rooms and DMs alike, showing it in place", async () => {
+describe("Search box", () => {
+  it("links to search before the room's settings, in rooms and DMs alike, opening the search box in place, in the room", async () => {
     for (const [room, name] of [[general, "general"], [adaDirect, "Ada"]] as const) {
-      const { unmount } = renderHeader({ room, name });
+      const openSearch = vi.fn();
+      const { unmount } = renderHeader({ room, name }, undefined, PUSH_ON, openSearch);
       const search = screen.getByRole("link", { name: "Search messages" });
       expect(search).toHaveAttribute("title", "Search messages");
       expect(search).toHaveAttribute("href", "/searches");
       expect(search.compareDocumentPosition(screen.getByRole("link", { name: /^Settings for this/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      await userEvent.click(search);
+      expect(openSearch).toHaveBeenCalledExactlyOnceWith({ roomId: room.id, opener: search });
+      // A click with a modifier key is the browser's, as into a new tab.
+      expect(fireEvent.click(search, { ctrlKey: true })).toBe(true);
+      expect(openSearch).toHaveBeenCalledOnce();
       unmount();
     }
-    renderHeader();
-    await userEvent.click(screen.getByRole("link", { name: "Search messages" }));
-    expect(location.pathname).toBe("/searches");
+    expect(location.pathname).toBe("/");
   });
 });
 

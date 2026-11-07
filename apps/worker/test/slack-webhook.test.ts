@@ -462,7 +462,7 @@ describe("Bot cards", () => {
 
     await vi.waitFor(async () => expect(await roomSql(general, "SELECT seq FROM unindexed_messages WHERE room_id = ?", general)).toEqual([]));
     const found = (await (await api("/api/searches?q=aardvark", { headers: { Cookie: administrator.cookie } })).json()) as SearchResults;
-    expect(found.messages.map(({ id, cards }) => ({ id, cards }))).toEqual([{ id: message.id, cards: message.cards }]);
+    expect(found.matches.map(({ message: { id, cards } }) => ({ id, cards }))).toEqual([{ id: message.id, cards: message.cards }]);
   });
 
   it("leaves out links, images and icons that aren't web addresses on a named host, keeping the rest of the card, and email links in its text", async () => {

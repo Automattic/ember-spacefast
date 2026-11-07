@@ -133,16 +133,29 @@ export {
 } from "./push.ts";
 export { TRANSLATIONS, type TranslationKey } from "./translations.ts";
 export {
+  hasFilters,
+  hasWords,
   isSearchable,
   MAX_SEARCH_LENGTH,
+  normalizedSearch,
   parseSearch,
   RECENT_SEARCHES,
   sanitizeSearch,
+  SEARCH_FLAGS,
   SEARCH_LIMIT,
   SEARCH_TOO_LONG,
+  searchKey,
+  searchOfQuery,
   searchPath,
+  searchQuery,
   searchTerms,
+  type Search,
+  type SearchFilters,
+  type SearchFlag,
+  type SearchMatch,
+  type SearchParams,
   type SearchResults,
+  type SearchSort,
 } from "./search.ts";
 
 export type UserId = string;

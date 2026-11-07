@@ -36,10 +36,10 @@ export function opensNewDirect(open: (opener: HTMLElement) => void) {
 }
 
 /**
- * Puts focus back on what opened the dialog, or, when that's gone with the drawer it was in, on the
+ * Puts focus back on what opened a dialog, or, when that's gone with the drawer it was in, on the
  * drawer's toggle.
  */
-function returnFocus(opener: HTMLElement | null) {
+export function returnFocus(opener: HTMLElement | null) {
   opener?.focus({ preventScroll: true });
   if (opener && document.activeElement === opener) return;
   document.querySelector<HTMLElement>("[data-ember-sidebar-toggle]")?.focus({ preventScroll: true });

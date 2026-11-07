@@ -90,9 +90,12 @@ levels on their profile.
 
 ### Find anything
 
-Search every message in the rooms and DMs you're in, thread replies included.
+Press ⌘F, or Ctrl+F, to search every message in the rooms and DMs you're in, thread replies included,
+and narrow it as you would in Slack: to a room, to what someone wrote, to what mentions you, or to
+links, files or threads. Results come newest or oldest first, with the words they matched marked, and
+your recent searches are a key away.
 
-![Search results for "thanks", from rooms, threads and a DM](docs/screenshots/search.png)
+![Search results for "thanks" under Slack's filter chips, each a card naming its DM or room, with the word marked](docs/screenshots/search.png)
 
 ### On your phone
 
@@ -142,7 +145,7 @@ it's yours. Slack's plans are as [slack.com/pricing](https://slack.com/pricing) 
 | **Mentions, quotes, reactions and edits** | ✅ react with any emoji or a few words | ✅ plus custom emoji |
 | **Rich text, code blocks and link previews** | ✅ | ✅ |
 | **Files** | ✅ up to 250 MB each | ✅ up to 1 GB each |
-| **Search** | ✅ every message in your rooms and DMs | ✅ (Free: the last 90 days) |
+| **Search** | ✅ every message in your rooms and DMs, with Slack's filters for rooms, people, links, files and threads | ✅ (Free: the last 90 days) |
 | **Unread, Activity, starred rooms, per-room notifications** | ✅ | ✅ |
 | **Phones** | ✅ installable web app with push notifications | ✅ native iPhone and Android apps |
 | **Computers** | ✅ any modern browser, or installed as an app | ✅ native Mac, Windows and Linux apps, or the browser |
