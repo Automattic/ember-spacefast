@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, startDirect, test } from "./fixtures";
 
 /** A word in no other test's messages or searches, since every test shares the server and its open rooms. */
 const uniqueWord = (word: string) => `${word}${crypto.randomUUID().slice(0, 8)}`;
@@ -10,6 +10,9 @@ const results = (page: Page) => page.getByRole("region", { name: "Search results
 const cards = (page: Page) => results(page).getByRole("listitem");
 const filters = (page: Page) => page.getByRole("group", { name: "Search filters" });
 const railSearch = (page: Page) => page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Search", exact: true });
+
+/** How many lines `elements` are laid out on, going by where each one's top is. */
+const linesOf = (elements: Locator) => elements.evaluateAll((all) => new Set(all.map((element) => Math.round(element.getBoundingClientRect().top))).size);
 
 /** The address of a search's results: its words, as typed, and then what `filters` adds. */
 const searchAddress = (words: string, filters = "") => `/searches?q=${encodeURIComponent(words).replaceAll("%20", "+")}${filters}`;
@@ -134,6 +137,23 @@ test.describe("Search box", () => {
     await ada.page.getByRole("link", { name: "Exit search" }).click();
     await expect(ada.page).toHaveURL(`/rooms/${rooms.general.id}`);
     await ada.connected();
+  });
+
+  test("fits its chips on one line, in a room and in a conversation, whose chip is the widest", async ({ members, request }) => {
+    const ada = await members.signIn("Ada");
+    const grace = await members.signIn("Grace");
+    const header = ada.page.getByRole("navigation", { name: "Page" }).getByRole("link", { name: "Search messages" });
+    const chips = box(ada.page).getByRole("group", { name: "Search filters" }).getByRole("button");
+    await header.click();
+    await expect(chips.first()).toHaveAccessibleName("In this room");
+    await expect(chips.last()).toHaveAccessibleName("More filters");
+    expect(await linesOf(chips)).toBe(1);
+    await field(ada.page).press("Escape");
+
+    await ada.page.goto(`/rooms/${await startDirect(request, ada, [grace])}`);
+    await header.click();
+    await expect(chips.first()).toHaveAccessibleName("In this conversation");
+    expect(await linesOf(chips)).toBe(1);
   });
 });
 

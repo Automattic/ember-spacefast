@@ -52,3 +52,13 @@ test("the search box and its results fit the phone, with recent searches, chips 
   await expect(box.getByRole("option").filter({ hasNotText: "Show results for" })).toHaveCount(4);
   await screenIsFine();
 });
+
+test("the results page's top bar keeps the words searched for whole, cutting the filters short first", async ({ page, room, screenIsFine }) => {
+  await page.goto(`/searches?q=okapi&in=${room.id}&has=link&is=thread`);
+  const search = page.getByRole("navigation", { name: "Page" }).getByRole("button", { name: /^Change search: / });
+  await expect(search).toHaveAccessibleName(`Change search: in:${room.name} Has a link Threads only okapi`);
+  const words = search.getByText("okapi", { exact: true });
+  await expect(words).toBeVisible();
+  expect(await words.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await screenIsFine();
+});
