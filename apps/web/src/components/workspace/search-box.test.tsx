@@ -294,6 +294,7 @@ describe("Search filters", () => {
     expect(chip("From me")).toHaveAttribute("aria-pressed", "true");
     await user.click(chip("From me"));
     expect(field()).toHaveValue("deploy");
+    expect(field()).toHaveFocus();
     expect(tokens()).toEqual(["from:Grace Hopper"]);
     expect(options()[0]).toBe("› Show results for from:Grace Hopper deploy");
   });

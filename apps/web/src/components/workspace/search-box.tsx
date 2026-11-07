@@ -326,6 +326,7 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
     if (!fromMe) return scopeTo({ from: me.id });
     type(withoutFromMe(typed));
     if (filters.from === me.id) remove("from");
+    focusField();
   };
   // From someone and In a room type their modifier after the words, for its completions to show.
   const startModifier = (key: "in" | "from") => {
