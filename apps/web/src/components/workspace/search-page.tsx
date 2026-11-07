@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { MessageItem, type MessageEditors } from "./message-item";
 import { HEADER_BUTTON, PageHeader } from "./page-header";
 import { Chip, CHIPS_ROW, CONFIRM_CLEAR_SEARCHES, FLAG_ICONS, filtersOf, OpenSearchContext, RoomMark, searchLabel, SearchTokens, useSearchNames, type SearchNames } from "./search-box";
+import { SearchMarks } from "./search-marks";
 
 /** Results can't be edited or replied to, so nothing opens an editor or writes in a composer. */
 const NO_EDITORS: MessageEditors = { open() {}, close() {}, returnFocus() {}, attach() {}, reply() {} };
@@ -126,13 +127,15 @@ export function SearchPage({ me, rooms, back, onFailed }: Props) {
   const busy = page?.visit !== visit;
   const found = page?.found ?? null;
 
-  // A search drawn afresh shows from its top, and the box's takes focus.
+  // A search drawn afresh shows from its top, and the box's takes focus. The next page joins the one
+  // drawn, which stays where it's scrolled to.
+  const drawn = page?.visit;
   useLayoutEffect(() => {
     if (list.current) list.current.scrollTop = 0;
-    if (!focusOnDraw.current || page?.visit !== visit) return;
+    if (!focusOnDraw.current || drawn !== visit) return;
     focusOnDraw.current = false;
     heading.current?.focus({ preventScroll: true });
-  }, [page, visit]);
+  }, [drawn, visit]);
 
   // Each filter turned on or off goes to the search it makes, as does each order.
   const go = (next: Search, nextSort: SearchSort = sort) => navigate(searchPath(normalizedSearch(next), nextSort));
@@ -240,7 +243,8 @@ export function SearchPage({ me, rooms, back, onFailed }: Props) {
           aria-label="Search results"
           className="min-h-0 flex-1 basis-0 overflow-x-hidden overflow-y-auto overscroll-contain px-[22px] pt-4 pb-[max(18px,env(safe-area-inset-bottom))] [scrollbar-gutter:stable] max-md:px-3 max-md:pt-3"
         >
-          {found && found.matches.length > 0 ? (
+          {/* A page can lose every match it found to messages deleted since, and still have one after it. */}
+          {found && (found.matches.length > 0 || found.next !== null) ? (
             <>
               <h2 ref={heading} tabIndex={-1} className="mb-3 text-[13px] font-semibold text-muted-foreground outline-none">
                 {countLabel(found)}
@@ -349,7 +353,9 @@ function Result({ match, room, me, names }: { match: SearchMatch; room: Room | n
         </PageLink>
       </div>
       <div className="pb-1">
-        <MessageItem message={message} me={me} threaded={false} editing={false} actions={null} editors={NO_EDITORS} marks={marks} />
+        <SearchMarks value={marks}>
+          <MessageItem message={message} me={me} threaded={false} editing={false} actions={null} editors={NO_EDITORS} />
+        </SearchMarks>
       </div>
     </div>
   );

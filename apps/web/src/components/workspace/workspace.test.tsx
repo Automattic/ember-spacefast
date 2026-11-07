@@ -1104,6 +1104,20 @@ describe("Search box", () => {
     expect(searchBox()).not.toBeInTheDocument();
   });
 
+  it("opens on Ctrl+F in the room the address names before the sidebar has listed it", async () => {
+    let answer = (_: Response) => {};
+    serve({
+      "GET /api/searches?q=": () => Response.json(nothing),
+      "GET /api/sidebar": () => new Promise((resolve) => (answer = resolve)),
+    });
+    const { user } = showWorkspace("/rooms/random");
+    await waitFor(() => expect(roomListRequests()).toBe(1));
+    await user.keyboard("{Control>}f{/Control}");
+    expect(boxTokens()).toEqual(["in:an unknown room"]);
+    await act(async () => answer(Response.json(roomList(rooms))));
+    expect(boxTokens()).toEqual(["in:random"]);
+  });
+
   it("goes to what a search finds, marking Search, with Exit back to the room visited last", async () => {
     const { user } = showWorkspace("/rooms/random");
     await roomHeading();

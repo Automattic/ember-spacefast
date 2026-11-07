@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PeopleContext, type People } from "@/hooks/use-directory";
 import { marksFor } from "@/lib/search";
 import { MessageBody } from "./message-body";
+import { SearchMarks } from "./search-marks";
 
 afterEach(() => history.replaceState(null, "", "/"));
 
@@ -235,7 +236,11 @@ describe("Link previews in messages", () => {
 describe("Search results mark what a search matched", () => {
   /** A stored body as a search's results show it, marking `words`. */
   function showMarked(html: string, words: string[]) {
-    const { container } = render(<MessageBody nodes={shown(html)} mentions={[]} marks={marksFor(words)} />);
+    const { container } = render(
+      <SearchMarks value={marksFor(words)}>
+        <MessageBody nodes={shown(html)} mentions={[]} />
+      </SearchMarks>,
+    );
     return container.querySelector<HTMLElement>(".message-content")!;
   }
 
@@ -249,6 +254,14 @@ describe("Search results mark what a search matched", () => {
   it("marks words in a link's text, which stays a link", () => {
     const content = showMarked('<p>See <a href="https://example.com/launch">the launch notes</a></p>', ["launch"]);
     expect(within(content).getByRole("link", { name: "the launch notes" }).querySelector("mark")).toHaveTextContent("launch");
+  });
+
+  it("keeps the words it matched in a code block marked once the code is highlighted", async () => {
+    const content = showMarked('<pre data-language="javascript">const deploy = "deploy now";</pre>', ["deploy"]);
+    await highlighted(content);
+    expect([...content.querySelectorAll("mark[data-search-match]")].map((mark) => mark.textContent)).toEqual(["deploy", "deploy"]);
+    expect(content.querySelector(".hljs-string mark")).toHaveTextContent("deploy");
+    expect(content.textContent).toBe('const deploy = "deploy now";');
   });
 
   it("marks nothing when the search had no words, nor Lexxy's highlights as matches", () => {

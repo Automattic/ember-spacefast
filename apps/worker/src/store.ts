@@ -1,5 +1,5 @@
 import { PARENT_TEXT_LENGTH, parentTextOf, THREAD_FACES, type Boost, type Card, type Message, type RoomId, type ThreadSummary, type TimelinePage, type User, type UserId } from "@ember/protocol";
-import type { PreparedBody } from "@ember/richtext";
+import { hasLinkable, type PreparedBody } from "@ember/richtext";
 import { statement, type Db, type Statement } from "./db";
 import { fileSigner, type FileUrls } from "./files/addresses";
 import { deletingAllFiles, deletingFilesOf, type AttachedFile } from "./files/blobs";
@@ -143,19 +143,24 @@ function logIndexingRepliesTo(roomId: RoomId, message: Message, plainText: strin
   return retold ? [logIndexingReplies(roomId, JSON.stringify([message.id]))] : [];
 }
 
-/** A link: one written as a link, or an address the message shows as one (`autoLink`). */
-const LINK = /<a\s[^>]*\bhref=|\b(?:https?|ftp):\/\/[^\s<"]|\bwww\.\w/i;
+/** A link written as one, in a message's markup or its cards'. */
+const WRITTEN_LINK = /<a\s[^>]*\bhref=/i;
 
 /**
  * What search filters narrow a search by, as the search index keeps it: who wrote the message, its
  * thread's id, which is its own for a message with replies, whether its text or cards have a link, whether
- * it has a file, and whom it mentions.
+ * it has a file, and whom it mentions. A link is one written as one, an address its text or cards show as
+ * one (`hasLinkable`), or any other address in its cards; a file message shows its file in place of its
+ * text, which is the file's name.
  */
 function searchFactsOf(row: MessageRow): SearchFacts {
   return {
     creatorId: row.creator_id,
     threadId: row.parent_id ?? (threadOf(row) ? row.id : null),
-    hasLink: LINK.test(row.body) || LINK.test(row.plain_text) || (row.cards !== null && LINK.test(row.cards)),
+    hasLink:
+      WRITTEN_LINK.test(row.body) ||
+      (row.attachment === null && hasLinkable(row.plain_text)) ||
+      (row.cards !== null && (WRITTEN_LINK.test(row.cards) || hasLinkable(row.cards))),
     hasFile: row.attachment !== null,
     mentionIds: [...new Set((JSON.parse(row.mentions) as (User | UserId)[]).map((person) => (typeof person === "string" ? person : person.id)))],
   };

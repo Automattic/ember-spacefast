@@ -50,10 +50,14 @@ interface Options {
   sort?: SearchSort;
   /** Whether a link opened it, rather than a key. */
   opener?: boolean;
+  /** The people directory: Grace and Alan, unless it says. */
+  directory?: People;
+  /** The rooms the sidebar lists, until `listRooms` lists others. */
+  listed?: Room[];
 }
 
 /** The search box as Ada opens it over a room's page, with the drawer's toggle in its header. */
-function showBox({ roomId, search, sort, opener = true }: Options = {}) {
+function showBox({ roomId, search, sort, opener = true, directory = people, listed = rooms }: Options = {}) {
   history.replaceState(null, "", "/rooms/general");
   const [onClose, onFailed] = [vi.fn(), vi.fn()];
   render(
@@ -65,12 +69,13 @@ function showBox({ roomId, search, sort, opener = true }: Options = {}) {
     </>,
   );
   const link = opener ? screen.getByRole("link", { name: "Search" }) : null;
-  render(
-    <PeopleContext value={people}>
-      <SearchBox opener={link} search={search} sort={sort} roomId={roomId} me={ada} rooms={rooms} onClose={onClose} onFailed={onFailed} />
-    </PeopleContext>,
+  const boxListing = (shown: Room[]) => (
+    <PeopleContext value={directory}>
+      <SearchBox opener={link} search={search} sort={sort} roomId={roomId} me={ada} rooms={shown} onClose={onClose} onFailed={onFailed} />
+    </PeopleContext>
   );
-  return { link, onClose, onFailed, user: userEvent.setup() };
+  const { rerender } = render(boxListing(listed));
+  return { link, onClose, onFailed, user: userEvent.setup(), listRooms: (shown: Room[]) => rerender(boxListing(shown)) };
 }
 
 const box = () => screen.queryByRole("dialog", { name: "Search" });
@@ -285,6 +290,29 @@ describe("Search filters", () => {
     expect(tokens()).toEqual(["from:Grace Hopper"]);
     await user.keyboard("from:zebra");
     expect(screen.getByText("No people match.")).toBeVisible();
+  });
+
+  it("completes from: with people who've been deactivated or suspended too, but not anyone banned, whatever the case of what's typed", async () => {
+    serve();
+    const left = (id: string, name: string, status: DirectoryUser["status"]): DirectoryUser => ({ ...person(id, name), status });
+    const directory: People = new Map(
+      [grace, person("u4", "Élodie Martin"), left("u5", "Ezra Gone", "deactivated"), left("u6", "Esme Paused", "suspended"), left("u7", "Eve Banned", "banned")].map((p) => [p.id, p]),
+    );
+    const { user } = showBox({ directory });
+    await user.keyboard("from:ÉLO");
+    expect(options()).toEqual(["› Élodie Martin"]);
+    await user.clear(field());
+    await user.keyboard("from:e");
+    expect(options()).toEqual(["› Me (Ada Lovelace)", "Élodie Martin", "Esme Paused", "Ezra Gone", "Grace Hopper"]);
+  });
+
+  it("opens in the room it was opened in before the sidebar lists it, naming it once it does", async () => {
+    serve();
+    const { listRooms } = showBox({ roomId: "general", listed: [] });
+    expect(tokens()).toEqual(["in:an unknown room"]);
+    listRooms(rooms);
+    expect(tokens()).toEqual(["in:general"]);
+    expect(chip("In this room")).toHaveAttribute("aria-pressed", "true");
   });
 
   it("completes has:, is: and with: with the filters they name", async () => {

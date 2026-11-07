@@ -510,7 +510,8 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     if (event.defaultPrevented || !opensFind(event)) return;
     if (event.target instanceof Element && event.target.closest("[role=dialog]")) return;
     event.preventDefault();
-    if (route.page !== "search") return openSearch({ opener: null, roomId: currentRoomId });
+    // Before the sidebar has listed the rooms, the room the address names.
+    if (route.page !== "search") return openSearch({ opener: null, roomId: currentRoomId ?? (rooms === null && route.page === "room" ? route.roomId : null) });
     const { search, sort } = searchOfQuery(new URLSearchParams(location.search));
     openSearch({ opener: null, search, sort });
   });

@@ -1,10 +1,11 @@
-import { createElement, Fragment, useContext, type ComponentProps, type ReactNode } from "react";
+import { createElement, useContext, type ComponentProps, type ReactNode } from "react";
 import { isAppPage, type User, type UserId } from "@ember/protocol";
 import type { DisplayElement, DisplayNode, DisplayPreview } from "@ember/richtext/dom";
 import { PageLink } from "@/components/page-link";
 import { mentionedPerson, PeopleContext } from "@/hooks/use-directory";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "./code-block";
+import { marked, SearchMarks } from "./search-marks";
 import { AvatarLink, UserAvatar } from "./user-avatar";
 
 /** React's names for the attributes a message keeps, where they aren't HTML's. */
@@ -25,16 +26,15 @@ interface Props {
   emoji?: boolean;
   /** What follows the text: in its last paragraph, when it ends with one. */
   trailing?: ReactNode;
-  /** What to mark in the text, as search results mark the words a search matched (`marksFor`). */
-  marks?: RegExp | null;
   className?: string;
 }
 
 /**
- * A message's text, built from `displayBody`'s nodes rather than set as markup. `.message-content` in
- * index.css styles it.
+ * A message's text, built from `displayBody`'s nodes rather than set as markup, with what a search's
+ * results mark in it (`SearchMarks`) marked. `.message-content` in index.css styles it.
  */
-export function MessageBody({ nodes, mentions, emoji = false, trailing, marks = null, className }: Props) {
+export function MessageBody({ nodes, mentions, emoji = false, trailing, className }: Props) {
+  const marks = useContext(SearchMarks);
   const last = nodes.at(-1);
   const inLastParagraph = trailing !== undefined && last?.kind === "element" && last.name === "p";
   const children = nodes.map((node, index) => nodeOf(node, mentions, inLastParagraph && index === nodes.length - 1 ? trailing : undefined, false, marks));
@@ -44,7 +44,7 @@ export function MessageBody({ nodes, mentions, emoji = false, trailing, marks = 
 
 /** `node` as React draws it, with `trailing` after its text, inside a link if `inLink`, and what `marks` matches in its text marked. */
 function nodeOf(node: DisplayNode, mentions: User[], trailing?: ReactNode, inLink = false, marks: RegExp | null = null): ReactNode {
-  if (node.kind === "text") return marks ? marked(node.value, marks) : node.value;
+  if (node.kind === "text") return marked(node.value, marks);
   if (node.kind === "mention") return createElement(Mention, { userId: node.userId, mentions, inLink });
   if (node.kind === "preview") return createElement(LinkPreview, { preview: node, mentions, inLink });
   const shown = TABLE_PARTS.has(node.name) ? node.children.filter((child) => child.kind !== "text" || child.value.trim() !== "") : node.children;
@@ -61,18 +61,6 @@ function nodeOf(node: DisplayNode, mentions: User[], trailing?: ReactNode, inLin
     default:
       return createElement(node.name, props, ...children);
   }
-}
-
-/** `text` with each match of `marks` in a `<mark>`, as search results mark the words a search matched. */
-function marked(text: string, marks: RegExp): ReactNode {
-  const parts: ReactNode[] = [];
-  let from = 0;
-  for (const match of text.matchAll(marks)) {
-    parts.push(text.slice(from, match.index), createElement("mark", { key: match.index, "data-search-match": "" }, match[0]));
-    from = match.index + match[0].length;
-  }
-  if (parts.length === 0) return text;
-  return createElement(Fragment, null, ...parts, text.slice(from));
 }
 
 /**

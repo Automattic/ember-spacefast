@@ -23,7 +23,7 @@ import { PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMounted } from "@/hooks/use-mounted";
 import { navigate, pageMark } from "@/hooks/use-route";
 import { clearSearches, fetchSearch, isSignedOut, recordSearch } from "@/lib/api";
-import { peopleMatching, roomName } from "@/lib/directs";
+import { roomName } from "@/lib/directs";
 import { opensFind } from "@/lib/keyboard";
 import { FLAG_LABELS, keepAnswer, modifierTyped, withTypedFilters, type TypedModifier } from "@/lib/search";
 import { cn } from "@/lib/utils";
@@ -242,7 +242,8 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
   const field = useRef<HTMLInputElement>(null);
   const here = useMemo(() => (roomId ? (rooms.find((room) => room.id === roomId) ?? null) : null), [rooms, roomId]);
   const [open, setOpen] = useState(true);
-  const [filters, setFilters] = useState<SearchFilters>(() => (start ? filtersOf(start) : here ? { in: here.id } : {}));
+  // In the room it opened in, even one the sidebar has yet to list, as it hasn't while it loads.
+  const [filters, setFilters] = useState<SearchFilters>(() => (start ? filtersOf(start) : roomId ? { in: roomId } : {}));
   const [typed, setTyped] = useState(start?.q ?? "");
   const [chipsShown, setChipsShown] = useState(true);
   const [moreShown, setMoreShown] = useState(false);
@@ -664,9 +665,20 @@ function completionsOf(modifier: TypedModifier, me: Me, rooms: readonly Room[], 
   }
   if (modifier.key === "from") {
     const meToo = "me".startsWith(sought) || me.name.toLowerCase().includes(sought) ? [me] : [];
-    return [...meToo, ...peopleMatching(people, me.id, sought)].slice(0, COMPLETIONS).map((person) => ({ kind: "person", id: `person-${person.id}`, person }));
+    return [...meToo, ...authorsMatching(people, me.id, sought)].slice(0, COMPLETIONS).map((person) => ({ kind: "person", id: `person-${person.id}`, person }));
   }
   return SEARCH_FLAGS.filter(({ key, value }) => key === modifier.key && value.startsWith(sought)).map(({ flag }) => ({ kind: "flag", id: `flag-${flag}`, flag }));
+}
+
+/**
+ * The people besides you whose names have `sought`, in lower case, in them, by name: everyone the
+ * directory lists, those who've been deactivated or suspended too, since what they wrote stays to be
+ * found, but not anyone banned, whose messages went with them.
+ */
+function authorsMatching(people: Iterable<DirectoryUser>, meId: UserId, sought: string): DirectoryUser[] {
+  return [...people]
+    .filter((person) => person.id !== meId && person.status !== "banned" && person.name.toLowerCase().includes(sought))
+    .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
 }
 
 /** What the list offers otherwise: Show results for the search, once it can find anything, then the recent searches with the words typed. */

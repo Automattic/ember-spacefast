@@ -384,7 +384,8 @@ Objects, D1 or speed call for something else.
   newest 10 and reads them back with the rooms the search needs, so searching takes the Workspace
   one round trip, as it did before searches were recorded. A search with filters is the JSON of its
   words and the filters it has on (`searchKey`) in `recent_searches` (workspace migration 0048),
-  which started as a copy of `searches`, whose rows stay for the release before.
+  which started as a copy of `searches`, trimmed with each run of spaces made one as `searchKey` makes
+  them, so the same search isn't kept twice, and whose rows stay for the release before.
 - **Each browser's subscription is saved once, in one batch, and each person keeps ten.** Campfire
   looks a subscription up by its endpoint and keys before adding it or touching it, with an index on
   those three in `push_subscriptions` and another on the person, so two saves at once can add it

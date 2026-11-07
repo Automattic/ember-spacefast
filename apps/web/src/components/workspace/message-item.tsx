@@ -68,8 +68,6 @@ interface Props {
   thread?: ThreadPlace;
   /** Whether the message's thread is open beside its room, which marks it there, as Slack does. */
   open?: boolean;
-  /** What to mark in its text, as search results mark the words a search matched. */
-  marks?: RegExp | null;
 }
 
 /**
@@ -205,7 +203,7 @@ function Author({ user }: { user: User }) {
 }
 
 /** One message: a 36px avatar gutter, author and time, then the body. */
-export const MessageItem = memo(function MessageItem({ message, me, threaded: follows, editing: editorOpen, actions, editors, thread, open, marks }: Props) {
+export const MessageItem = memo(function MessageItem({ message, me, threaded: follows, editing: editorOpen, actions, editors, thread, open }: Props) {
   const article = useRef<HTMLElement>(null);
   const menu = useRef<MessageActionsHandle>(null);
   const attachEditor = useCallback((editor: MessageEditorHandle | null) => editors.attach(message.id, editor), [editors, message.id]);
@@ -338,7 +336,6 @@ export const MessageItem = memo(function MessageItem({ message, me, threaded: fo
                 mentions={message.mentions}
                 emoji={allEmoji}
                 trailing={(threaded && edited) || undefined}
-                marks={marks}
                 className={threaded ? "col-start-1 row-start-1" : "touch:pr-8"}
               />
             )

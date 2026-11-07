@@ -215,6 +215,14 @@ describe("Search messages", () => {
     expect([...card!.querySelectorAll("mark[data-search-match]")].map((mark) => mark.textContent)).toEqual(["Hello", "hello"]);
   });
 
+  it("marks them in a bot's cards, which can be all a message has", async () => {
+    const cardOnly: Message = { ...message("m1", general, "Deploy finished"), body: "", cards: [{ source: "blocks", parts: [{ kind: "header", text: "Deploy finished" }] }] };
+    serve(() => Response.json(results({ q: "deploy" }, [cardOnly], { words: ["Deploy"] })));
+    showPage(searchPath({ q: "deploy" }));
+    const [card] = await cards();
+    expect(within(card!).getByRole("heading", { name: "Deploy finished" }).querySelector("mark[data-search-match]")).toHaveTextContent("Deploy");
+  });
+
   it("names the people in a DM as the people directory lists them now, and a room you've left as one", async () => {
     const renamed: People = new Map([[grace.id, { ...withGrace.get(grace.id)!, name: "Grace Brewster Hopper" }]]);
     const left: Room = { id: "left", name: "left", kind: "open", icon: null };
@@ -253,6 +261,41 @@ describe("Search messages", () => {
     expect(requests()).toEqual([
       ["GET", "/api/searches?q=hello"],
       ["GET", "/api/searches?q=hello&cursor=2"],
+    ]);
+  });
+
+  it("keeps its place as the next page joins it, and shows another search from its top", async () => {
+    serve((_, url) =>
+      url.includes("cursor=")
+        ? Response.json(results({ q: "hello" }, [message("m2", general, "Hello two")]))
+        : url.endsWith("=eel")
+          ? Response.json(results({ q: "eel" }, [message("m3", general, "Eel three")]))
+          : Response.json(results({ q: "hello" }, [message("m1", general, "Hello one")], { next: 1 })),
+    );
+    showPage(searchPath({ q: "hello" }));
+    await cards();
+    const list = await found();
+    list.scrollTop = 500;
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(async () => expect(await cards()).toHaveLength(2));
+    expect(list.scrollTop).toBe(500);
+
+    act(() => navigate(searchPath({ q: "eel" })));
+    await waitFor(async () => expect((await cards()).map((card) => card.textContent)).toEqual([expect.stringContaining("Eel three")]));
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it("offers the page after one whose matches have all been deleted since it was searched", async () => {
+    serve((_, url) =>
+      url.includes("cursor=") ? Response.json(results({ q: "hello" }, [message("m2", general, "Hello two")])) : Response.json(results({ q: "hello" }, [], { next: 7 })),
+    );
+    showPage(searchPath({ q: "hello" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Show more" }));
+    expect((await cards()).map((card) => card.textContent)).toEqual([expect.stringContaining("Hello two")]);
+    expect(screen.queryByRole("heading", { name: "No messages found" })).toBeNull();
+    expect(requests()).toEqual([
+      ["GET", "/api/searches?q=hello"],
+      ["GET", "/api/searches?q=hello&cursor=7"],
     ]);
   });
 

@@ -664,11 +664,14 @@ describe("Search filters", () => {
       await post(ada, '<p>puffin <a href="https://example.com/puffins">field guide</a></p>'),
       await post(ada, "puffin pictures at https://example.com/pictures"),
       await post(ada, "puffin www.example.com"),
+      await post(ada, "puffin sightings to ada@example.com"),
+      await post(ada, "puffin burrows on ssh://puffins.example.com"),
     ];
-    for (const body of ["puffin, no link", "puffin at ada@example.com", "puffin http: and www."]) await post(ada, body);
+    for (const body of ["puffin, no link", "puffin http: and www.", "puffin @ the cliffs, ada@ them"]) await post(ada, body);
+    await upload(ada.session, room, "puffin www.example.com.jpg", recordedImage("moon-thumb.jpg"));
     await caughtUp(room);
     expect(await found(ada.session, { q: "puffin", hasLink: true })).toEqual(linked.map(({ id }) => id).toReversed());
-    expect(await found(ada.session, { q: "", hasLink: true })).toHaveLength(3);
+    expect(await found(ada.session, { q: "", hasLink: true })).toHaveLength(5);
   });
 
   it("finds only file messages", async () => {
@@ -838,13 +841,17 @@ describe("Recent searches", () => {
     expect((await clear(ada)).status).toBe(204);
   });
 
-  it("starts with the searches kept before searches had filters, in order", async () => {
+  it("starts with the searches kept before searches had filters, in order, with their spaces as searching for them again leaves them", async () => {
     const ada = await signIn("Ada");
-    await workspaceSql("INSERT INTO searches (user_id, query, position) VALUES (?, 'eels', 1), (?, 'café  au lait', 2)", ada.user.id, ada.user.id);
+    // As 0023 kept "eels", " café,  au lait!", "café au lait" and "sea  otters".
+    const kept = [["eels", 1], [" café   au lait ", 2], ["café au lait", 3], ["sea  otters", 4]] as const;
+    for (const [query, position] of kept) await workspaceSql("INSERT INTO searches (user_id, query, position) VALUES (?, ?, ?)", ada.user.id, query, position);
     await workspaceSql(MIGRATIONS.find(({ name }) => name === "0048_recent_searches.sql")!.sql);
-    expect(await recentOf(ada)).toEqual([{ q: "café  au lait" }, { q: "eels" }]);
+    expect(await recentOf(ada)).toEqual([{ q: "sea otters" }, { q: "café au lait" }, { q: "eels" }]);
     await record(ada, { q: "eels" });
-    expect(await recentWordsOf(ada)).toEqual(["eels", "café  au lait"]);
+    await record(ada, { q: "café au lait" });
+    expect(await recentWordsOf(ada)).toEqual(["café au lait", "eels", "sea otters"]);
+    expect(await storedSearches(ada.user.id)).toEqual(["café au lait", "eels", "sea otters"].map((q) => JSON.stringify({ q })));
   });
 
   it("is only for people signed in, which it checks first", async () => {
