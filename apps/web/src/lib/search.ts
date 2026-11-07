@@ -52,8 +52,12 @@ export function withTypedFilters(search: Search, meId: string): Search {
   return normalizedSearch({ ...search, ...filters, q: words });
 }
 
-/** `text` without the `from:me` typed in full in it, whose place a person picked for From takes. */
+/** `text` without the `from:me` typed in full in it, whose place a person picked for From takes, or which From me turns off. */
 export const withoutFromMe = (text: string) => text.replace(/(^|\s)from:@?me(?=\s|$)/giu, "").trim();
+
+/** `text` without the modifiers typed in full in it that turn `flag` on, such as `has:link`, which its chip turns off. */
+export const withoutFlag = (text: string, flag: SearchFlag) =>
+  text.replace(/(^|\s)(has|is|with):(\S+)(?=\s|$)/giu, (whole, _space: string, key: string, value: string) => (flagNamed(key, value) === flag ? "" : whole)).trim();
 
 /** What marks the words a match matched in its text: each one whole, however it's cased, longest first. */
 export function marksFor(words: readonly string[]): RegExp | null {

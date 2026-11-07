@@ -21,11 +21,11 @@ import { RoomIcon } from "@/components/icons/room-icon";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMounted } from "@/hooks/use-mounted";
-import { navigate, pageMark } from "@/hooks/use-route";
+import { afterNavigating, navigate, pageMark } from "@/hooks/use-route";
 import { clearSearches, fetchSearch, isSignedOut, recordSearch } from "@/lib/api";
 import { roomName } from "@/lib/directs";
 import { opensFind } from "@/lib/keyboard";
-import { FLAG_LABELS, keepAnswer, modifierTyped, withoutFromMe, withTypedFilters, type TypedModifier } from "@/lib/search";
+import { FLAG_LABELS, keepAnswer, modifierTyped, withoutFlag, withoutFromMe, withTypedFilters, type TypedModifier } from "@/lib/search";
 import { cn } from "@/lib/utils";
 import { returnFocus } from "./new-direct-dialog";
 import { UserAvatar } from "./user-avatar";
@@ -311,9 +311,22 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
     setHighlighted(null);
     focusField();
   };
-  const toggle = (flag: SearchFlag) => changeFilters(({ [flag]: on, ...rest }) => (on ? rest : { ...rest, [flag]: true }));
   const remove = (filter: keyof SearchFilters) => changeFilters(({ [filter]: _, ...rest }) => rest);
   const scopeTo = (change: SearchFilters) => changeFilters((filters) => ({ ...filters, ...change }));
+  // A chip is pressed while the search has its filter, as a token or a modifier typed in full, such as
+  // `has:link`, and turning it off takes away both.
+  const toggle = (flag: SearchFlag) => {
+    if (search[flag] !== true) return scopeTo({ [flag]: true });
+    type(withoutFlag(typed, flag));
+    remove(flag);
+  };
+  // From me likewise, but turning it off leaves a person picked, whom a from:me typed was winning over.
+  const fromMe = search.from === me.id;
+  const toggleFromMe = () => {
+    if (!fromMe) return scopeTo({ from: me.id });
+    type(withoutFromMe(typed));
+    if (filters.from === me.id) remove("from");
+  };
   // From someone and In a room type their modifier after the words, for its completions to show.
   const startModifier = (key: "in" | "from") => {
     type(`${typed.trimEnd()}${typed.trim() === "" ? "" : " "}${key}:`);
@@ -332,10 +345,12 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
         if (!mounted.current) return;
         // A page the person has gone to meanwhile stays, with the box over it to search again.
         if (pageMark() !== mark) return setSearching(false);
-        keepAnswer(asked, sort, results);
         went.current = true;
         setOpen(false);
         navigate(searchPath(asked, sort));
+        // For the results page once the app goes there, but not if unsaved changes keep it here, so a
+        // later visit to the same search asks afresh.
+        afterNavigating(() => keepAnswer(asked, sort, results));
       },
       (error: unknown) => {
         if (mounted.current) setSearching(false);
@@ -397,7 +412,6 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
     }
   };
 
-  const fromMe = filters.from === me.id;
   const inHere = here !== null && filters.in === here.id;
   const recentHeading = !modifier && recentShown && typed === "" && recent !== null && recent.length > 0;
 
@@ -497,14 +511,14 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
                 {here.kind === "direct" ? "In this conversation" : "In this room"}
               </Chip>
             )}
-            <Chip pressed={fromMe} onClick={() => (fromMe ? remove("from") : scopeTo({ from: me.id }))}>
+            <Chip pressed={fromMe} onClick={toggleFromMe}>
               <UserIcon />
               From me
             </Chip>
             {(["withMe", "hasLink", "inThread"] as const).map((flag) => {
               const Icon = FLAG_ICONS[flag];
               return (
-                <Chip key={flag} pressed={filters[flag] === true} onClick={() => toggle(flag)}>
+                <Chip key={flag} pressed={search[flag] === true} onClick={() => toggle(flag)}>
                   <Icon />
                   {FLAG_LABELS[flag]}
                 </Chip>
@@ -512,7 +526,7 @@ export function SearchBox({ opener, search: start, sort = "newest", roomId, me, 
             })}
             {moreShown && (
               <>
-                <Chip pressed={filters.hasFile === true} onClick={() => toggle("hasFile")}>
+                <Chip pressed={search.hasFile === true} onClick={() => toggle("hasFile")}>
                   <Attachment />
                   {FLAG_LABELS.hasFile}
                 </Chip>

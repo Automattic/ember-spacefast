@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PeopleContext, type People } from "@/hooks/use-directory";
-import { navigate, pageMark } from "@/hooks/use-route";
+import { guardLeaving, navigate, pageMark } from "@/hooks/use-route";
 import { takeAnswer } from "@/lib/search";
 import { CONFIRM_CLEAR_SEARCHES, SearchBox } from "./search-box";
 
@@ -216,6 +216,28 @@ describe("Search messages", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(requests().filter(([method]) => method === "POST")).toHaveLength(2));
   });
+
+  it("leaves what it found for the results page only once unsaved changes let the app go there", async () => {
+    serve();
+    let proceed = () => {};
+    const stopGuarding = guardLeaving((_, go) => {
+      proceed = go as () => void;
+      return true;
+    });
+    try {
+      const { user } = showBox();
+      await user.keyboard("kelp{Enter}");
+      await waitFor(() => expect(box()).not.toBeInTheDocument());
+      expect(here()).toBe("/rooms/general");
+      // Had the person kept editing, their next visit to the search would ask for it afresh.
+      expect(takeAnswer({ q: "kelp" }, "newest", pageMark() + 1)).toBeNull();
+      await act(async () => proceed());
+      expect(here()).toBe("/searches?q=kelp");
+      expect(takeAnswer({ q: "kelp" }, "newest", pageMark())).toEqual(results({ q: "kelp" }));
+    } finally {
+      stopGuarding();
+    }
+  });
 });
 
 describe("Search filters", () => {
@@ -237,6 +259,43 @@ describe("Search filters", () => {
     expect(tokens()).toEqual(["from:Me", "Has a file"]);
     expect(chip("Includes me")).toHaveAttribute("aria-pressed", "false");
     expect(field()).toHaveFocus();
+  });
+
+  it("presses the chips for modifiers typed in full, which turning a chip off takes out of the field", async () => {
+    serve();
+    const { user } = showBox();
+    await user.keyboard("has:link deploy IS:THREAD from:me ");
+    expect(["Has a link", "Threads only", "From me", "Includes me"].map((name) => chip(name).getAttribute("aria-pressed"))).toEqual(["true", "true", "true", "false"]);
+    await user.click(chip("Has a link"));
+    expect(field()).toHaveValue("deploy IS:THREAD from:me");
+    expect(chip("Has a link")).toHaveAttribute("aria-pressed", "false");
+    await user.click(chip("From me"));
+    expect(field()).toHaveValue("deploy IS:THREAD");
+    expect(chip("From me")).toHaveAttribute("aria-pressed", "false");
+    await user.click(chip("Threads only"));
+    expect(field()).toHaveValue("deploy");
+    // On again, it's a token, which turning it off takes away with a modifier typed for it since.
+    await user.click(chip("Threads only"));
+    expect(tokens()).toEqual(["Threads only"]);
+    await user.keyboard(" is:thread ");
+    await user.click(chip("Threads only"));
+    expect(tokens()).toEqual([]);
+    expect(field()).toHaveValue("deploy");
+    expect(options()[0]).toBe("› Show results for deploy");
+    expect(field()).toHaveFocus();
+  });
+
+  it("turns From me off for a from:me typed, leaving a person picked, whom the from:me was winning over", async () => {
+    serve();
+    const { user } = showBox();
+    await user.keyboard("deploy from:gr{Enter}");
+    expect(tokens()).toEqual(["from:Grace Hopper"]);
+    await user.keyboard(" from:me ");
+    expect(chip("From me")).toHaveAttribute("aria-pressed", "true");
+    await user.click(chip("From me"));
+    expect(field()).toHaveValue("deploy");
+    expect(tokens()).toEqual(["from:Grace Hopper"]);
+    expect(options()[0]).toBe("› Show results for from:Grace Hopper deploy");
   });
 
   it("types in: or from: for From someone… and In a room…, after what's typed, to pick from", async () => {
