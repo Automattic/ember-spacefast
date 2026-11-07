@@ -592,7 +592,9 @@ describe("Where messages live", () => {
 
 describe("Updates for a copy made with Deploy to Cloudflare", () => {
   const WORKFLOW = ".github/workflows/update-ember.yml";
-  const embersWorkflow = readFileSync(new URL(`../../../${WORKFLOW}`, import.meta.url), "utf8");
+  // Ember's, as the deploy offers it: the copy beside the script, which CI keeps the same as .github's,
+  // since a copy's .github keeps its own workflow, or none.
+  const embersWorkflow = readFileSync(new URL("./update-ember.yml", import.meta.url), "utf8");
 
   /**
    * A checkout of a copy of Ember with this script, cloned from `origin` if one's given, and without the
@@ -614,10 +616,6 @@ describe("Updates for a copy made with Deploy to Cloudflare", () => {
 
   /** The link to GitHub's editor for `repository` in the deploy's `logs`. */
   const editorLink = (logs: string, repository: string) => new URL(new RegExp(`https://github\\.com/${repository}/new/\\S+`).exec(logs)?.[0] ?? "https://missing.invalid/");
-
-  it("keeps Ember's Update Ember workflow beside the script as it is, to offer copies without one", () => {
-    expect(readFileSync(new URL("./update-ember.yml", import.meta.url), "utf8")).toBe(embersWorkflow);
-  });
 
   it("links a copy without the workflow to GitHub's editor with Ember's filled in, keeping the clone's credentials out of the log", () => {
     const script = checkout({ origin: "https://x-access-token:ghs_clone-only@github.com/someone/my-ember.git" });

@@ -31,8 +31,9 @@ import { AccountContext } from "@/hooks/use-account";
 import { PeopleContext } from "@/hooks/use-directory";
 import { navigate, WORKSPACE_SETTINGS_PATH } from "@/hooks/use-route";
 import { ApiError } from "@/lib/api";
-// Ember's own Update Ember workflow, which the card offers a copy without one.
-import EMBERS_WORKFLOW from "../../../../../.github/workflows/update-ember.yml?raw";
+// Ember's own Update Ember workflow, which the card offers a copy without one: the copy beside the deploy
+// script, which CI keeps the same as .github's, since a copy's .github keeps its own workflow, or none.
+import EMBERS_WORKFLOW from "../../../../worker/scripts/update-ember.yml?raw";
 import { HOW_COPIES_UPDATE, HOW_THIS_COPY_UPDATES, HOW_TO_ADD_THE_WORKFLOW } from "./ember-version";
 import { CONFIRM_REMOVE } from "./people-list";
 import { workspaceSectionPath, type WorkspaceSection } from "./settings-navigation";
