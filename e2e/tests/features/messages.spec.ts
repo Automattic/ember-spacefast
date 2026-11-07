@@ -356,7 +356,7 @@ test.describe("Message action bar", () => {
     const ada = await members.signIn("Ada", { context: { viewport: { width: 1311, height: 900 } } });
     await ada.send("Name your buttons.");
     const actions = await ada.actions("Name your buttons.");
-    for (const [role, name] of [["button", "Clapping"], ["link", "Reply in thread"], ["button", "Edit"]] as const) {
+    for (const [role, name] of [["button", "Clapping"], ["button", "More reactions"], ["link", "Reply in thread"], ["button", "Edit"]] as const) {
       const control = actions.getByRole(role, { name });
       await control.hover();
       // The last button's may still be fading out beside it.
@@ -427,7 +427,7 @@ test.describe("Message action bar", () => {
     await expect(tray).toContainText("More reactions");
     expect(Math.abs((await box(quick)).y - quickBefore.y)).toBeLessThan(1);
     expect((await box(tray)).y).toBeGreaterThan(quickBefore.y);
-    await ada.page.keyboard.press("Tab");
+    // The tray opens at its first reaction, as Reply in thread and Edit follow More reactions on the bar.
     await expect(tray.getByRole("button", { name: "Muscle" })).toBeFocused();
     // The click shut the tooltip that named More reactions as the pointer reached it, which takes Escape until it has faded.
     await expect(ada.page.getByRole("tooltip")).toHaveCount(0);
@@ -529,16 +529,17 @@ test.describe("Message action bar", () => {
     await expect(message).not.toHaveAttribute("aria-busy");
     const options = message.getByRole("button", { name: "Message options" });
     await options.tap();
+    // The reactions go in the first row, and Reply in thread starts the second, which Edit ends.
     const first = await box(bar(message).getByRole("button", { name: "Thumbs up" }));
-    const thread = await box(bar(message).getByRole("link", { name: "Reply in thread" }));
-    const quote = await box(bar(message).getByRole("button", { name: "Quote" }));
     const more = await box(bar(message).getByRole("button", { name: "More reactions" }));
-    expect(thread).toMatchObject({ x: first.x + 3 * 44, y: first.y });
-    expect(quote).toMatchObject({ x: first.x, y: first.y + 44 });
-    expect(more).toMatchObject({ x: thread.x, y: quote.y });
+    const thread = await box(bar(message).getByRole("link", { name: "Reply in thread" }));
+    const edit = await box(bar(message).getByRole("button", { name: "Edit" }));
+    expect(more).toMatchObject({ x: first.x + 3 * 44, y: first.y });
+    expect(thread).toMatchObject({ x: first.x, y: first.y + 44 });
+    expect(edit).toMatchObject({ x: more.x, y: thread.y });
     // Lined up with Message options' right edge, as far as the timeline lets it.
     const trigger = await box(options);
-    expect(thread.x + thread.width + 5).toBe(Math.min(trigger.x + trigger.width, 320 - 8));
+    expect(more.x + more.width + 5).toBe(Math.min(trigger.x + trigger.width, 320 - 8));
   });
 
   test("opens the bar below Message options on touch screens where there's room", async ({ members, participant }) => {

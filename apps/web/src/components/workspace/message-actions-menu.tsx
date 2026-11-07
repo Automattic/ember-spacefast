@@ -89,12 +89,13 @@ export interface MessageActionsHandle {
 }
 
 /**
- * The message actions: Message options, which opens a bar of three quick reactions, Reply in thread, a file
- * message's Download, Edit and More reactions, whose tray holds the other reactions and New boost. With a
- * mouse, hovering the message opens the bar too, laid over the message's top edge at the timeline's right,
- * with Message options pinned as its last button, and each button names itself in a tooltip as the pointer
- * reaches it. On touch screens it opens beside Message options, with Quote after Reply in thread and Copy
- * link after that. Once opened, the bar stays in the page while it's shut, so Copy link keeps its color.
+ * The message actions: Message options, which opens a bar of three quick reactions, More reactions, whose
+ * tray holds the other reactions and New boost, Reply in thread, a file message's Download, and Edit, in the
+ * order Slack's bar has them. With a mouse, hovering the message opens the bar too, laid over the message's
+ * top edge at the timeline's right, with Message options pinned as its last button, and each button names
+ * itself in a tooltip as the pointer reaches it. On touch screens it opens beside Message options, with
+ * Quote after Reply in thread and Copy link after that. Once opened, the bar stays in the page while it's
+ * shut, so Copy link keeps its color.
  *
  * With a mouse, Message options then opens More actions under the bar, as Slack's does: Quote, Copy text,
  * Copy link, and on messages you can change, Edit message and Delete message.
@@ -107,9 +108,9 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
   // Whether hovering opened the bar, which leaving then closes, unless Message options pinned it.
   const hoverOpened = useRef(false);
   const leaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  // The Add a boost that opened the bar, if one did and More actions hasn't opened since, and whether its first
-  // reaction is still to be focused.
+  // The Add a boost that opened the bar, if one did and More actions hasn't opened since.
   const boostTrigger = useRef<HTMLElement | null>(null);
+  // Whether the tray's first reaction is still to be focused, as Add a boost or More reactions opens it.
   const focusingTray = useRef(false);
   // Whether More actions' first item is still to be focused, as it opens.
   const focusingActions = useRef(false);
@@ -189,10 +190,13 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
     actionsPanel.current?.querySelector("button")?.focus({ preventScroll: true });
   };
 
-  // The tray and More actions open in the same place, under the bar, so one shuts as the other opens.
+  // The tray and More actions open in the same place, under the bar, so one shuts as the other opens. The
+  // tray's first reaction takes focus as it opens, as More actions' first item does, since Tab from More
+  // reactions reaches the rest of the bar first.
   const toggleTray = () => {
+    focusingTray.current = !trayOpen;
     setActionsOpen(false);
-    setTrayOpen((shown) => !shown);
+    setTrayOpen(!trayOpen);
   };
 
   // Opening More actions keeps the bar open and makes it Message options' bar, so Escape shuts More
@@ -404,6 +408,19 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
                 <Reaction key={emoji} emoji={emoji} title={title} onClick={() => react(emoji)} />
               ))}
             </div>
+            <ActionTooltip label="More reactions">
+              <button
+                ref={more}
+                type="button"
+                aria-label="More reactions"
+                aria-expanded={trayOpen}
+                aria-controls={trayId}
+                className={cn(ACTION, "aria-expanded:bg-hover")}
+                onClick={toggleTray}
+              >
+                <Emoji />
+              </button>
+            </ActionTooltip>
             {threadPath !== undefined && (
               <ActionTooltip label="Reply in thread">
                 <PageLink href={threadPath} aria-label="Reply in thread" className={ACTION} onClick={close}>
@@ -438,19 +455,6 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
                 </button>
               </ActionTooltip>
             )}
-            <ActionTooltip label="More reactions">
-              <button
-                ref={more}
-                type="button"
-                aria-label="More reactions"
-                aria-expanded={trayOpen}
-                aria-controls={trayId}
-                className={cn(ACTION, "aria-expanded:bg-hover")}
-                onClick={toggleTray}
-              >
-                <Emoji />
-              </button>
-            </ActionTooltip>
           </div>
           <div
             ref={tray}
