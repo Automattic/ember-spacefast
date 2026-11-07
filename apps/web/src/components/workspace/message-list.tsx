@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { joinsWithLink, type Invitation, type Me } from "@ember/protocol";
 import { ArrowDown } from "@/components/icons/iconoir";
 import { useAccount } from "@/hooks/use-account";
@@ -9,6 +9,7 @@ import { dateLabel, dateTimeLabel, timeline } from "@/lib/messages";
 import type { Focus, RoomState } from "@/lib/room-state";
 import { cn } from "@/lib/utils";
 import { InvitationCard } from "./invitation-card";
+import { RecentCustomReactions, recentCustomReactions } from "./message-boosts";
 import { MessageItem, type MessageActions, type MessageEditors, type ThreadPlace } from "./message-item";
 
 /**
@@ -143,6 +144,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
   // messages first, unless it's a permalink's, whose message goes in the middle.
   const [drawnAll, setDrawnAll] = useState(false);
   const items = timeline(state.messages);
+  // MOCK: the custom reactions design 5 offers.
+  const recentCustom = useMemo(() => recentCustomReactions(state.messages), [state.messages]);
   const newestFirst = !drawnAll && !state.focus?.messageId && items.length > FIRST_DRAWN;
 
   const nearEnd = (el: HTMLElement) => !state.hasNewer && el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;
@@ -293,6 +296,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
           <RoomConnection value={state.connections}>
             <RefusedUnboosts value={state.refusedUnboosts}>
               <ScrollIntoViewContext value={opened}>
+               <RecentCustomReactions value={recentCustom}>
                 {thread?.header}
                 <div ref={top} aria-hidden className="h-px" />
                 {state.loadingOlder && <p className="py-2 text-center text-xs text-muted-foreground">Loading earlier messages…</p>}
@@ -326,6 +330,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
                     </div>
                   );
                 })}
+               </RecentCustomReactions>
               </ScrollIntoViewContext>
             </RefusedUnboosts>
           </RoomConnection>

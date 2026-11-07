@@ -15,7 +15,7 @@ import {
 } from "react";
 import { QUICK_REACTION_COUNT, REACTIONS, type Message, type StoredFile } from "@ember/protocol";
 import type { DisplayNode } from "@ember/richtext/dom";
-import { ChatPlusIn, Copy, Download, Edit, Emoji, MessageText, MoreHoriz, QuoteMessage, ShareAndroid, Trash } from "@/components/icons/iconoir";
+import { ArrowUp, ChatPlusIn, Copy, Download, Edit, Emoji, MessageText, MoreHoriz, QuoteMessage, ShareAndroid, Trash, Xmark } from "@/components/icons/iconoir";
 import { PageLink } from "@/components/page-link";
 import { ShareButton } from "@/components/share-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -26,6 +26,7 @@ import { replyQuote } from "@/lib/messages";
 import { canShare } from "@/lib/share";
 import { cn } from "@/lib/utils";
 import { UNKNOWN_PERSON } from "./message-body";
+import { mockVariant } from "./message-boosts";
 
 /** With a mouse, the bar overlaps its message. */
 const OVERLAPPING = "(hover: hover) and (pointer: fine)";
@@ -458,20 +459,44 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
             role="group"
             aria-label="More reactions"
             hidden={!trayOpen}
-            className={cn(PANEL, "w-max max-w-full justify-self-end overflow-y-auto overscroll-contain p-2 group-data-[panel-above]/menu:-order-1")}
+            className={cn(
+              PANEL,
+              "w-max max-w-full justify-self-end overflow-y-auto overscroll-contain p-2 group-data-[panel-above]/menu:-order-1",
+              mockVariant() === 4 && "w-[13rem] touch:w-[17rem]",
+            )}
           >
-            <span className="mx-[3px] mb-[5px] block text-[11px] leading-normal font-medium text-muted-foreground">More reactions</span>
-            <div className="flex flex-wrap">
+            {mockVariant() === 4 ? (
+              <div className="mb-1 flex items-center justify-between pl-[3px]">
+                <span className="text-[11px] leading-normal font-medium text-muted-foreground">More reactions</span>
+                <button
+                  type="button"
+                  className="-my-0.5 grid size-6 cursor-pointer place-items-center rounded-full text-muted-foreground hover:bg-hover hover:text-foreground touch:-my-2 touch:size-11"
+                  onClick={() => {
+                    setTrayOpen(false);
+                    more.current?.focus({ preventScroll: true });
+                  }}
+                >
+                  <Xmark className="size-4" />
+                  <span className="sr-only">Close More reactions</span>
+                </button>
+              </div>
+            ) : (
+              <span className="mx-[3px] mb-[5px] block text-[11px] leading-normal font-medium text-muted-foreground">More reactions</span>
+            )}
+            <div className={cn("flex flex-wrap", mockVariant() === 4 && "justify-between")}>
               {REACTIONS.slice(QUICK_REACTION_COUNT).map(([emoji, title]) => (
                 <Reaction key={emoji} emoji={emoji} title={title} onClick={() => react(emoji)} />
               ))}
-              <ActionTooltip label="New boost">
-                <button type="button" className={ACTION} onClick={newBoost}>
-                  <ChatPlusIn />
-                  <span className="sr-only">New boost</span>
-                </button>
-              </ActionTooltip>
+              {mockVariant() !== 4 && (
+                <ActionTooltip label="New boost">
+                  <button type="button" className={ACTION} onClick={newBoost}>
+                    <ChatPlusIn />
+                    <span className="sr-only">New boost</span>
+                  </button>
+                </ActionTooltip>
+              )}
             </div>
+            {mockVariant() === 4 && <TrayField onReact={react} />}
           </div>
           <div
             ref={actionsPanel}
@@ -534,6 +559,47 @@ function ActionTooltip({ label, children }: { label: string; children: ReactElem
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/**
+ * MOCK 4, In the tray: a field under More reactions' emoji for a reaction of your own, with Send in it. Enter
+ * or Send adds it and closes the bar, as an emoji does.
+ */
+function TrayField({ onReact }: { onReact: (content: string) => void }) {
+  const [value, setValue] = useState("");
+  const left = 16 - value.length;
+  return (
+    <form
+      className="mt-1.5 flex h-9 min-w-0 items-center gap-1.5 rounded-[9px] border bg-background pr-1 pl-2.5 transition-shadow duration-150 focus-within:ring-2 focus-within:ring-selected-dark touch:h-11 touch:pr-0"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!/^\S/.test(value)) return;
+        onReact(value);
+        setValue("");
+      }}
+    >
+      <input
+        aria-label="Custom reaction"
+        name="content"
+        type="text"
+        autoComplete="off"
+        autoCorrect="off"
+        enterKeyHint="send"
+        maxLength={16}
+        placeholder="Or type your own"
+        value={value}
+        onChange={(event) => setValue(event.currentTarget.value)}
+        className="block min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground touch:text-base"
+      />
+      {left <= 5 && <span className={cn("shrink-0 text-[11px] leading-none text-muted-foreground tabular-nums", left === 0 && "text-negative")}>{left} left</span>}
+      <button type="submit" className="group/send grid size-7 shrink-0 cursor-pointer place-items-center touch:size-11">
+        <span className={cn("grid size-7 place-items-center rounded-full bg-foreground text-background group-hover/send:brightness-70 touch:size-8", value.trim() === "" && "opacity-25")}>
+          <ArrowUp className="size-4" />
+        </span>
+        <span className="sr-only">Add reaction</span>
+      </button>
+    </form>
   );
 }
 
@@ -689,7 +755,8 @@ function placeMenu({ row, container, trigger, anchor, menu, bar, panel, overlapp
     const spotFor = ({ width, height }: DOMRect) => {
       const below = anchorBox.bottom + 6;
       const above = anchorBox.top - height - 6;
-      if (below + height <= bounds.bottom) return { y: below, right: anchorBox.right, fits: true };
+      // MOCK: kept inside the timeline when its anchor has scrolled above it, as a keyboard can scroll it.
+      if (below + height <= bounds.bottom) return { y: Math.max(bounds.top, below), right: anchorBox.right, fits: true };
       if (above >= bounds.top) return { y: above, right: anchorBox.right, fits: true };
       // With room neither below nor above, as on a phone held sideways with the tray open, it opens to the
       // left of its anchor, clear of Message options, or to its right where only that has room.
