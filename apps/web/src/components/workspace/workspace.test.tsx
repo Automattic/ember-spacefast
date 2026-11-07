@@ -1030,22 +1030,102 @@ describe("New releases", () => {
   });
 });
 
-describe("Search page", () => {
-  it("opens from the rail, marking Search, and from a room's header, with Exit back to the room visited last", async () => {
-    serve({ "GET /api/searches": () => Response.json({ query: null, messages: [], rooms: [], recent: [] }) });
+describe("Search box", () => {
+  /** What a search answers when it finds nothing. */
+  const nothing = { search: null, matches: [], next: null, rooms: [], recent: [] };
+  const searchBox = () => screen.queryByRole("dialog", { name: "Search" });
+  const searchField = () => screen.getByRole("combobox", { name: "Search" });
+  /** What the search box's tokens say. */
+  const boxTokens = () =>
+    within(searchBox()!)
+      .queryAllByRole("button", { name: /^Remove / })
+      .map((button) => button.getAttribute("aria-label")!.slice("Remove ".length));
+
+  beforeEach(() =>
+    serve({
+      "GET /api/searches?q=": () => Response.json(nothing),
+      "GET /api/searches?q=eel&has=link": () => Response.json({ ...nothing, search: { q: "eel", hasLink: true } }),
+      "POST /api/searches": () => Response.json({ ...nothing, search: { q: "eel", in: "random" } }),
+    }),
+  );
+
+  it("opens over the room from the rail, for everything, and from the room's header, in the room, giving focus back to the link as it closes", async () => {
     const { user } = showWorkspace("/rooms/random");
     await roomHeading();
-    await user.click(screen.getByRole("link", { name: "Search" }));
-    expect(location.pathname).toBe("/searches");
+    const rail = screen.getByRole("link", { name: "Search" });
+    await user.click(rail);
+    expect(searchField()).toHaveFocus();
+    expect(boxTokens()).toEqual([]);
+    expect(location.pathname).toBe("/rooms/random");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
+    expect(rail).toHaveFocus();
+
+    const header = screen.getByRole("link", { name: "Search messages" });
+    await user.click(header);
+    expect(boxTokens()).toEqual(["in:random"]);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
+    expect(header).toHaveFocus();
+  });
+
+  it("closes the drawer as it opens on a phone, and gives focus to the drawer's toggle once it closes", async () => {
+    const { user } = showWorkspace("/rooms/general");
+    await roomHeading();
+    await user.click(screen.getByRole("button", { name: "Open conversations" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Conversations" })).getByRole("link", { name: "Search" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Conversations" })).not.toBeInTheDocument());
+    expect(searchField()).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Open conversations" })).toHaveFocus();
+  });
+
+  it("opens on Ctrl+F in the room shown, and with the search the results page shows, leaving the key to the browser in a dialog", async () => {
+    const { user } = showWorkspace("/rooms/random");
+    await roomHeading();
+    await user.keyboard("{Control>}f{/Control}");
+    expect(boxTokens()).toEqual(["in:random"]);
+    expect(searchField()).toHaveFocus();
+    // Pressed again, it finds in the page.
+    expect(fireEvent.keyDown(searchField(), { key: "f", ctrlKey: true })).toBe(true);
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
+
+    act(() => navigate("/searches?q=eel&has=link"));
+    expect(await screen.findByRole("heading", { name: "No messages found" })).toBeVisible();
+    await user.keyboard("{Control>}f{/Control}");
+    expect(searchField()).toHaveValue("eel");
+    expect(boxTokens()).toEqual(["Has a link"]);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("link", { name: "DMs" }));
+    expect(fireEvent.keyDown(screen.getByRole("combobox", { name: "Search people" }), { key: "f", ctrlKey: true })).toBe(true);
+    expect(searchBox()).not.toBeInTheDocument();
+  });
+
+  it("goes to what a search finds, marking Search, with Exit back to the room visited last", async () => {
+    const { user } = showWorkspace("/rooms/random");
+    await roomHeading();
+    await user.click(screen.getByRole("link", { name: "Search messages" }));
+    await user.keyboard("eel{Enter}");
+    expect(await screen.findByRole("heading", { name: "No messages found" })).toHaveFocus();
+    expect(location.pathname + location.search).toBe("/searches?q=eel&in=random");
+    expect(searchBox()).not.toBeInTheDocument();
     expect(railCurrent()).toEqual(["Search"]);
-    expect(await screen.findByRole("heading", { name: "Find a conversation" })).toBeVisible();
     expect(document.title).toBe("Search");
+    expect(within(screen.getByRole("group", { name: "Search filters" })).getByRole("button", { name: "Remove in:random" })).toBeInTheDocument();
+
+    // The top bar's search opens the box with it, to change it.
+    await user.click(screen.getByRole("button", { name: "Change search: in:random eel" }));
+    expect(searchField()).toHaveValue("eel");
+    expect(boxTokens()).toEqual(["in:random"]);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(searchBox()).not.toBeInTheDocument());
 
     await user.click(screen.getByRole("link", { name: "Exit search" }));
     expect(await roomHeading()).toHaveTextContent("random");
     expect(railCurrent()).toEqual(["Home"]);
-    await user.click(screen.getByRole("link", { name: "Search messages" }));
-    expect(await screen.findByRole("heading", { name: "Find a conversation" })).toBeVisible();
   });
 });
 
@@ -1177,7 +1257,7 @@ describe("Activity filter", () => {
   it("turns off when you follow a rail or sidebar link, and stays on through other navigation", async () => {
     serve({
       "GET /api/sidebar": () => Response.json(roomList(marked)),
-      "GET /api/searches": () => Response.json({ query: null, messages: [], rooms: [], recent: [] }),
+      "GET /api/searches?q=": () => Response.json({ search: null, matches: [], next: null, rooms: [], recent: [] }),
     });
     const { user } = showWorkspace("/rooms/general");
     await roomHeading();
@@ -1224,7 +1304,7 @@ describe("Activity filter", () => {
     };
     await changeSettings();
 
-    await user.click(screen.getByRole("link", { name: "Search" }));
+    await user.click(screen.getByRole("link", { name: "Workspace" }));
     await user.click(await screen.findByRole("button", { name: "Keep editing" }));
     expect(location.pathname).toBe("/rooms/opens/general/edit");
     expect(activity()).toHaveAttribute("aria-pressed", "true");

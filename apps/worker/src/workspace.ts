@@ -59,6 +59,7 @@ import {
   type RoomChanges,
   type RoomId,
   type RoomSettings,
+  type Search,
   type SentTestEmail,
   type SharedRoom,
   type Sidebar,
@@ -377,12 +378,13 @@ export interface ShownPerson {
 }
 
 /**
- * What a search needs from the Workspace: the rooms whose messages the searcher can search, the ones
- * they've hidden and DMs too, and their recent searches, newest first.
+ * What a search needs from the Workspace: who's searching, the rooms whose messages they can search, the
+ * ones they've hidden and DMs too, and their recent searches, newest first.
  */
 export interface Searcher {
+  userId: UserId;
   rooms: Room[];
-  recent: string[];
+  recent: Search[];
 }
 
 /** What the Workspace says about opening a room's socket. */
@@ -2904,12 +2906,13 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * What a search by the person `credentials` signs in needs, having first recorded `recording` as their
-   * newest search, when it's given, or null without a valid session.
+   * What a search by the person `credentials` signs in needs, having first recorded the search whose key
+   * is `recording` (@ember/protocol `searchKey`) as their newest, when it's given, or null without a valid
+   * session.
    */
   async searcher(credentials: Credentials, recording: string | null): Promise<Searcher | null> {
     const user = await this.authenticate(credentials);
-    return user && this.store.searcherOf(user.id, recording);
+    return user && { userId: user.id, ...(await this.store.searcherOf(user.id, recording)) };
   }
 
   /** Forgets the recent searches of the person `credentials` signs in, answering false without a valid session. */

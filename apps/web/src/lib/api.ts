@@ -3,6 +3,7 @@ import {
   LOGO_PATH,
   MEMBERFUL_CONNECTIONS_PATH,
   roomSocketQuery,
+  searchQuery,
   WORKSPACE_PRELOADS,
   type Account,
   type AccountChanges,
@@ -68,7 +69,9 @@ import {
   type RoomSettings,
   type RoomSocketParams,
   type SavedPushSubscription,
+  type Search,
   type SearchResults,
+  type SearchSort,
   type SendingDomainCheck,
   type SentTestEmail,
   type SharedRoom,
@@ -763,14 +766,17 @@ export async function fetchLinkPreview(url: string, signal: AbortSignal): Promis
   return preview.title && preview.url ? (preview as LinkPreview) : null;
 }
 
-/** What a search for `q` finds, as it was typed, with your recent searches; all you have of them without one. */
-export async function fetchSearch(q: string | null): Promise<SearchResults> {
-  return request<SearchResults>(q === null ? "/api/searches" : `/api/searches?q=${encodeURIComponent(q)}`);
+/**
+ * A page of what `search` finds, sorted by `sort`, from `cursor` on, as the results page asks for it, with
+ * your recent searches, which are all a search with no words or filters has.
+ */
+export async function fetchSearch(search: Search, sort: SearchSort = "newest", cursor?: number): Promise<SearchResults> {
+  return request<SearchResults>(`/api/searches?${searchQuery(search, sort, cursor)}`);
 }
 
-/** Searches for `q`, as it was typed, recording it as your newest recent search, as the search page's form does. */
-export async function recordSearch(q: string): Promise<SearchResults> {
-  return request<SearchResults>("/api/searches", { method: "POST", body: JSON.stringify({ q }) });
+/** Searches for `search`, recording it as your newest recent search, as the search box does, and answers its first page, sorted by `sort`. */
+export async function recordSearch(search: Search, sort: SearchSort = "newest"): Promise<SearchResults> {
+  return request<SearchResults>("/api/searches", { method: "POST", body: JSON.stringify({ ...search, sort }) });
 }
 
 /** Forgets your recent searches. */

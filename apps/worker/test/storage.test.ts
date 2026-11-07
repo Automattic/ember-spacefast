@@ -28,6 +28,7 @@ const TABLES: Record<Exclude<Scope, "search">, string[]> = {
     "pending_reindexes",
     "pending_revocations",
     "push_subscriptions",
+    "recent_searches",
     "rooms",
     "searches",
     "sessions",
@@ -44,6 +45,7 @@ const SEARCH_TABLES = [
   "search_index_data",
   "search_index_docsize",
   "search_index_idx",
+  "search_mentions",
   "search_messages",
   "search_rooms",
 ];
