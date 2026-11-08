@@ -511,6 +511,42 @@ describe("Connect Memberful", () => {
     expect(onFailed).not.toHaveBeenCalled();
   });
 
+  it("keeps showing it disconnected when a save answers late with the account still connected, since only a reload connects one", async () => {
+    // A save, or a photo, sent before Disconnect can answer after it, as the profile was before.
+    serve({
+      loaded: () => Response.json({ profile: { ...profile, memberful: CONNECTED }, transferId: LOADED_LINK } satisfies ProfileAnswer),
+      saved: () => Response.json({ profile: { ...profile, name: "Ada King", memberful: CONNECTED }, transferId: SAVED_LINK } satisfies ProfileAnswer),
+    });
+    const { user } = showPage();
+    await loaded();
+    await user.type(within(memberful()!).getByLabelText("Password"), "analytical engine");
+    await user.click(within(memberful()!).getByRole("button", { name: "Disconnect Memberful" }));
+    await waitFor(() => expect(memberful()).toHaveTextContent("Connect your Memberful account to keep signing in as yourself."));
+    await user.type(field("Name"), " King");
+    await user.click(saveButton());
+    await waitFor(() => expect(field("Name")).toHaveValue("Ada King"));
+    expect(memberful()).toHaveTextContent("Connect your Memberful account to keep signing in as yourself.");
+    expect(within(memberful()!).queryByRole("button", { name: "Disconnect Memberful" })).not.toBeInTheDocument();
+    expect(passwordHelp()).not.toHaveTextContent("disconnects");
+  });
+
+  it("keeps offering Disconnect when a photo's answer arrives late without the email address saved since, which only the profile's own answers change", async () => {
+    // A photo picked before an email address is saved can answer after it, as the profile was before.
+    serve({
+      loaded: () => Response.json({ profile: { ...profile, memberful: CONNECTED }, transferId: LOADED_LINK } satisfies ProfileAnswer),
+      uploaded: () =>
+        Response.json({ profile: { ...profile, emailAddress: null, avatarUrl: UPLOADED, avatar: true, memberful: CONNECTED }, transferId: SAVED_LINK } satisfies ProfileAnswer),
+    });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:moon");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const { user } = showPage();
+    await loaded();
+    await user.upload(screen.getByLabelText("Upload avatar", { exact: false }), new File(["moon"], "moon.jpg", { type: "image/jpeg" }));
+    await waitFor(() => expect(screen.getByRole("img", { name: "Your avatar" })).toHaveAttribute("src", UPLOADED));
+    expect(within(memberful()!).getByRole("button", { name: "Disconnect Memberful" })).toBeEnabled();
+    expect(memberful()).not.toHaveTextContent("Add your email address");
+  });
+
   it("takes the section away once it's disconnected while Memberful isn't members only, since your password signs you in", async () => {
     serve({
       loaded: () => Response.json({ profile: { ...profile, memberful: { membersOnly: false, connected: ADAS_ACCOUNT } }, transferId: LOADED_LINK } satisfies ProfileAnswer),

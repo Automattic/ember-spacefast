@@ -121,7 +121,11 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
   const [transferId, setTransferId] = useState<string | null>(null);
   /** Whether you have a password, which the form then asks for to change your email address or password. */
   const [hasPassword, setHasPassword] = useState(false);
-  /** Whether you have an email address saved, which signing in with your password takes, so disconnecting Memberful needs it. */
+  /**
+   * Whether you have an email address saved, which signing in with your password takes, so disconnecting
+   * Memberful needs it: from loading and saving the profile alone, which change it, so a photo's answer
+   * arriving late doesn't take it away.
+   */
   const [hasEmailAddress, setHasEmailAddress] = useState(false);
   /** The Memberful account you've connected, or none to connect yet, or null while there's nothing to show. */
   const [memberful, setMemberful] = useState<MemberfulStatus | null>(null);
@@ -132,6 +136,8 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
   const [saving, setSaving] = useState(false);
   const passwordInput = useRef<HTMLInputElement>(null);
   const currentPasswordInput = useRef<HTMLInputElement>(null);
+  /** Whether you've disconnected your Memberful account here, since when no answer shows it connected: connecting one reloads the page. */
+  const disconnectedMemberful = useRef(false);
   const people = useContext(PeopleContext);
   const back = useBackPath();
   const flash = useFlash();
@@ -146,6 +152,7 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
         if (stopped) return;
         saved.current = fieldsOf(answer.profile);
         setFields(saved.current);
+        setHasEmailAddress(answer.profile.emailAddress !== null);
         showAnswer(answer);
         // Only from here and the Ember AI section's own saves, as a save of the profile or a photo can
         // answer after a change there, with your model and levels from before it.
@@ -172,14 +179,17 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
     setPicture((shown) => (shown && avatarVersionOf(shown.avatarUrl) > avatarVersionOf(answered.avatarUrl) ? shown : answered));
     // Nothing takes a password away, so an answer arriving late doesn't hide the field.
     setHasPassword((had) => had || profile.password);
-    setHasEmailAddress(profile.emailAddress !== null);
-    setMemberful(profile.memberful);
+    // Nothing connects a Memberful account without a reload, so once it's disconnected here, an answer
+    // arriving late doesn't show it connected again, and shows what the Worker does for one disconnected.
+    const { memberful } = profile;
+    setMemberful(disconnectedMemberful.current && memberful?.connected ? (memberful.membersOnly ? { membersOnly: true, connected: null } : null) : memberful);
     setMembershipNeeded(profile.membershipNeeded);
     setTransferId(transferId);
   }
 
   /** Shows your profile as disconnecting your Memberful account answered it, with the notice. */
   function disconnected(answer: ProfileAnswer) {
+    disconnectedMemberful.current = true;
     showAnswer(answer);
     flash("notice", MEMBERFUL_DISCONNECTED_NOTICE);
   }
@@ -228,6 +238,7 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
         const now = fieldsOf(answer.profile);
         saved.current = now;
         setFields((fields) => fields && settled(fields, sent, now));
+        setHasEmailAddress(answer.profile.emailAddress !== null);
         // The passwords leave their fields, unless others were typed meanwhile.
         if (passwordInput.current?.value === password) passwordInput.current.value = "";
         if (currentPasswordInput.current?.value === currentPassword) currentPasswordInput.current.value = "";
