@@ -171,7 +171,8 @@ export function WorkspaceSettingsPage({
         setTypedName(null);
         setTypedTagline(null);
         answered(settings.account);
-        onJoinCodeChanged(settings.joinCode);
+        // Only administrators have the welcome card, and they're always given the code.
+        if (settings.joinCode !== null) onJoinCodeChanged(settings.joinCode);
       },
       (error: unknown) => {
         // A page left before its settings load only reports a session that's ended, which goes to sign in.
@@ -483,7 +484,7 @@ export function WorkspaceSettingsPage({
                   saveEmailDomains={saveEmailDomains}
                   onSetUpEmail={setUpEmail}
                   onSetUpTurnstile={() => setSettingUpTurnstile(true)}
-                  joinLink={<InviteLink joinCode={settings.joinCode} onRegenerate={regenerate} regenerating={regenerating} />}
+                  joinLink={settings.joinCode !== null && <InviteLink joinCode={settings.joinCode} onRegenerate={regenerate} regenerating={regenerating} />}
                 />
                 <InviteByEmail
                   invitations={settings.invitations}
@@ -523,7 +524,7 @@ export function WorkspaceSettingsPage({
                 )}
               </div>
             ) : (
-              <HowPeopleJoin joinLink={<InviteLink joinCode={settings.joinCode} />} memberfulSite={settings.memberfulSite} />
+              <HowPeopleJoin joinCode={settings.joinCode} memberfulSite={settings.memberfulSite} />
             )}
             <hr className="my-4 w-full" />
             <PeopleList

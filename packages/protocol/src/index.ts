@@ -457,8 +457,12 @@ export interface Account {
 /** What `GET /api/account` answers for workspace settings. */
 export interface WorkspaceSettings {
   account: Account;
-  /** The join link's code, which everyone in the workspace can share. */
-  joinCode: string;
+  /**
+   * The join link's code, which everyone in the workspace can share, or null for someone who signed in
+   * with just a name, unless they're an administrator, since a member's account they made with it would
+   * stay once `EMBER_GUEST_SIGN_IN` turns guests away.
+   */
+  joinCode: string | null;
   /** Whether you can change the workspace, as administrators can. Members see it read-only. */
   canAdminister: boolean;
   /**

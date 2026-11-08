@@ -813,19 +813,21 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Workspace settings as the person `credentials` signs in sees them: "not set up" before first run, or
-   * null without a valid session. The Worker adds what it knows of the Memberful site from its keys and
+   * null without a valid session. A guest isn't given the join link's code, since a member's account
+   * they made with it would stay once guests are turned away, unless they're an administrator, who
+   * could make a new code anyway. The Worker adds what it knows of the Memberful site from its keys and
    * the Cloudflare account it's deployed to, and has the deployment's Turnstile keys take the place of
    * any an administrator gave, and the Workspace says how it sends email, since it's what sends it.
    */
   async workspaceSettings(credentials: Credentials): Promise<Omit<WorkspaceSettings, "memberfulSite" | "memberfulWebhooks" | "cloudflareAccountId"> | "not set up" | null> {
-    const user = await this.authenticate(credentials);
-    if (!user) return null;
-    const [account, canAdminister] = await Promise.all([this.joinableAccount(), this.store.isAdministrator(user.id)]);
+    const session = await this.session(credentials);
+    if (!session) return null;
+    const [account, canAdminister] = await Promise.all([this.joinableAccount(), this.store.isAdministrator(session.user.id)]);
     if (!account) return "not set up";
     const invitations = canAdminister ? await this.store.invitations() : [];
     return {
       account: accountOf(account),
-      joinCode: account.joinCode,
+      joinCode: canAdminister || !session.guest ? account.joinCode : null,
       canAdminister,
       email: await this.emailSettings(account),
       turnstile: (await this.openedTurnstileKeys(account)) ? "saved" : null,

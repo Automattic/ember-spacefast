@@ -61,6 +61,7 @@ async function seed(ember: Ember, password: string): Promise<void> {
   await ember.changeAccount(maya, WORKSPACE);
   await ember.changeLogo(maya, file("fernwood-512.png"), file("fernwood-512.png"), file("fernwood-192.png"));
   const { joinCode } = await ember.settings(maya);
+  if (joinCode === null) throw new Error("Ember gave the administrator who set it up no join code");
   const people = { maya } as Record<PersonName, Session>;
   for (const [name, person] of entries<PersonName, Person>(PEOPLE)) {
     people[name] ??= await ember.join(joinCode, formOf(person), pictureOf(person.avatar));
