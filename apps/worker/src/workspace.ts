@@ -1856,24 +1856,26 @@ export class Workspace extends DurableObject<Env> {
    * site `issuer`, from their profile, checks first: whose account it is, and the digest of their
    * password, which the Worker checks the password they give against, counting it against sign-in's
    * limit for `ip`, as connecting one does: "limited" past it. "forbidden" for a guest, "not connected"
-   * while they aren't connected to an account there, "no password" while they have none, which they'd
-   * have nothing to sign in with without, and null without a valid session.
+   * while they aren't connected to an account there, "no password" while they have none, or "no email
+   * address" while they have none, which they'd have nothing to sign in with without, since signing
+   * in with a password takes both, and null without a valid session.
    */
   async memberfulDisconnectionCheck(
     credentials: Credentials,
     ip: string,
     issuer: string,
-  ): Promise<{ userId: UserId; passwordDigest: string } | "limited" | "forbidden" | "not connected" | "no password" | null> {
+  ): Promise<{ userId: UserId; passwordDigest: string } | "limited" | "forbidden" | "not connected" | "no password" | "no email address" | null> {
     const session = await this.session(credentials);
     if (!session) return null;
     if (session.guest) return "forbidden";
     const person = await this.store.connectingPerson(session.user.id, issuer);
     if (!person) return null;
     if (person.subject === null) return "not connected";
-    const passwordDigest = (await this.store.signInOf(session.user.id))?.passwordDigest;
-    if (!passwordDigest) return "no password";
+    const signIn = await this.store.signInOf(session.user.id);
+    if (!signIn?.passwordDigest) return "no password";
+    if (signIn.emailAddress === null) return "no email address";
     if (!this.signInAttempts.attempt(ip)) return "limited";
-    return { userId: session.user.id, passwordDigest };
+    return { userId: session.user.id, passwordDigest: signIn.passwordDigest };
   }
 
   /**
@@ -1881,10 +1883,11 @@ export class Workspace extends DurableObject<Env> {
    * `issuer`, once the Worker has checked their password, whose digest is `checked`
    * (`memberfulDisconnectionCheck`), answering their profile as it is then. As a new password does, it
    * ends their other sessions: their sockets close and are told to reconnect, here at once and in every
-   * room they're in through the outbox, and their push subscriptions are forgotten but this browser's,
-   * at `pushEndpoint`. Each statement checks that they're still connected there and still have that
-   * password, so a reset ahead of it in line, or another tab's Disconnect, makes it "refused". Null
-   * without a valid session.
+   * room they're in through the outbox, their push subscriptions are forgotten but this browser's, at
+   * `pushEndpoint`, and so are the connections their browsers started and haven't finished, which could
+   * connect an account again. Each statement checks that they're still connected there and still have that
+   * password and an email address, so a reset ahead of it in line, or another tab's Disconnect or
+   * profile change, makes it "refused". Null without a valid session.
    */
   async disconnectMemberful(credentials: Credentials, issuer: string, checked: string, pushEndpoint: string | null): Promise<YourProfile | "refused" | null> {
     return this.closingSockets(async () => {
@@ -2793,8 +2796,9 @@ export class Workspace extends DurableObject<Env> {
       const now = Date.now();
       const at = new Date(now).toISOString();
       const ended = passwordDigest === null ? null : { kept: session.id, pushEndpoint, code: CloseCode.Reconnect, dueAt: now };
-      // A password replacing one unlinks the accounts elsewhere connected with it; a first keeps them.
-      const unlinked = ended !== null && person.password;
+      // A password replacing one unlinks the accounts elsewhere connected with it, while an email address
+      // signs them in with it; a first keeps them, as does one saved without an email address.
+      const unlinked = ended !== null && person.password && profile.emailAddress !== null;
       // As when a password is reset, until the database says it queued nothing.
       let queued = ended !== null;
       try {

@@ -459,10 +459,11 @@ Objects, D1 or speed call for something else.
   on Memberful connects nothing either. That insert, which `identities`' unique indexes guard, runs
   one at a time with sign-ins, then a session starts unless the browser is signed in as them. A new
   password that replaces one deletes the person's `identities` rows too, in the same batch, before
-  the statement that saves it, so that a reset ends every way in, while a first password keeps them;
-  Disconnect Memberful deletes one, with the person's other sessions and push subscriptions, each
-  statement checking that the row is still there and `password_digest` is still the one the Worker
-  checked. Each row keeps the account's name and email address as Memberful last described it
+  the statement that saves it, so that a reset ends every way in, while a first password keeps them,
+  as does one saved without an email address, which signing in with a password takes; Disconnect
+  Memberful deletes one, with the person's other sessions, push subscriptions and
+  `pending_identities` rows, each statement checking that the row is still there, `password_digest`
+  is still the one the Worker checked and `email_address` is one. Each row keeps the account's name and email address as Memberful last described it
   (workspace migration 0049), refreshed as it signs them in, only so their profile can name it.
 - **Memberships are asked about, not taken from webhooks.** Memberful sends its webhooks in no
   particular order, so one only queues a check of a linked member in `membership_checks` (workspace

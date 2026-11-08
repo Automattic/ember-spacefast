@@ -710,30 +710,37 @@ const REFRESH_IDENTITY = `UPDATE identities SET name = ?3, email_address = ?4, u
   WHERE issuer = ?1 AND subject = ?2 AND (name IS NOT ?3 OR email_address IS NOT ?4)`;
 
 /**
- * Unlinks every account elsewhere from person ?1 as a new password replaces the one they have, which
+ * Unlinks every account elsewhere from person ?1 as a reset replaces the password they have, which
  * connected each, so that a new password, as a reset gives someone whose account was taken over, ends
  * every other way in. Someone without one, as people who signed in with Memberful are, keeps theirs
- * as they set a first password. Before the statement that gives them the new one.
+ * as they set a first password, and so does someone without an email address, who'd have nothing to
+ * sign in with once unlinked, since signing in with a password takes one (a reset finds them by it).
+ * Before the statement that gives them the new one.
  */
-const UNLINK_ON_NEW_PASSWORD = `DELETE FROM identities WHERE user_id = ?1
+const UNLINK_ON_RESET = `DELETE FROM identities WHERE user_id = ?1
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND coalesce(password_digest, '') <> '' AND coalesce(email_address, '') <> '')`;
+
+/** The same as their profile saves a new password, with ?2 as their email address from then on, or none, as the save gives it. */
+const UNLINK_ON_NEW_PASSWORD = `DELETE FROM identities WHERE user_id = ?1 AND coalesce(?2, '') <> ''
   AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND coalesce(password_digest, '') <> '')`;
 
 /**
  * Whether person ?1 is linked to an account at issuer ?2 and has the password whose digest is ?3, as the
- * Worker checked it: what each of a disconnection's statements checks, so that a password changed
- * meanwhile, or an account disconnected already, changes nothing.
+ * Worker checked it, and an email address to sign in with it by: what each of a disconnection's
+ * statements checks, so that a password or email address changed meanwhile, or an account disconnected
+ * already, changes nothing.
  */
 const DISCONNECTING = `EXISTS (SELECT 1 FROM identities JOIN users ON users.id = identities.user_id
-  WHERE identities.user_id = ?1 AND identities.issuer = ?2 AND users.password_digest = ?3)`;
+  WHERE identities.user_id = ?1 AND identities.issuer = ?2 AND users.password_digest = ?3 AND coalesce(users.email_address, '') <> '')`;
 
 /** Queues revoking the sockets of every session of person ?1 but ?7, in every room they're in, while `DISCONNECTING`, as `QUEUE_OTHER_SESSION_REVOCATIONS` does. */
 const QUEUE_DISCONNECTED_SESSION_REVOCATIONS = `INSERT INTO pending_revocations (room_id, tag, code, due_at)
   SELECT memberships.room_id, ?4 || sessions.id, ?5, ?6 FROM sessions JOIN memberships ON memberships.user_id = sessions.user_id
   WHERE sessions.user_id = ?1 AND sessions.id <> ?7 AND ${DISCONNECTING} RETURNING id`;
 
-/** Unlinks the account at issuer ?2 from person ?1, while their password's digest is ?3, answering its subject. */
+/** Unlinks the account at issuer ?2 from person ?1, while their password's digest is ?3 and they have an email address, answering its subject. */
 const DISCONNECT_IDENTITY = `DELETE FROM identities WHERE user_id = ?1 AND issuer = ?2
-  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND password_digest = ?3) RETURNING subject`;
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND password_digest = ?3 AND coalesce(email_address, '') <> '') RETURNING subject`;
 
 /**
  * The same, for someone signing in with a sign-in link, unless they're no longer active, or are a guest
@@ -2191,16 +2198,18 @@ export class WorkspaceStore {
   /**
    * Unlinks the account at `issuer` from `userId`, while their password's digest is still
    * `passwordDigest`, as the Worker checked it, and in the same transaction ends the sessions and
-   * forgets the push subscriptions `ended` says, queuing closing those sessions' sockets, as a new
-   * password does. Each statement checks both, so a password changed meanwhile, or an account
-   * disconnected already, changes nothing. Answers whether it was unlinked, and whether it queued any.
+   * forgets the push subscriptions `ended` says, queuing closing those sessions' sockets, and forgets
+   * the connections their browsers started and haven't finished, as a new password does. Each
+   * statement checks both, so a password changed meanwhile, or an account disconnected already, changes
+   * nothing. Answers whether it was unlinked, and whether it queued any.
    */
   async disconnectIdentity(userId: UserId, issuer: string, passwordDigest: string, ended: EndedByPassword): Promise<Disconnection> {
-    const [queued, , , unlinked] = await this.db.batch([
+    const [queued, , , , unlinked] = await this.db.batch([
       // Before their sessions go, which it finds their sockets by, and before the link, which each checks.
       statement(QUEUE_DISCONNECTED_SESSION_REVOCATIONS, userId, issuer, passwordDigest, SESSION_TAG_PREFIX, ended.code, ended.dueAt, ended.kept),
       statement(`DELETE FROM sessions WHERE user_id = ?1 AND id <> ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.kept),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?1 AND endpoint IS NOT ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.pushEndpoint),
+      statement(`DELETE FROM pending_identities WHERE user_id = ?1 AND ${DISCONNECTING}`, userId, issuer, passwordDigest),
       statement(DISCONNECT_IDENTITY, userId, issuer, passwordDigest),
     ]);
     return { disconnected: unlinked!.length > 0, queued: queued!.length > 0 };
@@ -2454,7 +2463,7 @@ export class WorkspaceStore {
   /**
    * Gives someone the password `passwordDigest` is the digest of, recording when, and ends all their
    * sessions, keeping their role and status, and forgets their push subscriptions, the accounts
-   * elsewhere their old password started connecting, or connected (`UNLINK_ON_NEW_PASSWORD`), and any
+   * elsewhere their old password started connecting, or connected (`UNLINK_ON_RESET`), and any
    * code they were emailed to reset it. In the same transaction it queues closing each session's
    * sockets with `code` in every room they're in, due at `dueAt`, as signing out does. Answers whether
    * it queued any.
@@ -2462,7 +2471,7 @@ export class WorkspaceStore {
   async resetPassword(userId: UserId, passwordDigest: string, code: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [queued] = await this.db.batch([
       statement(QUEUE_PERSON_SESSION_REVOCATIONS, SESSION_TAG_PREFIX, code, dueAt, userId),
-      statement(UNLINK_ON_NEW_PASSWORD, userId),
+      statement(UNLINK_ON_RESET, userId),
       statement(`UPDATE users SET password_digest = ?, updated_at = ? WHERE id = ?`, passwordDigest, now, userId),
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
@@ -3136,8 +3145,8 @@ export class WorkspaceStore {
    * Saves someone's profile, and a new password when `passwordDigest` is one's, recording when. With a
    * new password, in the same transaction it ends the sessions and forgets the push subscriptions
    * `ended` says, queuing closing those sessions' sockets, and forgets the accounts elsewhere their old
-   * password started connecting, or connected, if they had one (`UNLINK_ON_NEW_PASSWORD`). Answers
-   * whether it queued any.
+   * password started connecting, or connected, if they had one and keep an email address to sign in
+   * with (`UNLINK_ON_NEW_PASSWORD`). Answers whether it queued any.
    */
   async changeProfile(userId: UserId, { name, emailAddress, bio, passwordDigest }: ProfileChange, now: string, ended: EndedByPassword | null): Promise<boolean> {
     const change = statement(CHANGE_PROFILE, name, emailAddress, bio, passwordDigest, now, userId);
@@ -3151,7 +3160,7 @@ export class WorkspaceStore {
       statement(`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userId, ended.kept),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint IS NOT ?`, userId, ended.pushEndpoint),
       statement(`DELETE FROM pending_identities WHERE user_id = ?`, userId),
-      statement(UNLINK_ON_NEW_PASSWORD, userId),
+      statement(UNLINK_ON_NEW_PASSWORD, userId, emailAddress),
       change,
     ]);
     return queued!.length > 0;

@@ -121,6 +121,8 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
   const [transferId, setTransferId] = useState<string | null>(null);
   /** Whether you have a password, which the form then asks for to change your email address or password. */
   const [hasPassword, setHasPassword] = useState(false);
+  /** Whether you have an email address saved, which signing in with your password takes, so disconnecting Memberful needs it. */
+  const [hasEmailAddress, setHasEmailAddress] = useState(false);
   /** The Memberful account you've connected, or none to connect yet, or null while there's nothing to show. */
   const [memberful, setMemberful] = useState<MemberfulStatus | null>(null);
   /** Whether you need Memberful to sign in while it's members only, unlike administrators and the people they invite. */
@@ -170,6 +172,7 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
     setPicture((shown) => (shown && avatarVersionOf(shown.avatarUrl) > avatarVersionOf(answered.avatarUrl) ? shown : answered));
     // Nothing takes a password away, so an answer arriving late doesn't hide the field.
     setHasPassword((had) => had || profile.password);
+    setHasEmailAddress(profile.emailAddress !== null);
     setMemberful(profile.memberful);
     setMembershipNeeded(profile.membershipNeeded);
     setTransferId(transferId);
@@ -311,8 +314,8 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
             <p id="profile-password-help" className="text-[0.8em] text-muted-foreground">
               {/* Someone who signed in with Memberful or just a name has no password. */}
               {fields && !hasPassword ? "Leave blank to keep signing in without a password." : "Leave blank to keep your current password."}
-              {/* As the one it replaces connected it. */}
-              {fields && hasPassword && memberful?.connected && " A new one disconnects your Memberful account."}
+              {/* As the one it replaces connected it, while it's saved with an email address to sign in by. */}
+              {fields && hasPassword && memberful?.connected && fields.emailAddress.trim() !== "" && " A new one disconnects your Memberful account."}
             </p>
           </Field>
           {hasPassword && (
@@ -354,6 +357,7 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
             connected={memberful.connected}
             membersOnly={memberful.membersOnly}
             hasPassword={hasPassword}
+            hasEmailAddress={hasEmailAddress}
             membershipNeeded={membershipNeeded}
             onDisconnected={disconnected}
             onFailed={onFailed}

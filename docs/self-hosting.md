@@ -379,7 +379,9 @@ The Memberful section of a profile names the account that's connected, as Member
 and Disconnect Memberful, with their password, unlinks it and ends their other sessions, as a new
 password does. A new password that replaces one they had disconnects it too, so a reset ends every
 other way into an account, while someone who joined with Memberful keeps theirs as they set a first
-password. Once disconnected, a member signing in with their password is asked to connect one again.
+password. Neither disconnects it from someone without an email address, which signing in with a
+password takes, so nobody is left with no way to sign in: the section asks them to add one first.
+Once disconnected, a member signing in with their password is asked to connect one again.
 
 A member whose membership lapses can't sign in with Memberful again. With the webhook, they're suspended too: their
 sessions end, their sockets close and their browsers' push subscriptions are forgotten, but their

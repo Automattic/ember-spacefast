@@ -12,7 +12,8 @@ import { pushEndpoint } from "@/lib/push";
 // before connects their Memberful account to it, with their password, as changing their email address
 // takes it, and signs in with Memberful from then on. Once one is connected, it names the account, and
 // Disconnect Memberful, with their password again, unlinks it and ends their other sessions, as a new
-// password does. Boxed as workspace settings' Memberful section is.
+// password does, while they have a password and an email address to sign in with instead. Boxed as
+// workspace settings' Memberful section is.
 
 interface Props {
   /** The Memberful account you've connected, as Memberful describes it, or null while you haven't. */
@@ -21,6 +22,8 @@ interface Props {
   membersOnly: boolean;
   /** Whether you have a password, which connecting one asks for then, and disconnecting it needs. */
   hasPassword: boolean;
+  /** Whether you have an email address, which signing in with your password takes, so disconnecting needs it too. */
+  hasEmailAddress: boolean;
   /** Whether you need Memberful to sign in, as everyone does but administrators and the people they invite, who sign in with a password too. */
   membershipNeeded: boolean;
   /** Shows your profile as disconnecting answered it. */
@@ -40,7 +43,7 @@ function describe({ name, emailAddress }: MemberfulAccount): string | null {
  * the browser to sign in at the Memberful site once your password checks out, and Memberful sends it
  * back here.
  */
-export function MemberfulConnection({ connected, membersOnly, hasPassword, membershipNeeded, onDisconnected, onFailed }: Props) {
+export function MemberfulConnection({ connected, membersOnly, hasPassword, hasEmailAddress, membershipNeeded, onDisconnected, onFailed }: Props) {
   const [busy, setBusy] = useState(false);
   const passwordInput = useRef<HTMLInputElement>(null);
   const mounted = useMounted();
@@ -104,9 +107,11 @@ export function MemberfulConnection({ connected, membersOnly, hasPassword, membe
     </Field>
   );
 
+  // Whether your password signs you in, which takes an email address to sign in by, so that Memberful can be disconnected.
+  const signsInWithPassword = hasPassword && hasEmailAddress;
   // Whether Memberful is your way in, rather than one of two: a member's, while Memberful is members only,
-  // and anyone's without a password.
-  const signsYouIn = (membersOnly && membershipNeeded) || !hasPassword;
+  // and anyone's whose password doesn't sign them in.
+  const signsYouIn = (membersOnly && membershipNeeded) || !signsInWithPassword;
   const who = connected && describe(connected);
 
   return (
@@ -120,7 +125,7 @@ export function MemberfulConnection({ connected, membersOnly, hasPassword, membe
             {who ? `Connected to Memberful as ${who}` : "Your Memberful account is connected"}
             {signsYouIn ? ", so you sign in with it." : ", so you can sign in with it too."}
           </p>
-          {hasPassword ? (
+          {signsInWithPassword ? (
             <form onSubmit={disconnect} className={AUTH_FORM}>
               <p id="memberful-disconnection-help">
                 {signsYouIn
@@ -130,6 +135,8 @@ export function MemberfulConnection({ connected, membersOnly, hasPassword, membe
               {passwordField("memberful-disconnection-help")}
               <SubmitButton disabled={busy}>Disconnect Memberful</SubmitButton>
             </form>
+          ) : hasPassword ? (
+            <p>Add your email address above to disconnect it, so that you can still sign in with your password.</p>
           ) : (
             <p>Set a password above to disconnect it, so that you can still sign in.</p>
           )}

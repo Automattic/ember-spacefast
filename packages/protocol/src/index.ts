@@ -1304,6 +1304,8 @@ export const MEMBERFUL_PASSWORD_NEEDED = "Enter your password to connect Memberf
 export const MEMBERFUL_DISCONNECT_PASSWORD_NEEDED = "Enter your password to disconnect Memberful.";
 /** Why it's refused while you have no password, which you'd have nothing to sign in with without. */
 export const MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD = "Set a password first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you have no email address, which signing in with your password takes. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_EMAIL = "Add your email address first, so that you can still sign in once Memberful is disconnected.";
 /** Why it's refused while you haven't connected a Memberful account. */
 export const MEMBERFUL_NOT_CONNECTED = "Your account isn't connected to a Memberful account.";
 /** What your profile says once your Memberful account is disconnected. */

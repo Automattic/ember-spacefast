@@ -13,6 +13,7 @@ import {
   MEMBERFUL_CALLBACK_PATH,
   MEMBERFUL_CONNECTIONS_PATH,
   MEMBERFUL_DISCONNECT_PASSWORD_NEEDED,
+  MEMBERFUL_DISCONNECT_WITHOUT_EMAIL,
   MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD,
   MEMBERFUL_NOT_CONNECTED,
   MEMBERFUL_PASSWORD_NEEDED,
@@ -691,9 +692,10 @@ async function connectMemberful(request: Request, env: Env): Promise<Response> {
  * Memberful site, ends your other sessions and forgets their browsers' push subscriptions, as a new
  * password does, keeping this browser's at `pushSubscriptionEndpoint`, and answers your profile as it
  * is then. 401 without a valid session; 403 to a guest, or while the deployment lacks Memberful's keys;
- * 404 while you haven't connected one; 422 while you have no password to sign in with once it's
- * disconnected, or without your password, or with one that isn't yours; 429 past sign-in's limit, which
- * checking the password counts against; and 409 when your password or connection changed meanwhile.
+ * 404 while you haven't connected one; 422 while you have no password, or no email address, to sign in
+ * with once it's disconnected, or without your password, or with one that isn't yours; 429 past
+ * sign-in's limit, which checking the password counts against; and 409 when your password, email
+ * address or connection changed meanwhile.
  */
 async function disconnectMemberful(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
@@ -709,6 +711,7 @@ async function disconnectMemberful(request: Request, env: Env): Promise<Response
   if (check === "forbidden") return problem(403, "Guests can't disconnect Memberful");
   if (check === "not connected") return problem(404, MEMBERFUL_NOT_CONNECTED);
   if (check === "no password") return problem(422, MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD);
+  if (check === "no email address") return problem(422, MEMBERFUL_DISCONNECT_WITHOUT_EMAIL);
   if (!currentPassword) return problem(422, MEMBERFUL_DISCONNECT_PASSWORD_NEEDED);
   // One longer than the form takes is nobody's, as at sign-in.
   if (isPasswordTooLong(currentPassword) || !(await passwordHasher(env).verify(currentPassword, check.passwordDigest)).matches) return problem(422, CURRENT_PASSWORD_WRONG);

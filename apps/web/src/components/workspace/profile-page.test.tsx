@@ -482,6 +482,19 @@ describe("Connect Memberful", () => {
     expect(passwordHelp()).not.toHaveTextContent("disconnects");
   });
 
+  it("asks someone with a password but no email address to add one first, and warns of a new password disconnecting it only once one is typed", async () => {
+    serve({ loaded: () => Response.json({ profile: { ...profile, emailAddress: null, memberful: CONNECTED }, transferId: LOADED_LINK } satisfies ProfileAnswer) });
+    const { user } = showPage();
+    await loaded();
+    expect(memberful()).toHaveTextContent("Add your email address above to disconnect it, so that you can still sign in with your password.");
+    expect(within(memberful()!).queryByRole("button", { name: "Disconnect Memberful" })).not.toBeInTheDocument();
+    expect(passwordHelp()).toHaveTextContent("Leave blank to keep your current password.");
+    expect(passwordHelp()).not.toHaveTextContent("disconnects");
+    // Saved with an email address, a new password would disconnect it.
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    expect(passwordHelp()).toHaveTextContent("Leave blank to keep your current password. A new one disconnects your Memberful account.");
+  });
+
   it("disconnects it with your password, offering to connect one again, with the notice", async () => {
     serve({ loaded: () => Response.json({ profile: { ...profile, memberful: CONNECTED }, transferId: LOADED_LINK } satisfies ProfileAnswer) });
     const { user, onFailed } = showPage();

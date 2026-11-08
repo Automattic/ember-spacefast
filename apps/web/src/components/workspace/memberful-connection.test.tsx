@@ -51,13 +51,14 @@ const sent = <T extends MemberfulConnectionStart | MemberfulDisconnection>(metho
     .mock.calls.filter(([input, init]) => String(input) === MEMBERFUL_CONNECTIONS_PATH && init?.method === method)
     .map(([, init]) => JSON.parse(String(init?.body)) as T);
 
-function showSection({ connected = null as MemberfulAccount | null, membersOnly = true, hasPassword = true, membershipNeeded = true } = {}) {
+function showSection({ connected = null as MemberfulAccount | null, membersOnly = true, hasPassword = true, hasEmailAddress = true, membershipNeeded = true } = {}) {
   const [onDisconnected, onFailed] = [vi.fn(), vi.fn()];
   render(
     <MemberfulConnection
       connected={connected}
       membersOnly={membersOnly}
       hasPassword={hasPassword}
+      hasEmailAddress={hasEmailAddress}
       membershipNeeded={membershipNeeded}
       onDisconnected={onDisconnected}
       onFailed={onFailed}
@@ -209,6 +210,14 @@ describe("Disconnect Memberful", () => {
     showSection({ connected: grace, hasPassword: false, ...settings });
     expect(section()).toHaveTextContent("Connected to Memberful as Grace Hopper (grace@example.com), so you sign in with it.");
     expect(section()).toHaveTextContent("Set a password above to disconnect it, so that you can still sign in.");
+    expect(screen.queryByRole("button", { name: "Disconnect Memberful" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  });
+
+  it("asks someone with a password but no email address to add one first, since signing in with a password takes one", () => {
+    showSection({ connected: grace, hasEmailAddress: false, membersOnly: false, membershipNeeded: false });
+    expect(section()).toHaveTextContent("Connected to Memberful as Grace Hopper (grace@example.com), so you sign in with it.");
+    expect(section()).toHaveTextContent("Add your email address above to disconnect it, so that you can still sign in with your password.");
     expect(screen.queryByRole("button", { name: "Disconnect Memberful" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
   });

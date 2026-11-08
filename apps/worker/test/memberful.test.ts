@@ -4,6 +4,7 @@ import {
   MEMBERFUL_CALLBACK_PATH,
   MEMBERFUL_CONNECTIONS_PATH,
   MEMBERFUL_DISCONNECT_PASSWORD_NEEDED,
+  MEMBERFUL_DISCONNECT_WITHOUT_EMAIL,
   MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD,
   MEMBERFUL_NOT_CONNECTED,
   MEMBERFUL_PASSWORD_NEEDED,
@@ -1729,6 +1730,19 @@ describe("Connect Memberful", () => {
       expect(replayed.headers.getSetCookie()).toEqual([expect.stringMatching(/memberful_state=;/)]);
     });
 
+    it("is forgotten once the account is disconnected, so that it can't connect one again", async () => {
+      const { member } = await setUpWithGrace();
+      fakeMemberful(gracesAccount);
+      // Started in one browser, while another connects the account and disconnects it.
+      const started = await connectionOf(await connect(member, { currentPassword: grace.password }));
+      await connectGrace(member);
+      expect(await count("pending_identities")).toBe(1);
+      expect((await disconnect(member, { currentPassword: grace.password })).status).toBe(200);
+      expect(await count("pending_identities")).toBe(0);
+      expect(locationOf(await finish(started, member))).toBe(backToProfile("failed"));
+      expect(await identities()).toEqual([]);
+    });
+
     it("is forgotten once the password that started it is changed, or reset", async () => {
       const { member } = await setUpWithGrace();
       fakeMemberful(gracesAccount);
@@ -1893,6 +1907,25 @@ describe("A new password", () => {
     expect((await signInWithPassword({ emailAddress: katherine.email, password: "a long enough password" })).status).toBe(201);
   });
 
+  it("keeps the Memberful account of someone without an email address, which their password can't sign them in without, until they add one", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    const site = fakeMemberful();
+    const session = await memberfulSessionOf({ ...katherine, id: "4243", fullName: "Dorothy Vaughan", email: null }, site);
+    const linked = [{ issuer: SITE, subject: "4243", user_id: session.user.id }];
+    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    const changed = await saveProfile(session, { password: "another long password", currentPassword: "a long enough password" });
+    expect(changed.status).toBe(200);
+    expect(((await changed.json()) as ProfileAnswer).profile.memberful).toEqual({ membersOnly: false, connected: { name: "Dorothy Vaughan", emailAddress: null } });
+    expect(await identities()).toEqual(linked);
+    // A new password saved with an email address, which it can sign them in by, disconnects it.
+    const withEmail = await saveProfile(session, { emailAddress: "dorothy@example.com", password: "a third long password", currentPassword: "another long password" });
+    expect(withEmail.status).toBe(200);
+    // Nothing to show anymore, since Memberful isn't members only.
+    expect(((await withEmail.json()) as ProfileAnswer).profile.memberful).toBeNull();
+    expect(await identities()).toEqual([]);
+    expect((await signInWithPassword({ emailAddress: "dorothy@example.com", password: "a third long password" })).status).toBe(201);
+  });
+
   it("stops the sign-in page offering Memberful once nobody is connected to it and Memberful is off", async () => {
     const administrator = await setUp();
     const member = await joinAsGrace();
@@ -1963,6 +1996,23 @@ describe("Disconnect Memberful", () => {
     expect(await identities()).toHaveLength(1);
     expect((await disconnect(member, { currentPassword: grace.password }, { ip: "203.0.113.21" })).status).toBe(200);
     expect(await identities()).toEqual([]);
+  });
+
+  it("asks someone with a password but no email address to add one first, since signing in with a password takes one", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    const site = fakeMemberful();
+    const session = await memberfulSessionOf({ ...katherine, id: "4243", fullName: "Dorothy Vaughan", email: null }, site);
+    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    const refused = await disconnect(session, { currentPassword: "a long enough password" });
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toEqual({ error: MEMBERFUL_DISCONNECT_WITHOUT_EMAIL });
+    expect(await identities()).toEqual([{ issuer: SITE, subject: "4243", user_id: session.user.id }]);
+
+    expect((await saveProfile(session, { emailAddress: "dorothy@example.com", currentPassword: "a long enough password" })).status).toBe(200);
+    const disconnected = await disconnect(session, { currentPassword: "a long enough password" });
+    expect(disconnected.status, await disconnected.clone().text()).toBe(200);
+    expect(await identities()).toEqual([]);
+    expect((await signInWithPassword({ emailAddress: "dorothy@example.com", password: "a long enough password" })).status).toBe(201);
   });
 
   it("asks someone without a password to set one first, so that they can still sign in", async () => {
