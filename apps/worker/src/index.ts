@@ -12,6 +12,10 @@ import {
   MAX_EMAIL_ADDRESS_LENGTH,
   MEMBERFUL_CALLBACK_PATH,
   MEMBERFUL_CONNECTIONS_PATH,
+  MEMBERFUL_DISCONNECT_PASSWORD_NEEDED,
+  MEMBERFUL_DISCONNECT_WITHOUT_EMAIL,
+  MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD,
+  MEMBERFUL_NOT_CONNECTED,
   MEMBERFUL_PASSWORD_NEEDED,
   MEMBERFUL_SIGN_IN_NEEDED,
   MEMBERFUL_SIGN_IN_PATH,
@@ -29,6 +33,7 @@ import {
   parseCustomStyles,
   parseFavoriteOrder,
   parseInvolvementChange,
+  parseMemberfulDisconnection,
   parseSharedOrder,
   parseNewDirect,
   parseNewRoom,
@@ -57,6 +62,7 @@ import {
   type Favorites,
   type Involvement,
   type MemberfulConnection,
+  type MemberfulStatus,
   type NewJoinCode,
   type NewRoomForm,
   type PersonAnswer,
@@ -585,15 +591,27 @@ async function unbanPerson(request: Request, env: Env, userId: UserId): Promise<
 
 /**
  * Your profile as its page shows it, with a new sign-in link for you, as each of Campfire's profile
- * pages has (users/profiles/_transfer.html.erb), and whether you've connected an account at the
- * Memberful site the deployment's keys name. No cache should keep it, since it holds your email address
- * and the link.
+ * pages has (users/profiles/_transfer.html.erb), and where you stand with Memberful, at the site the
+ * deployment's keys name. No cache should keep it, since it holds your email address and the link.
  */
-async function profileAnswer({ transfer, profile, connected }: YourProfile, env: Env): Promise<Response> {
+async function profileAnswer({ transfer, profile, memberful }: YourProfile, env: Env): Promise<Response> {
   const transferId = await newTransferId(transfer, env.SESSION_SECRET, Date.now());
-  const site = memberfulKeysOf(env)?.site;
-  const memberful = connected && site ? connected.includes(site) : null;
-  return json({ profile: { ...profile, memberful }, transferId } satisfies ProfileAnswer, { headers: { "Cache-Control": "no-store" } });
+  const answer = { ...profile, memberful: memberfulStatusOf(memberful, memberfulKeysOf(env)?.site ?? null) };
+  return json({ profile: answer, transferId } satisfies ProfileAnswer, { headers: { "Cache-Control": "no-store" } });
+}
+
+/**
+ * Where you stand with Memberful, for your profile: the account you've connected at `site`, named as
+ * Memberful described it, or none yet while Memberful is members only, which your profile offers to
+ * connect. Null when there's nothing to show: without the site, for a guest, or while Memberful isn't
+ * members only and you haven't connected one.
+ */
+function memberfulStatusOf(memberful: YourProfile["memberful"], site: string | null): MemberfulStatus | null {
+  if (!memberful || site === null) return null;
+  const { membersOnly } = memberful;
+  const account = memberful.accounts.find((account) => account.issuer === site);
+  if (account) return { membersOnly, connected: { name: account.name, emailAddress: account.emailAddress } };
+  return membersOnly ? { membersOnly, connected: null } : null;
 }
 
 /** Your profile, for its page. */
@@ -666,6 +684,42 @@ async function connectMemberful(request: Request, env: Env): Promise<Response> {
   const connecting = await memberfulConnectionFor(request, env, check.userId, check.passwordDigest, PROFILE_PATH);
   // Something changed meanwhile: their password, the setting, or what they've connected.
   return connecting ? connectionAnswer(connecting) : problem(409, "Connecting Memberful didn't start. Try again.");
+}
+
+/**
+ * Disconnect Memberful on your profile: once your password checks out, so that holding your session isn't
+ * enough to change how you sign in, as for connecting one, unlinks your account from the one at the
+ * Memberful site, ends your other sessions and forgets their browsers' push subscriptions, as a new
+ * password does, keeping this browser's at `pushSubscriptionEndpoint`, and answers your profile as it
+ * is then. 401 without a valid session; 403 to a guest, or while the deployment lacks Memberful's keys;
+ * 404 while you haven't connected one; 422 while you have no password, or no email address, to sign in
+ * with once it's disconnected, or without your password, or with one that isn't yours; 429 past
+ * sign-in's limit, which checking the password counts against; and 409 when your password, email
+ * address or connection changed meanwhile.
+ */
+async function disconnectMemberful(request: Request, env: Env): Promise<Response> {
+  const credentials = await credentialsOf(request, env);
+  if (!credentials) return problem(401, "Not signed in");
+  const site = memberfulKeysOf(env)?.site;
+  if (!site) return problem(403, MEMBERFUL_SIGN_IN_PROBLEMS.unavailable);
+  const disconnection = parseMemberfulDisconnection(await jsonBodyOf(request));
+  if (typeof disconnection === "string") return problem(422, disconnection);
+  const { currentPassword, pushSubscriptionEndpoint } = disconnection;
+  const check = await workspace(env).memberfulDisconnectionCheck(credentials, request.headers.get("CF-Connecting-IP") ?? "unknown", site);
+  if (!check) return problem(401, "Not signed in");
+  if (check === "limited") return problem(429, SIGN_IN_LIMITED);
+  if (check === "forbidden") return problem(403, "Guests can't disconnect Memberful");
+  if (check === "not connected") return problem(404, MEMBERFUL_NOT_CONNECTED);
+  if (check === "no password") return problem(422, MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD);
+  if (check === "no email address") return problem(422, MEMBERFUL_DISCONNECT_WITHOUT_EMAIL);
+  if (!currentPassword) return problem(422, MEMBERFUL_DISCONNECT_PASSWORD_NEEDED);
+  // One longer than the form takes is nobody's, as at sign-in.
+  if (isPasswordTooLong(currentPassword) || !(await passwordHasher(env).verify(currentPassword, check.passwordDigest)).matches) return problem(422, CURRENT_PASSWORD_WRONG);
+  const yours = await workspace(env).disconnectMemberful(credentials, site, check.passwordDigest, pushSubscriptionEndpoint || null);
+  if (!yours) return problem(401, "Not signed in");
+  // Something changed meanwhile: their password, or what they've connected.
+  if (yours === "refused") return problem(409, "Disconnecting Memberful didn't work. Try again.");
+  return profileAnswer(yours, env);
 }
 
 /**
@@ -1037,6 +1091,7 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/users/me/profile" && request.method === "PATCH") return () => changeProfile(request, env);
   if (pathname === "/api/users/me/assistant" && request.method === "PATCH") return () => changeYourAssistant(request, env);
   if (pathname === MEMBERFUL_CONNECTIONS_PATH && request.method === "POST") return () => connectMemberful(request, env);
+  if (pathname === MEMBERFUL_CONNECTIONS_PATH && request.method === "DELETE") return () => disconnectMemberful(request, env);
   if (pathname === AVATAR_PATH && request.method === "PUT") return () => changeAvatar(request, env);
   if (pathname === AVATAR_PATH && request.method === "DELETE") return () => removeAvatar(request, env);
   const someone = pathname.match(/^\/api\/users\/([^/]+)$/);

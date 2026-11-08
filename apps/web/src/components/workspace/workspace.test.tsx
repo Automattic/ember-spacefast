@@ -1170,14 +1170,15 @@ describe("Connect Memberful", () => {
   const address = () => `${location.pathname}${location.search}${location.hash}`;
 
   it("flashes that your Memberful account is connected, once, taking it out of the address", async () => {
-    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, membershipNeeded: true, memberful: true } }) });
+    const memberful = { membersOnly: true, connected: { name: "Ada Lovelace", emailAddress: "ada@example.com" } };
+    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, membershipNeeded: true, memberful } }) });
     const { unmount } = showWorkspace("/users/me/profile?memberful=connected#top");
     expect(await screen.findByRole("alert")).toHaveTextContent("Your Memberful account is connected.");
     expect(address()).toBe("/users/me/profile#top");
 
     unmount();
     showWorkspace(address());
-    expect(await screen.findByRole("region", { name: "Memberful" })).toHaveTextContent("Your Memberful account is connected, so you sign in with it.");
+    expect(await screen.findByRole("region", { name: "Memberful" })).toHaveTextContent("Connected to Memberful as Ada Lovelace (ada@example.com), so you sign in with it.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 

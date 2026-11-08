@@ -113,7 +113,9 @@ import {
   type Connecting,
   type AssistantPicks,
   type DirectoryEntry,
+  type Disconnection,
   type JoinableAccount,
+  type LinkedAccount,
   type LinkedPerson,
   type NewPerson,
   type OwnProfileEntry,
@@ -355,16 +357,19 @@ export const ACCOUNT_NAME = "Ember";
  */
 const FIRST_ROOM_NAMES = ["general", "random"];
 
+/** The account at the Memberful site `issuer` that `member` signed in to, as `identities` keeps it: named as Memberful does, not as the person is here. */
+const linkedAccountOf = (issuer: string, member: MemberfulMember): LinkedAccount => ({ issuer, subject: member.id, name: member.fullName, emailAddress: member.emailAddress });
+
 /** Your profile, and the sign-in link it shows you, by the session asking, which the Worker signs. */
 export interface YourProfile {
   transfer: Transfer;
   profile: Omit<Profile, "memberful">;
   /**
-   * The issuers of the accounts elsewhere you've connected, while Memberful is members only and you
-   * aren't a guest, of which the Worker, which knows the Memberful site, tells your profile
-   * (`Profile.memberful`), or else null.
+   * Whether Memberful is members only, and the accounts elsewhere you've connected, from which the
+   * Worker, which knows the Memberful site, tells your profile where you stand with Memberful
+   * (`Profile.memberful`), or null for a guest, who has nothing to connect.
    */
-  connected: string[] | null;
+  memberful: { membersOnly: boolean; accounts: LinkedAccount[] } | null;
 }
 
 /** Someone as their page shows them to the person asking. */
@@ -588,6 +593,8 @@ export class Workspace extends DurableObject<Env> {
   private accountChanges = 0;
   /** The Memberful sites someone here is known to be linked to an account at (see `offersMemberfulSignIn`). */
   private readonly linkedSites = new Set<string>();
+  /** Counts the unlinkings of accounts elsewhere, so a read that overlapped one isn't kept as a linked site: on D1, queries interleave. */
+  private unlinkings = 0;
   /** Every IP address a ban blocks, once read. Banning someone and lifting a ban forget it. */
   private knownBannedAddresses: Set<string> | null = null;
   /** Counts the starts and ends of bans and lifted bans, so a read of the banned addresses that overlapped one isn't kept. */
@@ -808,10 +815,21 @@ export class Workspace extends DurableObject<Env> {
   async offersMemberfulSignIn(site: string | null): Promise<boolean> {
     if (site === null) return false;
     if ((await this.joinableAccount())?.memberfulJoin || this.linkedSites.has(site)) return true;
-    // Accounts elsewhere are never unlinked, so once someone is linked at a site, someone always is.
+    const unlinkings = this.unlinkings;
     if (!(await this.store.anyoneLinked(site))) return false;
-    this.linkedSites.add(site);
+    // Until a new password or Disconnect unlinks the last account there (`forgetUnlinked`).
+    if (unlinkings === this.unlinkings) this.linkedSites.add(site);
     return true;
+  }
+
+  /**
+   * Forgets the sites nobody is linked to an account at anymore (`linkedSites`), once a new password or
+   * Disconnect has unlinked accounts: the sign-in page stops offering Sign in with Memberful while
+   * Memberful is off and nobody signs in with it.
+   */
+  private async forgetUnlinked(): Promise<void> {
+    this.unlinkings++;
+    for (const site of this.linkedSites) if (!(await this.store.anyoneLinked(site))) this.linkedSites.delete(site);
   }
 
   /**
@@ -1728,7 +1746,7 @@ export class Workspace extends DurableObject<Env> {
         if ((await this.settleMembership(issuer, member.id, linked, member.subscribed, readAt)) !== "active") return "membership";
         // On D1 a role change can overlap it, so it's remembered only if none did.
         const session = await this.sessions.keep(tokenDigest, () =>
-          this.store.startLinkedSession(linked.userId, sortableId(), tokenDigest, client, new Date().toISOString()),
+          this.store.startLinkedSession(linked.userId, sortableId(), tokenDigest, client, new Date().toISOString(), linkedAccountOf(issuer, member)),
         );
         return session ? meOf(session) : "refused";
       }
@@ -1737,7 +1755,7 @@ export class Workspace extends DurableObject<Env> {
       const session: StoredSession = { id: sortableId(), user: { id: sortableId(), name: member.name }, administrator: false, guest: false, lastActiveAt: Date.now() };
       const person = { ...session.user, emailAddress: member.emailAddress };
       try {
-        await this.store.createLinkedMember(person, issuer, member.id, readAt, session.id, tokenDigest, client, new Date(session.lastActiveAt).toISOString());
+        await this.store.createLinkedMember(person, linkedAccountOf(issuer, member), readAt, session.id, tokenDigest, client, new Date(session.lastActiveAt).toISOString());
       } catch (error) {
         if (member.emailAddress !== null && (await this.store.hasEmailAddress(member.emailAddress))) return "taken";
         throw error;
@@ -1825,14 +1843,81 @@ export class Workspace extends DurableObject<Env> {
         if (!person) return "refused";
         if (person.subject !== null) return "another";
         if (person.membershipNeeded && !member.subscribed) return "membership";
-        if (!(await this.store.connectIdentity(connecting, issuer, member.id, readAt, new Date().toISOString()))) return "refused";
+        if (!(await this.store.connectIdentity(connecting, linkedAccountOf(issuer, member), readAt, new Date().toISOString()))) return "refused";
         this.linkedSites.add(issuer);
       }
       await this.keepCatchingUp(Date.now() + MEMBERSHIP_CATCH_UP_MS);
       if (tokenDigest === null) return "connected";
       // On D1 a role change can overlap it, so it's remembered only if none did.
-      const session = await this.sessions.keep(tokenDigest, () => this.store.startLinkedSession(userId, sortableId(), tokenDigest, client, new Date().toISOString()));
+      const session = await this.sessions.keep(tokenDigest, () =>
+        this.store.startLinkedSession(userId, sortableId(), tokenDigest, client, new Date().toISOString(), linkedAccountOf(issuer, member)),
+      );
       return session ? meOf(session) : "refused";
+    });
+  }
+
+  /**
+   * What disconnecting the account of the person `credentials` signs in from the one at the Memberful
+   * site `issuer`, from their profile, checks first: whose account it is, and the digest of their
+   * password, which the Worker checks the password they give against, counting it against sign-in's
+   * limit for `ip`, as connecting one does: "limited" past it. "forbidden" for a guest, "not connected"
+   * while they aren't connected to an account there, "no password" while they have none, or "no email
+   * address" while they have none, which they'd have nothing to sign in with without, since signing
+   * in with a password takes both, and null without a valid session.
+   */
+  async memberfulDisconnectionCheck(
+    credentials: Credentials,
+    ip: string,
+    issuer: string,
+  ): Promise<{ userId: UserId; passwordDigest: string } | "limited" | "forbidden" | "not connected" | "no password" | "no email address" | null> {
+    const session = await this.session(credentials);
+    if (!session) return null;
+    if (session.guest) return "forbidden";
+    const person = await this.store.connectingPerson(session.user.id, issuer);
+    if (!person) return null;
+    if (person.subject === null) return "not connected";
+    const signIn = await this.store.signInOf(session.user.id);
+    if (!signIn?.passwordDigest) return "no password";
+    if (signIn.emailAddress === null) return "no email address";
+    if (!this.signInAttempts.attempt(ip)) return "limited";
+    return { userId: session.user.id, passwordDigest: signIn.passwordDigest };
+  }
+
+  /**
+   * Disconnects the account of the person `credentials` signs in from the one at the Memberful site
+   * `issuer`, once the Worker has checked their password, whose digest is `checked`
+   * (`memberfulDisconnectionCheck`), answering their profile as it is then. As a new password does, it
+   * ends their other sessions: their sockets close and are told to reconnect, here at once and in every
+   * room they're in through the outbox, their push subscriptions are forgotten but this browser's, at
+   * `pushEndpoint`, and so are the connections their browsers started and haven't finished, which could
+   * connect an account again. Each statement checks that they're still connected there and still have that
+   * password and an email address, so a reset ahead of it in line, or another tab's Disconnect or
+   * profile change, makes it "refused". Null without a valid session.
+   */
+  async disconnectMemberful(credentials: Credentials, issuer: string, checked: string, pushEndpoint: string | null): Promise<YourProfile | "refused" | null> {
+    return this.closingSockets(async () => {
+      const session = await this.session(credentials);
+      if (!session) return null;
+      const { user } = session;
+      const now = Date.now();
+      const ended = { kept: session.id, pushEndpoint, code: CloseCode.Reconnect, dueAt: now };
+      // As when a password is changed, until the database says what it did.
+      let done: Disconnection | null = null;
+      try {
+        done = await this.sessions.change(
+          (session) => session.user.id === user.id,
+          () => this.store.disconnectIdentity(user.id, issuer, checked, ended),
+        );
+      } finally {
+        // Whether or not it saved: the sockets of sessions that didn't end are let in again, and the site is
+        // forgotten if nobody is linked there anymore.
+        if (done?.disconnected ?? true) this.closeSockets(user.id, CloseCode.Reconnect, sessionTag(session.id));
+        if (done?.queued ?? true) await this.revocationsQueued(now);
+        if (done?.disconnected ?? true) await this.forgetUnlinked();
+      }
+      if (!done.disconnected) return "refused";
+      const person = await this.store.ownProfile(user.id);
+      return person && this.yourProfile(person, session);
     });
   }
 
@@ -1992,7 +2077,8 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Gives `userId` the password `passwordDigest` is the digest of, ending all their sessions and closing
-   * their sockets, as `resetPassword` does, from inside a change that's closing sockets (`closingSockets`).
+   * their sockets, as `resetPassword` does, and unlinking the accounts elsewhere they connected with the
+   * password it replaces, from inside a change that's closing sockets (`closingSockets`).
    */
   private async replacePassword(userId: UserId, passwordDigest: string): Promise<void> {
     const now = Date.now();
@@ -2004,9 +2090,11 @@ export class Workspace extends DurableObject<Env> {
         () => this.store.resetPassword(userId, passwordDigest, CloseCode.Reconnect, now, new Date(now).toISOString()),
       );
     } finally {
-      // Whether or not it saved: sockets whose sessions didn't end are let in again.
+      // Whether or not it saved: sockets whose sessions didn't end are let in again, and the sites nobody
+      // is linked at anymore are forgotten.
       this.closeSockets(userId, CloseCode.Reconnect);
       if (queued) await this.revocationsQueued(now);
+      await this.forgetUnlinked();
     }
   }
 
@@ -2638,11 +2726,11 @@ export class Workspace extends DurableObject<Env> {
   private async yourProfile(person: OwnProfileEntry, session: StoredSession): Promise<YourProfile> {
     const { name, emailAddress, bio, avatar, password, membershipNeeded } = person;
     const [{ avatarUrl }, account] = await Promise.all([this.directoryUser(person), this.joinableAccount()]);
-    const connected = account?.memberfulSignIn && !session.guest ? person.issuers : null;
+    const memberful = session.guest ? null : { membersOnly: account?.memberfulSignIn ?? false, accounts: person.accounts };
     return {
       transfer: { userId: person.id, sessionId: session.id },
       profile: { name, emailAddress, bio, avatarUrl, avatar: avatar !== null, password, membershipNeeded, assistant: yourAssistantOf(account, person.picks) },
-      connected,
+      memberful,
     };
   }
 
@@ -2675,7 +2763,8 @@ export class Workspace extends DurableObject<Env> {
    * saved as none, so any number of people can be without one. It writes only what differs. A new
    * password ends their other sessions: their sockets close and are told to reconnect, here at once and
    * in every room they're in through the outbox, and their push subscriptions are forgotten but this
-   * browser's, at `pushEndpoint`. Everyone's workspace sockets hear of a new name or bio, which the
+   * browser's, at `pushEndpoint`, and a password that replaces one they had unlinks the accounts
+   * elsewhere they connected with it. Everyone's workspace sockets hear of a new name or bio, which the
    * people directory lists. A new name can't be @ember's ("name reserved"), unless it was theirs before.
    */
   async changeProfile(
@@ -2712,6 +2801,9 @@ export class Workspace extends DurableObject<Env> {
       const now = Date.now();
       const at = new Date(now).toISOString();
       const ended = passwordDigest === null ? null : { kept: session.id, pushEndpoint, code: CloseCode.Reconnect, dueAt: now };
+      // A password replacing one unlinks the accounts elsewhere connected with it, while an email address
+      // signs them in with it; a first keeps them, as does one saved without an email address.
+      const unlinked = ended !== null && person.password && profile.emailAddress !== null;
       // As when a password is reset, until the database says it queued nothing.
       let queued = ended !== null;
       try {
@@ -2721,11 +2813,13 @@ export class Workspace extends DurableObject<Env> {
           () => this.store.changeProfile(user.id, { ...profile, passwordDigest }, at, ended),
         );
       } finally {
-        // Whether or not it saved: the sockets of sessions that didn't end are let in again.
+        // Whether or not it saved: the sockets of sessions that didn't end are let in again, and the sites
+        // nobody is linked at anymore are forgotten.
         if (ended) this.closeSockets(user.id, CloseCode.Reconnect, sessionTag(session.id));
         if (queued) await this.revocationsQueued(now);
+        if (unlinked) await this.forgetUnlinked();
       }
-      const changed = { ...person, ...profile, password: person.password || passwordDigest !== null, updatedAt: at };
+      const changed = { ...person, ...profile, password: person.password || passwordDigest !== null, accounts: unlinked ? [] : person.accounts, updatedAt: at };
       if (listed) this.broadcast({ type: "user.updated", user: await this.directoryUser(changed) });
       return this.yourProfile(changed, session);
     });

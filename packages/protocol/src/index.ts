@@ -854,11 +854,12 @@ export interface Profile {
    */
   membershipNeeded: boolean;
   /**
-   * Whether you've connected your account to an account at the Memberful site, which you can sign in with
-   * then, or null while Memberful isn't members only, or the deployment lacks its keys, or for a guest,
-   * who has nothing to connect.
+   * Where you stand with Memberful (`MemberfulStatus`): the account at the Memberful site you've connected
+   * your account to, which you can sign in with then, or none yet while Memberful is members only. Null
+   * when there's nothing to show: while the deployment lacks Memberful's keys, for a guest, who has
+   * nothing to connect, or while Memberful isn't members only and you haven't connected one.
    */
-  memberful: boolean | null;
+  memberful: MemberfulStatus | null;
   /** How much @ember thinks and how long it answers you, and the most each may be, and the model you picked, if you did, and the ones you can pick, or null while Ember AI is off. */
   assistant: YourAssistant | null;
 }
@@ -1216,6 +1217,38 @@ export interface MemberfulConnectionStart {
 }
 
 /**
+ * The Memberful account you've connected, as Memberful described it when you connected it or last
+ * signed in with it: its name and email address there, either null when Memberful didn't say, or for
+ * an account connected before Ember kept them, until you sign in with it again.
+ */
+export interface MemberfulAccount {
+  name: string | null;
+  emailAddress: string | null;
+}
+
+/**
+ * Where you stand with Memberful, as your profile's Memberful section shows it: the account you've
+ * connected, which you sign in with, or null while you haven't, when the section offers Connect
+ * Memberful, and whether Memberful is members only, when members sign in with Memberful alone, unless
+ * they need no membership (`Profile.membershipNeeded`).
+ */
+export interface MemberfulStatus {
+  membersOnly: boolean;
+  connected: MemberfulAccount | null;
+}
+
+/**
+ * What disconnecting your Memberful account from your profile takes (`DELETE
+ * /api/users/me/memberful_connections`): your password, so that holding your session isn't enough to
+ * change how you sign in, as connecting one takes it, and this browser's push subscription, if it has
+ * one, which it keeps while it forgets your other browsers', as a new password does.
+ */
+export interface MemberfulDisconnection {
+  currentPassword?: string;
+  pushSubscriptionEndpoint?: string;
+}
+
+/**
  * Where to sign in at the Memberful site, within ten minutes, to connect the account you sign in to there
  * to yours here: what connecting from your profile answers, and what signing in with a password answers a
  * member whose password checks out while Memberful is members only, until they've connected one.
@@ -1270,6 +1303,17 @@ export const memberfulProblemOf = (value: string | null): MemberfulSignInProblem
 
 /** Why connecting Memberful from your profile is refused without your password, while you have one. */
 export const MEMBERFUL_PASSWORD_NEEDED = "Enter your password to connect Memberful.";
+
+/** Why disconnecting it is refused without your password. */
+export const MEMBERFUL_DISCONNECT_PASSWORD_NEEDED = "Enter your password to disconnect Memberful.";
+/** Why it's refused while you have no password, which you'd have nothing to sign in with without. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD = "Set a password first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you have no email address, which signing in with your password takes. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_EMAIL = "Add your email address first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you haven't connected a Memberful account. */
+export const MEMBERFUL_NOT_CONNECTED = "Your account isn't connected to a Memberful account.";
+/** What your profile says once your Memberful account is disconnected. */
+export const MEMBERFUL_DISCONNECTED_NOTICE = "Your Memberful account is disconnected.";
 
 /** Why signing in with a password, joining with the join link, or signing in with just a name is refused while Memberful is members only. */
 export const MEMBERFUL_SIGN_IN_NEEDED = "Members sign in with Memberful. Only administrators and invited people sign in with a password.";
@@ -2255,6 +2299,21 @@ export function parseProfileChanges(data: unknown): ProfileChanges | string {
     return `Endpoint can't be longer than ${MAX_PUSH_ENDPOINT_LENGTH} characters`;
   }
   return changes;
+}
+
+/**
+ * Parses an untrusted disconnection of your Memberful account. Returns why it's refused instead. Whether
+ * the password is yours, and whether you have one, the server checks once it knows who's asking.
+ */
+export function parseMemberfulDisconnection(data: unknown): MemberfulDisconnection | string {
+  if (!isJsonObject(data)) return "Expected a JSON object";
+  const { currentPassword, pushSubscriptionEndpoint } = data;
+  if (currentPassword !== undefined && typeof currentPassword !== "string") return "Current password must be text";
+  if (pushSubscriptionEndpoint !== undefined && typeof pushSubscriptionEndpoint !== "string") return "Push subscription endpoint must be text";
+  if (pushSubscriptionEndpoint !== undefined && pushSubscriptionEndpoint.length > MAX_PUSH_ENDPOINT_LENGTH) {
+    return `Endpoint can't be longer than ${MAX_PUSH_ENDPOINT_LENGTH} characters`;
+  }
+  return { ...(currentPassword === undefined ? {} : { currentPassword }), ...(pushSubscriptionEndpoint === undefined ? {} : { pushSubscriptionEndpoint }) };
 }
 
 /**
