@@ -42,6 +42,7 @@ import {
   type Me,
   type MemberfulConnection,
   type MemberfulConnectionStart,
+  type MemberfulDisconnection,
   type NewAssistantModel,
   type NewDirect,
   type NewJoinCode,
@@ -338,6 +339,16 @@ export async function fetchProfile(): Promise<ProfileAnswer> {
 export async function connectMemberful(currentPassword?: string): Promise<MemberfulConnection> {
   const start: MemberfulConnectionStart = currentPassword === undefined ? {} : { currentPassword };
   return request<MemberfulConnection>(MEMBERFUL_CONNECTIONS_PATH, { method: "POST", body: JSON.stringify(start) });
+}
+
+/**
+ * Disconnects your account from your Memberful account, with your password, ending your other sessions
+ * but keeping this browser's push subscription, as a new password does, and answers your profile as it
+ * is then, with a new sign-in link. Fails with a 422 ApiError without your password, or with one that
+ * isn't yours, or while you have no password, and a 404 once it's disconnected.
+ */
+export async function disconnectMemberful(disconnection: MemberfulDisconnection): Promise<ProfileAnswer> {
+  return request<ProfileAnswer>(MEMBERFUL_CONNECTIONS_PATH, { method: "DELETE", body: JSON.stringify(disconnection) });
 }
 
 /**

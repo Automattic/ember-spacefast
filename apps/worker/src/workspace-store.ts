@@ -247,8 +247,8 @@ export interface OwnProfileEntry extends ProfileEntry {
   password: boolean;
   /** Whether they need a Memberful membership to sign in while Memberful is members only, as everyone does but administrators and the people they invited. */
   membershipNeeded: boolean;
-  /** The issuers of the accounts elsewhere they've connected, such as the Memberful site's address. */
-  issuers: string[];
+  /** The accounts elsewhere they've connected, such as one at the Memberful site. */
+  accounts: LinkedAccount[];
   /** How much @ember thinks and how long it answers them, and the model it answers with, as they picked. */
   picks: AssistantPicks;
 }
@@ -268,6 +268,18 @@ export interface NewLinkedPerson {
   id: UserId;
   name: string;
   /** Their Memberful account's email address, or null for one Ember can't keep. */
+  emailAddress: string | null;
+}
+
+/**
+ * An account elsewhere, as `issuer`, the address of the Memberful site it's on, and `subject`, its member
+ * id there, name it, and what it says of itself: its name and email address there, or null for either
+ * it didn't say, or Ember didn't keep, for one linked before it kept them.
+ */
+export interface LinkedAccount {
+  issuer: string;
+  subject: string;
+  name: string | null;
   emailAddress: string | null;
 }
 
@@ -325,6 +337,12 @@ export interface EndedByPassword {
   pushEndpoint: string | null;
   code: CloseCode;
   dueAt: number;
+}
+
+/** What disconnecting an account elsewhere did: whether it was unlinked, and whether it queued any revocations. */
+export interface Disconnection {
+  disconnected: boolean;
+  queued: boolean;
 }
 
 /** A bot as the bots page lists it, with its token, which its key is made from, and the rooms it's in but its DMs. */
@@ -679,13 +697,43 @@ const CONNECTING_PERSON = `SELECT NOT ${NEEDS_NO_MEMBERSHIP} AS membership_neede
   FROM users WHERE id = ?1 AND ${CONNECTABLE}`;
 
 /**
- * Links the account at issuer ?1 with subject ?2, its membership read at ?3, to person ?5 at ?4, if they
- * can have one connected and their password's digest is still ?6, or "" without one, as it was when they
- * started connecting it.
+ * Links the account at issuer ?1 with subject ?2, its membership read at ?3, named ?7 with the email
+ * address ?8, to person ?5 at ?4, if they can have one connected and their password's digest is still
+ * ?6, or "" without one, as it was when they started connecting it.
  */
-const CONNECT_IDENTITY = `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at)
-  SELECT ?1, ?2, id, ?3, ?4, ?4 FROM users WHERE id = ?5 AND ${CONNECTABLE} AND coalesce(password_digest, '') = ?6
+const CONNECT_IDENTITY = `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at, name, email_address)
+  SELECT ?1, ?2, id, ?3, ?4, ?4, ?7, ?8 FROM users WHERE id = ?5 AND ${CONNECTABLE} AND coalesce(password_digest, '') = ?6
   RETURNING user_id`;
+
+/** Keeps what the account at issuer ?1 with subject ?2 says of itself now, its name ?3 and email address ?4, recording when, ?5, if either has changed. */
+const REFRESH_IDENTITY = `UPDATE identities SET name = ?3, email_address = ?4, updated_at = ?5
+  WHERE issuer = ?1 AND subject = ?2 AND (name IS NOT ?3 OR email_address IS NOT ?4)`;
+
+/**
+ * Unlinks every account elsewhere from person ?1 as a new password replaces the one they have, which
+ * connected each, so that a new password, as a reset gives someone whose account was taken over, ends
+ * every other way in. Someone without one, as people who signed in with Memberful are, keeps theirs
+ * as they set a first password. Before the statement that gives them the new one.
+ */
+const UNLINK_ON_NEW_PASSWORD = `DELETE FROM identities WHERE user_id = ?1
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND coalesce(password_digest, '') <> '')`;
+
+/**
+ * Whether person ?1 is linked to an account at issuer ?2 and has the password whose digest is ?3, as the
+ * Worker checked it: what each of a disconnection's statements checks, so that a password changed
+ * meanwhile, or an account disconnected already, changes nothing.
+ */
+const DISCONNECTING = `EXISTS (SELECT 1 FROM identities JOIN users ON users.id = identities.user_id
+  WHERE identities.user_id = ?1 AND identities.issuer = ?2 AND users.password_digest = ?3)`;
+
+/** Queues revoking the sockets of every session of person ?1 but ?7, in every room they're in, while `DISCONNECTING`, as `QUEUE_OTHER_SESSION_REVOCATIONS` does. */
+const QUEUE_DISCONNECTED_SESSION_REVOCATIONS = `INSERT INTO pending_revocations (room_id, tag, code, due_at)
+  SELECT memberships.room_id, ?4 || sessions.id, ?5, ?6 FROM sessions JOIN memberships ON memberships.user_id = sessions.user_id
+  WHERE sessions.user_id = ?1 AND sessions.id <> ?7 AND ${DISCONNECTING} RETURNING id`;
+
+/** Unlinks the account at issuer ?2 from person ?1, while their password's digest is ?3, answering its subject. */
+const DISCONNECT_IDENTITY = `DELETE FROM identities WHERE user_id = ?1 AND issuer = ?2
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND password_digest = ?3) RETURNING subject`;
 
 /**
  * The same, for someone signing in with a sign-in link, unless they're no longer active, or are a guest
@@ -1709,7 +1757,8 @@ const PERSON_WITH_PROFILE = `SELECT id, name, email_address, bio, role, status, 
 /** The same, with the avatar they've uploaded, and whether they have a password, which people without one keep as none or blank. */
 const OWN_PROFILE = `SELECT id, name, email_address, bio, role, status, updated_at, avatar_key, avatar_variant,
     coalesce(password_digest, '') <> '' AS password, NOT ${NEEDS_NO_MEMBERSHIP} AS membership_needed,
-    (SELECT json_group_array(issuer) FROM identities WHERE identities.user_id = users.id) AS issuers,
+    (SELECT json_group_array(json_object('issuer', issuer, 'subject', subject, 'name', identities.name, 'emailAddress', identities.email_address))
+      FROM identities WHERE identities.user_id = users.id) AS accounts,
     assistant_thinking, assistant_answer_length, assistant_model
   FROM users WHERE id = ?`;
 
@@ -2038,32 +2087,24 @@ export class WorkspaceStore {
   }
 
   /**
-   * Adds someone who signed in with an account elsewhere, the one `issuer` and `subject` name, as a
-   * member with no password, linked to it, with their session, in every open room, spending the links to
-   * their email address, as `createMember` adds someone who joins. If someone has their
-   * email address already, or the account is linked to someone already, a unique index refuses its
-   * statement, and so the whole batch.
+   * Adds someone who signed in with `account`, an account elsewhere, as a member with no password, linked
+   * to it, with their session, in every open room, spending the links to their email address, as
+   * `createMember` adds someone who joins. If someone has their email address already, or the account
+   * is linked to someone already, a unique index refuses its statement, and so the whole batch.
    */
-  async createLinkedMember(
-    person: NewLinkedPerson,
-    issuer: string,
-    subject: string,
-    checkedAt: number,
-    sessionId: string,
-    tokenDigest: string,
-    client: Client,
-    now: string,
-  ): Promise<void> {
+  async createLinkedMember(person: NewLinkedPerson, account: LinkedAccount, checkedAt: number, sessionId: string, tokenDigest: string, client: Client, now: string): Promise<void> {
     await this.db.batch([
       statement(`INSERT INTO users (id, name, email_address, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, person.id, person.name, person.emailAddress, now, now),
       statement(
-        `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-        issuer,
-        subject,
+        `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at, name, email_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        account.issuer,
+        account.subject,
         person.id,
         checkedAt,
         now,
         now,
+        account.name,
+        account.emailAddress,
       ),
       statement(INSERT_SESSION, sessionId, person.id, tokenDigest, client.ip, client.userAgent, now, now, now),
       statement(GRANT_OPEN_ROOMS_TO_USER, person.id, now, now),
@@ -2087,12 +2128,16 @@ export class WorkspaceStore {
     );
   }
 
-  /** Starts a session for someone who signed in with an account elsewhere that's linked to them, unless they've stopped being active. */
-  async startLinkedSession(userId: UserId, sessionId: string, tokenDigest: string, client: Client, now: string): Promise<StoredSession | null> {
-    const [, [row]] = (await this.db.batch([
+  /**
+   * Starts a session for someone who signed in with `account`, an account elsewhere that's linked to
+   * them, unless they've stopped being active, keeping what the account says of itself now.
+   */
+  async startLinkedSession(userId: UserId, sessionId: string, tokenDigest: string, client: Client, now: string, account: LinkedAccount): Promise<StoredSession | null> {
+    const [, , [row]] = (await this.db.batch([
       statement(INSERT_LINKED_SESSION, sessionId, tokenDigest, client.ip, client.userAgent, now, userId),
+      statement(REFRESH_IDENTITY, account.issuer, account.subject, account.name, account.emailAddress, now),
       statement(SESSION, tokenDigest),
-    ])) as [unknown[], SessionRow[]];
+    ])) as [unknown[], unknown[], SessionRow[]];
     return row ? storedSession(row) : null;
   }
 
@@ -2133,13 +2178,32 @@ export class WorkspaceStore {
   }
 
   /**
-   * Links the account elsewhere that `issuer` and `subject` name to the person `connecting` is for, its
-   * membership read at `checkedAt`, unless they've stopped being able to have one connected, or their
-   * password has changed since it checked out. Whether it's linked. A unique index refuses it for an
-   * account linked to anyone already, or a second account of theirs at `issuer`.
+   * Links `account`, an account elsewhere, to the person `connecting` is for, its membership read at
+   * `checkedAt`, unless they've stopped being able to have one connected, or their password has changed
+   * since it checked out. Whether it's linked. A unique index refuses it for an account linked to
+   * anyone already, or a second account of theirs at its issuer.
    */
-  async connectIdentity({ userId, passwordDigest }: Connecting, issuer: string, subject: string, checkedAt: number, now: string): Promise<boolean> {
-    return (await this.db.all(CONNECT_IDENTITY, issuer, subject, checkedAt, now, userId, passwordDigest)).length > 0;
+  async connectIdentity({ userId, passwordDigest }: Connecting, account: LinkedAccount, checkedAt: number, now: string): Promise<boolean> {
+    const { issuer, subject, name, emailAddress } = account;
+    return (await this.db.all(CONNECT_IDENTITY, issuer, subject, checkedAt, now, userId, passwordDigest, name, emailAddress)).length > 0;
+  }
+
+  /**
+   * Unlinks the account at `issuer` from `userId`, while their password's digest is still
+   * `passwordDigest`, as the Worker checked it, and in the same transaction ends the sessions and
+   * forgets the push subscriptions `ended` says, queuing closing those sessions' sockets, as a new
+   * password does. Each statement checks both, so a password changed meanwhile, or an account
+   * disconnected already, changes nothing. Answers whether it was unlinked, and whether it queued any.
+   */
+  async disconnectIdentity(userId: UserId, issuer: string, passwordDigest: string, ended: EndedByPassword): Promise<Disconnection> {
+    const [queued, , , unlinked] = await this.db.batch([
+      // Before their sessions go, which it finds their sockets by, and before the link, which each checks.
+      statement(QUEUE_DISCONNECTED_SESSION_REVOCATIONS, userId, issuer, passwordDigest, SESSION_TAG_PREFIX, ended.code, ended.dueAt, ended.kept),
+      statement(`DELETE FROM sessions WHERE user_id = ?1 AND id <> ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.kept),
+      statement(`DELETE FROM push_subscriptions WHERE user_id = ?1 AND endpoint IS NOT ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.pushEndpoint),
+      statement(DISCONNECT_IDENTITY, userId, issuer, passwordDigest),
+    ]);
+    return { disconnected: unlinked!.length > 0, queued: queued!.length > 0 };
   }
 
   /** Whether anyone, whatever their status, has an account at `issuer` linked to them. */
@@ -2390,13 +2454,15 @@ export class WorkspaceStore {
   /**
    * Gives someone the password `passwordDigest` is the digest of, recording when, and ends all their
    * sessions, keeping their role and status, and forgets their push subscriptions, the accounts
-   * elsewhere their old password started connecting, and any code they were emailed to reset it. In the
-   * same transaction it queues closing each session's sockets with `code` in every room they're in, due
-   * at `dueAt`, as signing out does. Answers whether it queued any.
+   * elsewhere their old password started connecting, or connected (`UNLINK_ON_NEW_PASSWORD`), and any
+   * code they were emailed to reset it. In the same transaction it queues closing each session's
+   * sockets with `code` in every room they're in, due at `dueAt`, as signing out does. Answers whether
+   * it queued any.
    */
   async resetPassword(userId: UserId, passwordDigest: string, code: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [queued] = await this.db.batch([
       statement(QUEUE_PERSON_SESSION_REVOCATIONS, SESSION_TAG_PREFIX, code, dueAt, userId),
+      statement(UNLINK_ON_NEW_PASSWORD, userId),
       statement(`UPDATE users SET password_digest = ?, updated_at = ? WHERE id = ?`, passwordDigest, now, userId),
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
@@ -3070,7 +3136,8 @@ export class WorkspaceStore {
    * Saves someone's profile, and a new password when `passwordDigest` is one's, recording when. With a
    * new password, in the same transaction it ends the sessions and forgets the push subscriptions
    * `ended` says, queuing closing those sessions' sockets, and forgets the accounts elsewhere their old
-   * password started connecting. Answers whether it queued any.
+   * password started connecting, or connected, if they had one (`UNLINK_ON_NEW_PASSWORD`). Answers
+   * whether it queued any.
    */
   async changeProfile(userId: UserId, { name, emailAddress, bio, passwordDigest }: ProfileChange, now: string, ended: EndedByPassword | null): Promise<boolean> {
     const change = statement(CHANGE_PROFILE, name, emailAddress, bio, passwordDigest, now, userId);
@@ -3084,6 +3151,7 @@ export class WorkspaceStore {
       statement(`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userId, ended.kept),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint IS NOT ?`, userId, ended.pushEndpoint),
       statement(`DELETE FROM pending_identities WHERE user_id = ?`, userId),
+      statement(UNLINK_ON_NEW_PASSWORD, userId),
       change,
     ]);
     return queued!.length > 0;
@@ -3112,14 +3180,14 @@ export class WorkspaceStore {
 
   /** Someone with their profile and the avatar they've uploaded, whatever their status, or null if nobody has id `userId`. */
   async ownProfile(userId: UserId): Promise<OwnProfileEntry | null> {
-    const [row] = await this.db.all<DirectoryRow & AvatarColumns & PickColumns & { email_address: string | null; password: number; membership_needed: number; issuers: string }>(
+    const [row] = await this.db.all<DirectoryRow & AvatarColumns & PickColumns & { email_address: string | null; password: number; membership_needed: number; accounts: string }>(
       OWN_PROFILE,
       userId,
     );
     if (!row) return null;
-    const issuers = JSON.parse(row.issuers) as string[];
+    const accounts = JSON.parse(row.accounts) as LinkedAccount[];
     const membershipNeeded = row.membership_needed === 1;
-    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, issuers, picks: assistantPicksOf(row) };
+    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, accounts, picks: assistantPicksOf(row) };
   }
 
   /** How much `userId` picked for @ember to think, how long its answers to them are and the model it answers them with, or null for nobody. */

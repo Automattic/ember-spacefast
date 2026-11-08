@@ -1,7 +1,11 @@
 import {
+  CloseCode,
   CURRENT_PASSWORD_WRONG,
   MEMBERFUL_CALLBACK_PATH,
   MEMBERFUL_CONNECTIONS_PATH,
+  MEMBERFUL_DISCONNECT_PASSWORD_NEEDED,
+  MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD,
+  MEMBERFUL_NOT_CONNECTED,
   MEMBERFUL_PASSWORD_NEEDED,
   MEMBERFUL_SIGN_IN_NEEDED,
   MEMBERFUL_SIGN_IN_PROBLEMS,
@@ -16,6 +20,7 @@ import {
   type Me,
   type MemberfulConnection,
   type MemberfulConnectionStart,
+  type MemberfulDisconnection,
   type NewWorkspace,
   type Profile,
   type ProfileAnswer,
@@ -42,6 +47,7 @@ import {
   freshDeploy,
   openWorkspaceSocket,
   origin,
+  pushBrowser,
   shown,
   signIn,
   withWorkspaceEnv,
@@ -1496,6 +1502,37 @@ const profileOf = async (session: Session, { keys = true } = {}): Promise<Profil
 
 /** Grace's account at the Memberful site, with an active subscription. */
 const gracesAccount: Partial<MemberfulMember> = { id: "4250", email: grace.emailAddress, fullName: grace.name };
+/** The same, as her profile names it once it's connected. */
+const GRACES = { name: grace.name, emailAddress: grace.emailAddress };
+
+/** Disconnects Memberful from `session`'s profile with `body`, from `ip`, on a deployment with the keys unless `keys` is false. */
+const disconnect = (session: Session | null, body: MemberfulDisconnection = {}, { ip = IP, keys = true } = {}) =>
+  apiWith(keys ? KEYS : {}, MEMBERFUL_CONNECTIONS_PATH, { method: "DELETE", headers: { ...as(session), "CF-Connecting-IP": ip }, body: JSON.stringify(body) });
+
+/** Connects Grace's Memberful account from `member`'s profile, her session, with her password, `password`, at a fake Memberful site that describes it. */
+async function connectGrace(member: Session, password = grace.password): Promise<ReturnType<typeof fakeMemberful>> {
+  const site = fakeMemberful(gracesAccount);
+  expect(locationOf(await finish(await connectionOf(await connect(member, { currentPassword: password })), member))).toBe(backToProfile("connected"));
+  return site;
+}
+
+/** Saves `session`'s profile as its form does, with `changes`, on a deployment with the keys. */
+const saveProfile = (session: Session, changes: unknown) => withKeys("/api/users/me/profile", { method: "PATCH", headers: as(session), body: JSON.stringify(changes) });
+
+/** Every linked account, with what it says of itself. */
+const linkedAccounts = () => workspaceSql("SELECT issuer, subject, user_id, name, email_address FROM identities");
+
+/** Where Chrome's push service takes the pushes of a subscription labelled `label`. */
+const endpointOf = (label: string) => `https://fcm.googleapis.com/fcm/send/${label}`;
+
+/** Saves a push subscription for `session`, at `endpointOf(label)`. */
+async function subscribe(session: Session, label: string): Promise<void> {
+  const { p256dh, auth } = await pushBrowser();
+  const body = JSON.stringify({ endpoint: endpointOf(label), p256dhKey: p256dh, authKey: auth });
+  expect((await api("/api/push-subscriptions", { method: "POST", headers: as(session), body })).status).toBe(204);
+}
+
+const subscriptions = () => workspaceSql("SELECT user_id, endpoint FROM push_subscriptions ORDER BY endpoint");
 
 /** Sets Ember up with Ada as its administrator and Grace, who joined with a password, then makes Memberful members only. */
 async function setUpWithGrace(): Promise<{ administrator: Session; member: Session }> {
@@ -1516,8 +1553,8 @@ describe("Connect Memberful", () => {
       expect((await profileOf(member)).memberful).toBeNull();
 
       await turnMemberful(administrator, true);
-      expect((await profileOf(member)).memberful).toBe(false);
-      expect((await profileOf(administrator)).memberful).toBe(false);
+      expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: null });
+      expect((await profileOf(administrator)).memberful).toEqual({ membersOnly: true, connected: null });
       expect((await profileOf(member, { keys: false })).memberful).toBeNull();
       // Signed in with just a name, they have nothing to connect.
       expect((await profileOf(guest)).memberful).toBeNull();
@@ -1534,7 +1571,7 @@ describe("Connect Memberful", () => {
       expect(back.headers.getSetCookie()).toEqual([expect.stringMatching(/memberful_state=;/)]);
       expect(await identities()).toEqual([{ issuer: SITE, subject: "4250", user_id: member.user.id }]);
       expect(await signsIn(member)).toBe(true);
-      expect((await profileOf(member)).memberful).toBe(true);
+      expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: GRACES });
       expect(await count("pending_identities")).toBe(0);
 
       // From then on she signs in with Memberful as herself, and has nothing more to connect.
@@ -1776,5 +1813,211 @@ describe("Connect Memberful", () => {
       expect((await connectionOf(there)).cookie).toMatch(/^__Host-memberful_state=/);
       expect(await count("pending_identities")).toBe(1);
     });
+  });
+});
+
+describe("The Memberful account connected", () => {
+  it("is named on your profile as Memberful describes it, whether or not Memberful is members only", async () => {
+    const { administrator, member } = await setUpWithGrace();
+    await connectGrace(member);
+    expect(await linkedAccounts()).toEqual([{ issuer: SITE, subject: "4250", user_id: member.user.id, name: grace.name, email_address: grace.emailAddress }]);
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: GRACES });
+    // Her password signs her in again, but so does Memberful, and the section says so.
+    await turnMemberful(administrator, true, { membersOnly: false });
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: false, connected: GRACES });
+    await turnMemberful(administrator, false);
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: false, connected: GRACES });
+    // Though not to a deployment without the keys, where there's no Memberful site.
+    expect((await profileOf(member, { keys: false })).memberful).toBeNull();
+    expect((await profileOf(administrator)).memberful).toBeNull();
+  });
+
+  it("is described anew each time it signs you in, and as nothing until then for one connected before Ember kept that", async () => {
+    const { member } = await setUpWithGrace();
+    const site = await connectGrace(member);
+    await workspaceSql("UPDATE identities SET name = NULL, email_address = NULL");
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: { name: null, emailAddress: null } });
+
+    site.member = { ...site.member!, fullName: "Grace Brewster Murray Hopper", email: "grace@navy.example" };
+    expect((await signedInAs(await signInWithMemberful())).id).toBe(member.user.id);
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: { name: "Grace Brewster Murray Hopper", emailAddress: "grace@navy.example" } });
+    expect(await linkedAccounts()).toEqual([{ issuer: SITE, subject: "4250", user_id: member.user.id, name: "Grace Brewster Murray Hopper", email_address: "grace@navy.example" }]);
+  });
+
+  it("is named for someone who joined with Memberful too, who signs in with it alone", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    fakeMemberful();
+    const session = await memberfulSession();
+    expect((await profileOf(session)).memberful).toEqual({ membersOnly: false, connected: { name: katherine.fullName, emailAddress: katherine.email } });
+    expect((await profileOf(session)).password).toBe(false);
+  });
+
+  it("goes without a name when Memberful has no full name for it, though the person is named here by their email address", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    const site = fakeMemberful();
+    const session = await memberfulSessionOf({ ...katherine, id: "4243", fullName: null, email: "dorothy@example.com" }, site);
+    expect(session.user.name).toBe("dorothy");
+    expect((await profileOf(session)).memberful).toEqual({ membersOnly: false, connected: { name: null, emailAddress: "dorothy@example.com" } });
+  });
+});
+
+describe("A new password", () => {
+  it("disconnects the Memberful account connected with the one it replaces, as a reset does", async () => {
+    const { member } = await setUpWithGrace();
+    const site = await connectGrace(member);
+    const changed = await saveProfile(member, { password: "a new password", currentPassword: grace.password });
+    expect(changed.status).toBe(200);
+    expect(((await changed.json()) as ProfileAnswer).profile.memberful).toEqual({ membersOnly: true, connected: null });
+    expect(await identities()).toEqual([]);
+    expect(await signsIn(member)).toBe(true);
+    // Memberful knows her account, but it's connected to nobody here, and her email address is hers.
+    expect(locationOf(await signInWithMemberful())).toBe(backToSignIn("taken"));
+
+    await connectGrace(member, "a new password");
+    await runInDurableObject(workspaceStub(), (workspace: Workspace) => workspace.resetPassword(grace.emailAddress, "recovery digest"));
+    expect(await identities()).toEqual([]);
+    expect(await signsIn(member)).toBe(false);
+    expect(locationOf(await signInWithMemberful())).toBe(backToSignIn("taken"));
+    void site;
+  });
+
+  it("keeps the Memberful account of someone without a password, as they set their first", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    fakeMemberful();
+    const session = await memberfulSession();
+    const saved = await saveProfile(session, { password: "a long enough password" });
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as ProfileAnswer).profile).toMatchObject({ password: true, memberful: { connected: { name: katherine.fullName } } });
+    expect(await identities()).toEqual([{ issuer: SITE, subject: katherine.id, user_id: session.user.id }]);
+    expect((await signedInAs(await signInWithMemberful())).id).toBe(session.user.id);
+    expect((await signInWithPassword({ emailAddress: katherine.email, password: "a long enough password" })).status).toBe(201);
+  });
+
+  it("stops the sign-in page offering Memberful once nobody is connected to it and Memberful is off", async () => {
+    const administrator = await setUp();
+    const member = await joinAsGrace();
+    await turnMemberful(administrator, true);
+    await connectGrace(member);
+    await turnMemberful(administrator, false);
+    expect(await offersMemberful()).toBe(true);
+
+    expect((await saveProfile(member, { password: "a new password", currentPassword: grace.password })).status).toBe(200);
+    expect(await offersMemberful()).toBe(false);
+    // And a Workspace started afresh agrees.
+    await evictDurableObject(workspaceStub());
+    expect(await offersMemberful()).toBe(false);
+  });
+});
+
+describe("Disconnect Memberful", () => {
+  it("disconnects your account once your password checks out, ending your other sessions but this browser's", async () => {
+    const { member } = await setUpWithGrace();
+    await connectGrace(member);
+    // Signed in with Memberful on another device, with a push subscription on each.
+    const other = await memberfulSession("203.0.113.40");
+    expect(other.user.id).toBe(member.user.id);
+    await subscribe(member, "desk");
+    await subscribe(other, "phone");
+    const othersWorkspace = await openWorkspaceSocket(other);
+    const yourWorkspace = await openWorkspaceSocket(member);
+
+    const disconnected = await disconnect(member, { currentPassword: grace.password, pushSubscriptionEndpoint: endpointOf("desk") });
+    expect(disconnected.status, await disconnected.clone().text()).toBe(200);
+    expect(disconnected.headers.get("Cache-Control")).toBe("no-store");
+    const { profile } = (await disconnected.json()) as ProfileAnswer;
+    expect(profile.memberful).toEqual({ membersOnly: true, connected: null });
+    expect(await identities()).toEqual([]);
+    expect(await othersWorkspace.closed).toMatchObject({ code: CloseCode.Reconnect, reason: "Reconnect" });
+    await vi.waitFor(async () => expect(await workspaceSql("SELECT * FROM pending_revocations")).toEqual([]), { timeout: 5_000 });
+    expect(await signsIn(other)).toBe(false);
+    expect(await signsIn(member)).toBe(true);
+    expect(await yourWorkspace.answers()).toBe(true);
+    expect(await subscriptions()).toEqual([{ user_id: member.user.id, endpoint: endpointOf("desk") }]);
+
+    // Memberful signs her in no more, until she connects an account again, which she can.
+    expect(locationOf(await signInWithMemberful())).toBe(backToSignIn("taken"));
+    const again = await disconnect(member, { currentPassword: grace.password });
+    expect(again.status).toBe(404);
+    expect(await again.json()).toEqual({ error: MEMBERFUL_NOT_CONNECTED });
+    await connectGrace(member);
+    expect((await profileOf(member)).memberful).toEqual({ membersOnly: true, connected: GRACES });
+    yourWorkspace.ws.close(1000);
+  });
+
+  it("asks for your password, counting it against the sign-in limit", async () => {
+    const { member } = await setUpWithGrace();
+    await connectGrace(member);
+    // From an address connecting counted nothing against.
+    const from = { ip: "203.0.113.50" };
+    const without = await disconnect(member, {}, from);
+    expect(without.status).toBe(422);
+    expect(await without.json()).toEqual({ error: MEMBERFUL_DISCONNECT_PASSWORD_NEEDED });
+    const wrong = await disconnect(member, { currentPassword: "wrong" }, from);
+    expect(wrong.status).toBe(422);
+    expect(await wrong.json()).toEqual({ error: CURRENT_PASSWORD_WRONG });
+    for (let attempt = 2; attempt < 10; attempt++) expect((await disconnect(member, { currentPassword: "wrong" }, from)).status).toBe(422);
+
+    const limited = await disconnect(member, { currentPassword: grace.password }, from);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: SIGN_IN_LIMITED });
+    expect(await identities()).toHaveLength(1);
+    expect((await disconnect(member, { currentPassword: grace.password }, { ip: "203.0.113.21" })).status).toBe(200);
+    expect(await identities()).toEqual([]);
+  });
+
+  it("asks someone without a password to set one first, so that they can still sign in", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    fakeMemberful();
+    const session = await memberfulSession();
+    for (const body of [{}, { currentPassword: "a long enough password" }]) {
+      const refused = await disconnect(session, body);
+      expect(refused.status).toBe(422);
+      expect(await refused.json()).toEqual({ error: MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD });
+    }
+    expect(await identities()).toHaveLength(1);
+
+    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    const disconnected = await disconnect(session, { currentPassword: "a long enough password" });
+    expect(disconnected.status).toBe(200);
+    // Nothing to show: Memberful isn't members only, and nothing is connected.
+    expect(((await disconnected.json()) as ProfileAnswer).profile.memberful).toBeNull();
+    expect(await identities()).toEqual([]);
+    expect((await signInWithPassword({ emailAddress: katherine.email, password: "a long enough password" })).status).toBe(201);
+  });
+
+  it("answers 401 without a session, 403 to a guest or a deployment without the keys, and 404 while you haven't connected one", async () => {
+    const administrator = await setUp();
+    const member = await joinAsGrace();
+    const guest = await signIn("Visitor");
+    const password = { currentPassword: grace.password };
+    expect((await disconnect(null, password)).status).toBe(401);
+    const unavailable = await disconnect(member, password, { keys: false });
+    expect(unavailable.status).toBe(403);
+    expect(await unavailable.json()).toEqual({ error: MEMBERFUL_SIGN_IN_PROBLEMS.unavailable });
+    const guests = await disconnect(guest, password);
+    expect(guests.status).toBe(403);
+    expect(await guests.json()).toEqual({ error: "Guests can't disconnect Memberful" });
+    for (const membersOnly of [null, false, true]) {
+      if (membersOnly !== null) await turnMemberful(administrator, true, { membersOnly });
+      const nothing = await disconnect(member, password);
+      expect(nothing.status).toBe(404);
+      expect(await nothing.json()).toEqual({ error: MEMBERFUL_NOT_CONNECTED });
+    }
+    const bad = await disconnect(member, { currentPassword: 42 } as unknown as MemberfulDisconnection);
+    expect(bad.status).toBe(422);
+    expect(await bad.json()).toEqual({ error: "Current password must be text" });
+  });
+
+  it("changes nothing once the password it checked isn't yours anymore", async () => {
+    const { member } = await setUpWithGrace();
+    await connectGrace(member);
+    const other = await memberfulSession("203.0.113.40");
+    const credentials = await credentialsFor(member.cookie.split("=")[1]!, new Request(origin), env as unknown as Env);
+    // As when a reset lands between the check and the change.
+    const refused = await runInDurableObject(workspaceStub(), (workspace: Workspace) => workspace.disconnectMemberful(credentials!, SITE, "a digest from before", null));
+    expect(refused).toBe("refused");
+    expect(await identities()).toHaveLength(1);
+    expect(await signsIn(other)).toBe(true);
+    expect(await signsIn(member)).toBe(true);
   });
 });

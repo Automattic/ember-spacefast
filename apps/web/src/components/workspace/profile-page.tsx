@@ -6,8 +6,10 @@ import {
   MAX_EMAIL_ADDRESS_LENGTH,
   MAX_PASSWORD_LENGTH,
   MAX_USER_NAME_LENGTH,
+  MEMBERFUL_DISCONNECTED_NOTICE,
   MIN_PASSWORD_LENGTH,
   type Me,
+  type MemberfulStatus,
   type Profile,
   type ProfileAnswer,
   type ProfileChanges,
@@ -101,7 +103,8 @@ function settled(typed: Fields, sent: Fields, saved: Fields): Fields {
  * everywhere.", and Remove avatar takes away, then your name, email address, a new password, your
  * current password while you have one, which changing your email address or password takes, and your
  * bio, which Save changes saves with the notice "✓", keeping the page, then, while members sign in with
- * Memberful, connecting your Memberful account, then, while Ember AI is on, how much @ember thinks and
+ * Memberful, connecting your Memberful account, or the one you've connected, which Disconnect Memberful
+ * unlinks with the notice "Your Memberful account is disconnected.", then, while Ember AI is on, how much @ember thinks and
  * how long it answers you, then your notification level in each of your rooms and DMs, then a sign-in
  * link for you, a new one each time the page loads or saves, and Log out in the top bar. Go Back
  * returns to the page it was opened from. Your avatar, name and bio reach everyone's open pages at
@@ -118,8 +121,8 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
   const [transferId, setTransferId] = useState<string | null>(null);
   /** Whether you have a password, which the form then asks for to change your email address or password. */
   const [hasPassword, setHasPassword] = useState(false);
-  /** Whether you've connected a Memberful account, or null while there's none to connect. */
-  const [memberful, setMemberful] = useState<boolean | null>(null);
+  /** The Memberful account you've connected, or none to connect yet, or null while there's nothing to show. */
+  const [memberful, setMemberful] = useState<MemberfulStatus | null>(null);
   /** Whether you need Memberful to sign in while it's members only, unlike administrators and the people they invite. */
   const [membershipNeeded, setMembershipNeeded] = useState(true);
   /** Which model @ember answers you with, how much it thinks and how long its answers are, or null while Ember AI is off. */
@@ -158,9 +161,9 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
   useEffect(() => () => void (picked && URL.revokeObjectURL(picked)), [picked]);
 
   /**
-   * Shows your avatar, whether you have a password, whether you've connected Memberful and need it, and a
-   * new sign-in link, as an answer has them. An answer can arrive after a later one, as a profile's save can after a
-   * photo's, and the later avatar stays then.
+   * Shows your avatar, whether you have a password, where you stand with Memberful and whether you need
+   * it, and a new sign-in link, as an answer has them. An answer can arrive after a later one, as a
+   * profile's save can after a photo's, and the later avatar stays then.
    */
   function showAnswer({ profile, transferId }: ProfileAnswer) {
     const answered = { avatarUrl: profile.avatarUrl, avatar: profile.avatar };
@@ -170,6 +173,12 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
     setMemberful(profile.memberful);
     setMembershipNeeded(profile.membershipNeeded);
     setTransferId(transferId);
+  }
+
+  /** Shows your profile as disconnecting your Memberful account answered it, with the notice. */
+  function disconnected(answer: ProfileAnswer) {
+    showAnswer(answer);
+    flash("notice", MEMBERFUL_DISCONNECTED_NOTICE);
   }
 
   /** Saves `file` as your avatar, once a photo is picked. */
@@ -302,6 +311,8 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
             <p id="profile-password-help" className="text-[0.8em] text-muted-foreground">
               {/* Someone who signed in with Memberful or just a name has no password. */}
               {fields && !hasPassword ? "Leave blank to keep signing in without a password." : "Leave blank to keep your current password."}
+              {/* As the one it replaces connected it. */}
+              {fields && hasPassword && memberful?.connected && " A new one disconnects your Memberful account."}
             </p>
           </Field>
           {hasPassword && (
@@ -338,7 +349,16 @@ export function ProfilePage({ me, rooms, askForRoom, onSignOut, onFailed }: Prop
           </Field>
           <SubmitButton disabled={!fields || saving}>Save changes</SubmitButton>
         </form>
-        {memberful !== null && <MemberfulConnection connected={memberful} hasPassword={hasPassword} membershipNeeded={membershipNeeded} onFailed={onFailed} />}
+        {memberful && (
+          <MemberfulConnection
+            connected={memberful.connected}
+            membersOnly={memberful.membersOnly}
+            hasPassword={hasPassword}
+            membershipNeeded={membershipNeeded}
+            onDisconnected={disconnected}
+            onFailed={onFailed}
+          />
+        )}
         {assistant && <AnswerLevels assistant={assistant} onChanged={setAssistant} onFailed={onFailed} />}
         {rooms && <ConversationNotifications me={me} rooms={rooms} askForRoom={askForRoom} onFailed={onFailed} />}
         {transferId && <SignInLink transferId={transferId} mine />}

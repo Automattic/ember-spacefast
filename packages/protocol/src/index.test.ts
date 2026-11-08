@@ -73,6 +73,7 @@ import {
   parsePasswordReset,
   parsePasswordResetRequest,
   parsePasswordResetWithCode,
+  parseMemberfulDisconnection,
   parseProfileChanges,
   parseResendApiKey,
   parseRoleChange,
@@ -1030,6 +1031,25 @@ describe("Edit your profile", () => {
     ["an endpoint longer than a subscription's", { pushSubscriptionEndpoint: "x".repeat(MAX_PUSH_ENDPOINT_LENGTH + 1) }, "Endpoint can't be longer than 2048 characters"],
   ])("refuses %s and says why", (_, body, error) => {
     expect(parseProfileChanges(body)).toBe(error);
+  });
+});
+
+describe("Disconnect Memberful", () => {
+  it("takes your password and this browser's push subscription endpoint as typed, leaving out what isn't sent", () => {
+    const typed = { currentPassword: " ", pushSubscriptionEndpoint: "" };
+    expect(parseMemberfulDisconnection(typed)).toEqual(typed);
+    expect(parseMemberfulDisconnection({ currentPassword: "compiler", name: "Grace" })).toEqual({ currentPassword: "compiler" });
+    expect(parseMemberfulDisconnection({})).toEqual({});
+  });
+
+  it.each([
+    ["no body", null, "Expected a JSON object"],
+    ["a list", [{ currentPassword: "compiler" }], "Expected a JSON object"],
+    ["a password that isn't text", { currentPassword: 12345678 }, "Current password must be text"],
+    ["an endpoint that isn't text", { pushSubscriptionEndpoint: {} }, "Push subscription endpoint must be text"],
+    ["an endpoint longer than a subscription's", { pushSubscriptionEndpoint: "x".repeat(MAX_PUSH_ENDPOINT_LENGTH + 1) }, "Endpoint can't be longer than 2048 characters"],
+  ])("refuses %s and says why", (_, body, error) => {
+    expect(parseMemberfulDisconnection(body)).toBe(error);
   });
 });
 

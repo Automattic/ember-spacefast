@@ -26,6 +26,8 @@ export interface MemberfulApi {
 export interface MemberfulMember {
   /** Their member id, by which accounts here are linked to theirs. */
   id: string;
+  /** Their full name at Memberful, cut to the longest name here, or null when they gave none. */
+  fullName: string | null;
   /** What someone new is called here: their full name, else their email address's local part, else "Member". */
   name: string;
   /** Their email address, or null when they have none Ember can keep. */
@@ -162,7 +164,13 @@ function memberOf(answer: unknown): MemberfulMember | null {
   if (!isSubject(id)) return null;
   const given = typeof email === "string" ? email.trim() : "";
   const emailAddress = given !== "" && given.length <= MAX_EMAIL_ADDRESS_LENGTH ? given : null;
-  return { id, name: nameOf(fullName, emailAddress), emailAddress, subscribed: isSubscribed(member as Record<string, unknown>) };
+  return {
+    id,
+    fullName: typeof fullName === "string" ? cutName(fullName) || null : null,
+    name: nameOf(fullName, emailAddress),
+    emailAddress,
+    subscribed: isSubscribed(member as Record<string, unknown>),
+  };
 }
 
 /** Whether a member Memberful describes has the all access pass (`unrestrictedAccess`), or else an active subscription. */
