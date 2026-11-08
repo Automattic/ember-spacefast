@@ -15,7 +15,7 @@ import { useAccount } from "@/hooks/use-account";
 import { cn } from "@/lib/utils";
 import { EmailDomainSettings } from "./email-domain-settings";
 import { sendsEmail } from "./email-settings";
-import { ShareableLink } from "./invite-link";
+import { InviteLink, ShareableLink } from "./invite-link";
 import { EMAIL_SIGN_UP_LINK, emailSignUpUrl, SIGN_UP_LINK, signUpUrl } from "./join-link";
 import { MemberfulSettings } from "./memberful-settings";
 import { workspaceSectionPath } from "./settings-navigation";
@@ -203,16 +203,17 @@ function Way({ id, title, description, checked, onCheckedChange, setAside, child
 
 /**
  * How new people join, for members: open sign-up's link while it's on, or else Email domain's while it
- * lets people in, and the join link while it does, or else a line saying how they join with Memberful,
- * if they do, at `memberfulSite`, or that only the people administrators invite can.
+ * lets people in, and the join link, with `joinCode`, while it does, unless they're a guest, who isn't
+ * given the code, or else a line saying how they join with Memberful, if they do, at `memberfulSite`,
+ * or that only the people administrators invite can.
  */
-export function HowPeopleJoin({ joinLink, memberfulSite }: { joinLink: ReactNode; memberfulSite: string | null }) {
+export function HowPeopleJoin({ joinCode, memberfulSite }: { joinCode: string | null; memberfulSite: string | null }) {
   const account = useAccount();
   const open = signsUpOpenly(account);
-  const link = joinsWithLink(account);
+  const linkCode = joinsWithLink(account) ? joinCode : null;
   // Open lets anyone in, people at the email domains too.
   const emailDomain = !open && signsUpWithEmailDomain(account);
-  if (!open && !link && !emailDomain) {
+  if (!open && linkCode === null && !emailDomain) {
     if (account.memberfulSignIn)
       return (
         <p className="text-start">
@@ -245,7 +246,11 @@ export function HowPeopleJoin({ joinLink, memberfulSite }: { joinLink: ReactNode
         </div>
       )}
       {/* `#account_invitation`, a card on the surface. */}
-      {link && <div className="rounded-[10px] border bg-surface p-5 upto-500px:p-3.5">{joinLink}</div>}
+      {linkCode !== null && (
+        <div className="rounded-[10px] border bg-surface p-5 upto-500px:p-3.5">
+          <InviteLink joinCode={linkCode} />
+        </div>
+      )}
     </div>
   );
 }

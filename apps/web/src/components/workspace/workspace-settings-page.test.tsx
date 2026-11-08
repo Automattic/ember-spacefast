@@ -62,6 +62,8 @@ const asAdministrator: WorkspaceSettings = {
   addresses: { deployed: null, others: [] },
 };
 const asMember: WorkspaceSettings = { ...asAdministrator, canAdminister: false };
+/** As someone who signed in with just a name sees the settings: without the join link's code. */
+const asGuest: WorkspaceSettings = { ...asMember, joinCode: null };
 
 /** Someone as the people directory lists them. */
 const listed = (id: string, name: string, role: DirectoryUser["role"] = "member", status: DirectoryUser["status"] = "active"): DirectoryUser => ({
@@ -1339,6 +1341,14 @@ describe("Ways to join", () => {
     expect(screen.queryByRole("textbox", { name: "Share to invite more people" })).not.toBeInTheDocument();
     expect(signUpLink()).not.toBeInTheDocument();
   });
+
+  it("shows guests open sign-up's link while it's on, but not the join link, whose code they aren't given", async () => {
+    serve(withAccount(asGuest, { openSignUp: true }));
+    showPage(asLinus);
+    expect(await screen.findByRole("textbox", { name: "Share so anyone can sign up" })).toHaveValue(`${location.origin}/join`);
+    expect(screen.queryByRole("textbox", { name: "Share to invite more people" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Only the people administrators invite can join.")).not.toBeInTheDocument();
+  });
 });
 
 describe("Join with an email domain", () => {
@@ -1853,13 +1863,21 @@ describe("Invite people by email", () => {
 describe("Join link", () => {
   showingSection("membership-settings");
 
-  it("shows everyone the join link, and tells the welcome card its code", async () => {
+  it("shows members the join link, and tells the welcome card its code", async () => {
     serve(asMember);
     const { onJoinCodeChanged } = showPage();
     expect(await joinLink()).toHaveValue(`http://localhost:3000/join/${JOIN_CODE}`);
     expect(onJoinCodeChanged).toHaveBeenCalledExactlyOnceWith(JOIN_CODE);
     expect(screen.getByRole("button", { name: "Copy join link" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Regenerate join link" })).not.toBeInTheDocument();
+  });
+
+  it("shows guests, who aren't given its code, that only the people administrators invite can join, and tells the welcome card nothing", async () => {
+    serve(asGuest);
+    const { onJoinCodeChanged } = showPage(asLinus);
+    expect(await screen.findByText("Only the people administrators invite can join.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Share to invite more people" })).not.toBeInTheDocument();
+    expect(onJoinCodeChanged).not.toHaveBeenCalled();
   });
 });
 

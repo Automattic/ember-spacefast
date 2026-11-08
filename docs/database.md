@@ -185,7 +185,9 @@ Objects, D1 or speed call for something else.
   Workers) are replaced as their passwords sign in. A request on Workers Free gets 10 ms of CPU, so
   hashing runs in a `PasswordHasher` Durable Object made for it, whose requests get 30 seconds.
 - **Guests are marked.** `users.guest` is 1 for people who signed in with just a name, which only
-  Ember allows, so turning `EMBER_GUEST_SIGN_IN` off keeps them out without deleting anyone.
+  Ember allows, so turning `EMBER_GUEST_SIGN_IN` off keeps them out without deleting anyone. Unless
+  they're administrators, they aren't given the join link's code, since an account they made with it
+  would stay.
 - **Sessions are kept in memory.** Campfire looks up each request's session in its database. Ours
   live in the Workspace, which every request and socket upgrade calls, and on D1 the lookup would
   add a round trip to each. So the Workspace keeps the 10,000 sessions used most recently
