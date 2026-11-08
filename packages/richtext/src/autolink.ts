@@ -40,6 +40,17 @@ export function hasLinkable(text: string): boolean {
 }
 
 /**
+ * Where the links `autoLink` makes in plain text go, in order, but those to email addresses: each
+ * address whole, without the punctuation after it, and a www. one with "http://" in front.
+ */
+export function linkedUrls(text: string): string[] {
+  return Array.from(text.matchAll(AUTO_LINK_RE), ([whole, scheme]) => {
+    const { address } = withoutTrailingPunctuation(whole);
+    return scheme === undefined ? `http://${address}` : address;
+  });
+}
+
+/**
  * `auto_link(html, html: { target: "_blank" })`, without the sanitizing it starts with: `html`
  * must be sanitized already, and serialized as `presentMessage` serializes it. Addresses in text
  * become links that open in a new tab, as do email addresses, with `mailto:`. Text already in a
