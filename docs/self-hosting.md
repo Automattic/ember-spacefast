@@ -522,12 +522,15 @@ it's asked in one, typing while its model answers. It reads the thread, its firs
 characters of them, and sends them through AI Gateway to the model, whose provider reads them. Its
 answer is a message of its own, in Markdown: links, bold, lists, quotes, code blocks and tables show as
 they do in people's messages, the pictures it links to show in a card under it, and its first web link
-gets a preview, as a pasted link does. An answer longer than a message holds is cut to as much as
-fits, ending with an ellipsis. It reads bots' messages but never answers one, so that bots
-can't keep each other talking. When the model can't answer, as when the token is refused or the
-credits run out, @ember says why in a short note, and the Worker's log has Cloudflare's own words.
-AI Gateway's logs keep each request with the id of whoever asked, as custom metadata's `user_id`,
-which a spend limit can be split by.
+gets a preview, as a pasted link does. Both are only of addresses a person wrote in the messages it
+read, not a bot or @ember itself, or of the pages it came from, and a preview is never of Ember's own
+pages. Any other address shows only as a link, since one the model made up could carry what it read to
+whoever runs that address the moment a reader's app or the Worker fetched it. An answer longer than a
+message holds is cut to as much as fits, ending with an ellipsis. It reads bots' messages but never
+answers one, so that bots can't keep each other talking. When the model can't answer, as when the
+token is refused or the credits run out, @ember says why in a short note, and the Worker's log has
+Cloudflare's own words. AI Gateway's logs keep each request with the id of whoever asked, as custom
+metadata's `user_id`, which a spend limit can be split by.
 
 Two dials say how much @ember does for each question. Thinking, Off, Low, Medium or High, is how much
 its model thinks before it answers, up to about 4,000, 16,000 or 32,000 tokens, asked for as each API

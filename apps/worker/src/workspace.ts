@@ -408,7 +408,8 @@ export interface BotAccess {
 /**
  * @ember as a room asks Ember AI to answer a question there (`Workspace.assistantIn`): how Ember AI asks AI
  * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, how
- * much it thinks and how long it answers whoever asked, and what it may do on the web.
+ * much it thinks and how long it answers whoever asked, what it may do on the web, and Ember's own
+ * addresses, whose pages its answers don't preview.
  */
 export interface AssistantAccess extends BotAccess {
   gateway: Gateway | null;
@@ -420,6 +421,8 @@ export interface AssistantAccess extends BotAccess {
   webTools: WebTool[];
   /** Whether Search the web is on, which `webTools` doesn't show for a model that can't search. */
   webSearchOn: boolean;
+  /** The hosts Ember knows reach it, as `location.host` writes them: its custom domain, where a deploy puts it, and the domains it moved away from. */
+  addresses: string[];
 }
 
 /** How Set up Ember AI has Ember AI ask AI Gateway (`Gateway`), with the name of its model, if it was given one. */
@@ -2973,7 +2976,8 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * The people of `ids` who exist, whatever their status, as the people directory lists them, for the
-   * bot API's messages, which show their writers as `users/_user.json` does.
+   * bot API's messages, which show their writers as `users/_user.json` does, and for a room finding
+   * which of those who wrote what @ember read are bots.
    */
   async directoryEntries(ids: UserId[]): Promise<DirectoryEntry[]> {
     return this.store.directoryEntries(ids);
@@ -3009,9 +3013,9 @@ export class Workspace extends DurableObject<Env> {
    * @ember in room `roomId`, as a question for it finds it when its turn comes and again before its answer
    * is posted, with when this checked, how it asks AI Gateway, or null while its API token doesn't open
    * (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can pick it, the
-   * community's name, and what @ember may do on the web, with whichever model answers, of what its format
-   * has tools for: null once Ember AI is off or @ember isn't in the room, so that turning Ember AI off, or
-   * taking @ember out of a room, stops what's on its way there.
+   * community's name, what @ember may do on the web, with whichever model answers, of what its format
+   * has tools for, and Ember's addresses: null once Ember AI is off or @ember isn't in the room, so that
+   * turning Ember AI off, or taking @ember out of a room, stops what's on its way there.
    */
   async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
     // Before anything is read, as `roomAccess` takes it.
@@ -3025,7 +3029,8 @@ export class Workspace extends DurableObject<Env> {
     const { format } = picked ?? account.assistant;
     const webTools = account.assistant.webTools.filter((tool) => WEB_TOOLS_IN[format].includes(tool));
     const webSearchOn = account.assistant.webTools.includes("search");
-    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels, webTools, webSearchOn };
+    const addresses = [account.customDomain, account.deployedAddress, ...account.otherAddresses].filter((address) => address !== null);
+    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels, webTools, webSearchOn, addresses };
   }
 
   /**

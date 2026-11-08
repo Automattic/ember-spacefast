@@ -1,4 +1,4 @@
-import { ASSISTANT_ID, ASSISTANT_NAME, isMessageTooLong, MAX_MESSAGE_HTML_LENGTH, type Card, type CardImage, type LinkPreview, type Message, type User } from "@ember/protocol";
+import { ASSISTANT_ID, ASSISTANT_NAME, isMessageTooLong, MAX_MESSAGE_HTML_LENGTH, type Card, type CardImage, type LinkPreview, type Message, type User, type UserId } from "@ember/protocol";
 import { ANSWER_WORDS, THINKING_TOKENS, type AnswerLength, type AnswerLevels, type WebTool } from "@ember/protocol/assistant";
 import { OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody, previewContent } from "@ember/richtext";
 import { decodeHTMLStrict } from "entities/decode";
@@ -12,8 +12,9 @@ import { MAX_SOURCES, type Question, type RefusalReason, type Source, type Turn 
 // and writing as much as the asker's levels allow, and searching the web and reading pages while Search
 // the web lets it, which it posts as the rich text people write (`markdownHtml`), the pictures it shows
 // in a card under it, as bots' image cards are, the pages it came from after it, and a preview of its
-// first link, as the composer adds one below a link. When it can't answer, it says why, in words that
-// say who can do something about it.
+// first link, as the composer adds one below a link, the pictures and the link only at addresses people
+// wrote there, or the pages it came from (`fetchableIn`). When it can't answer, it says why, in words
+// that say who can do something about it.
 
 /** How many of the room's latest messages @ember reads when it's asked in the room, the question among them. */
 export const ROOM_MESSAGES_READ = 20;
@@ -98,7 +99,7 @@ function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn
   return [
     `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`,
     `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, as a helpful teammate would: plainly, and in at most about ${words.toLocaleString("en-US")} words.`,
-    "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer. Don't begin with your name.",
+    "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.",
     web,
     `Today is ${today}, in UTC.`,
   ].join("\n\n");
@@ -158,12 +159,27 @@ function turnsOf(messages: Message[]): Turn[] {
   });
 }
 
-/** @ember's answer as the room posts it: its Markdown as markup, a card of the pictures it shows, and its first web link, for a preview. */
+/**
+ * What `people` wrote in the part of `conversation` @ember reads (`readable`), as it reads it: the only
+ * text, with the pages its answer came from, whose addresses the answer may have fetched (`answerOf`).
+ * Its own answers and bots' messages are left out, as their writers aren't among `people`.
+ */
+export function writtenBy(people: ReadonlySet<UserId>, conversation: Message[], inThread: boolean): string[] {
+  return readable(conversation, inThread).flatMap(({ creator, plainText, deleted }) => (!deleted && people.has(creator.id) ? [plainText] : []));
+}
+
+/**
+ * @ember's answer as the room posts it: its Markdown as markup, a card of the pictures it shows, and the
+ * first web link it may have a preview of.
+ */
 export interface Answer {
   markup: string;
   cards: Card[];
   firstLink: string | null;
 }
+
+/** Whether an answer may have a web address fetched, by the address as its Markdown writes it and as a link to it goes, `url`. */
+type Fetchable = (address: string, url: string) => boolean;
 
 const markdown = new Marked({ gfm: true });
 
@@ -179,40 +195,68 @@ const MAX_SOURCE_LINK_LENGTH = MAX_MESSAGE_HTML_LENGTH / (2 * MAX_SOURCES);
 /**
  * `text`, the model's answer in Markdown, as @ember posts it, without its name in front, where the
  * conversation's form leads some models to write it, then the `sources` it came from, all cut to what
- * one message holds, which cuts the answer, as its sources are what it says it came from.
+ * one message holds, which cuts the answer, as its sources are what it says it came from. Only the
+ * addresses people wrote in the conversation it read, `written`, and its sources' are fetched for it.
  */
-export function answerOf(text: string, sources: readonly Source[] = []): Answer {
+export function answerOf(text: string, sources: readonly Source[] = [], written: readonly string[] = []): Answer {
   const answer = text.replace(/^\s*(?:ember:|\*\*ember:\*\*|\*\*ember\*\*:)\s*(?=\S)/i, "");
-  const whole = answerIn(answer, sources);
-  return fits(whole) ? whole : cutToFit(answer, sources);
+  const fetchable = fetchableIn(written, sources);
+  const whole = answerIn(answer, sources, fetchable);
+  return fits(whole) ? whole : cutToFit(answer, sources, fetchable);
+}
+
+/**
+ * Which web addresses an answer may have fetched, as each reader's app fetches the pictures in its card,
+ * and the Worker the page it previews: those that people wrote in the conversation @ember read, `written`,
+ * as the answer writes them or as a link to them goes, and the pages it came from, its `sources`. Its
+ * model reads what everyone wrote, and pages anyone can write, so an address it made up could carry any
+ * of that to a host of anyone's choosing. Each address is looked for once, however often the answer is cut.
+ */
+function fetchableIn(written: readonly string[], sources: readonly Source[]): Fetchable {
+  const pages = new Set(sources.map(({ url }) => webAddress(url)));
+  const found = new Map<string, boolean>();
+  const isWritten = (address: string) => {
+    if (!found.has(address)) found.set(address, written.some((text) => text.includes(address)));
+    return found.get(address)!;
+  };
+  return (address, url) => pages.has(url) || isWritten(address) || isWritten(url);
 }
 
 /**
  * The answer `text`, in Markdown, makes, followed by the `sources` it came from that it doesn't link to
- * itself: its rich text, a card of the web pictures it shows, and its first web link, which is the
- * answer's, not a source's.
+ * itself: its rich text, a card of the web pictures it shows that are `fetchable`, and the first of its
+ * own web links that is, not a source's, for a preview.
  */
-function answerIn(text: string, sources: readonly Source[] = []): Answer {
-  const { images, links } = webPartsOf(text);
+function answerIn(text: string, sources: readonly Source[], fetchable: Fetchable): Answer {
+  const { images, links, previewed } = webPartsOf(text, fetchable);
   const cards: Card[] = images.length === 0 ? [] : [{ source: "blocks", parts: images.map((image) => ({ kind: "image", image })) }];
-  return { markup: `${markdownHtml(text)}${sourcesHtml(sources, links)}`, cards, firstLink: links[0] ?? null };
+  return { markup: `${markdownHtml(text)}${sourcesHtml(sources, links)}`, cards, firstLink: previewed };
 }
 
-/** The web pictures Markdown `text` shows, and the web addresses it links to, in order. */
-function webPartsOf(text: string): { images: CardImage[]; links: string[] } {
+/**
+ * The web pictures Markdown `text` shows that are `fetchable`, the web addresses it links to, in order,
+ * and the first of those that is.
+ */
+function webPartsOf(text: string, fetchable: Fetchable): { images: CardImage[]; links: string[]; previewed: string | null } {
   const images: CardImage[] = [];
   const links: string[] = [];
+  let previewed: string | null = null;
   markdown.walkTokens(markdown.lexer(text), (token) => {
     if (token.type === "image") {
-      const url = webAddress(decodeHTMLStrict(token.href));
-      if (url) images.push({ url, alt: decodeHTMLStrict(token.text) });
+      const address = decodeHTMLStrict(token.href);
+      const url = webAddress(address);
+      if (url && fetchable(address, url)) images.push({ url, alt: decodeHTMLStrict(token.text) });
     } else if (token.type === "link") {
-      // As `markdownHtml` reads them: an autolink's address is its text, with no character references.
-      const url = webAddress(token.autolink ? token.href : decodeHTMLStrict(token.href));
-      if (url) links.push(url);
+      // As `markdownHtml` reads them: an autolink's address is its text, with no character references,
+      // though a `www.` one's link has "http://" in front.
+      const address = token.autolink ? token.text : decodeHTMLStrict(token.href);
+      const url = webAddress(token.autolink ? token.href : address);
+      if (!url) return;
+      links.push(url);
+      if (previewed === null && fetchable(address, url)) previewed = url;
     }
   });
-  return { images, links };
+  return { images, links, previewed };
 }
 
 /**
@@ -256,15 +300,15 @@ function fits({ markup, cards }: Answer): boolean {
  * picture's address shows for each reference to it, and a source whose link the cut leaves out is
  * named after it, so each cut is measured as it shows.
  */
-function cutToFit(text: string, sources: readonly Source[]): Answer {
-  const cutFits = (length: number) => fits(cutAt(text, length, sources));
+function cutToFit(text: string, sources: readonly Source[], fetchable: Fetchable): Answer {
+  const cutFits = (length: number) => fits(cutAt(text, length, sources, fetchable));
   const lineEnds = Array.from(text.matchAll(/\n/g), ({ index }) => index);
   const lines = largest(lineEnds.length, (count) => cutFits(lineEnds[count - 1]!));
-  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits), sources);
+  return cutAt(text, lines > 0 ? lineEnds[lines - 1]! : largest(lineEnds[0] ?? text.length, cutFits), sources, fetchable);
 }
 
 /** The answer `text`'s first `length` characters make, ending with an ellipsis to say it's cut, and then the `sources` they don't link to. */
-const cutAt = (text: string, length: number, sources: readonly Source[]) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`, sources);
+const cutAt = (text: string, length: number, sources: readonly Source[], fetchable: Fetchable) => answerIn(`${text.slice(0, length).trimEnd()}\n\n…`, sources, fetchable);
 
 /** The largest count from 0 to `most` that `holds` is true of, as it is of every count below one it's true of. */
 function largest(most: number, holds: (count: number) => boolean): number {
