@@ -42,7 +42,7 @@ import { RoomLog } from "./room-log";
 import { searchIndex } from "./search-index";
 import { CLOSE_REASONS, closedAtOnce, closeTooLarge, isTooLarge, MAX_ROOM_FRAME_SIZE, RESERVED_CLOSE_CODES } from "./sockets";
 import { MessageStore, type Deletion, type InThread, type PageCursor, type PostedFile, type StoredBody } from "./store";
-import { isOnHost, unfurler } from "./unfurl";
+import { unfurler } from "./unfurl";
 import { viewersOf, type Viewing } from "./viewing";
 import { workspace, type AssistantAccess, type BotAccess, type WebhookAccess } from "./workspace";
 import type { AssistantAsk, MessagePush, MessageWebhook } from "./workspace-store";
@@ -1223,15 +1223,15 @@ export class ChatRoom extends DurableObject<Env> {
    * Posts what @ember `said` to `message`, its answer in Markdown, as its reply: in `message`'s thread
    * when it's in one, only there, with the pictures it shows in a card under it, the pages it came from
    * after it, and a preview of its first web link below it, as the composer adds one, the pictures and the
-   * link only at addresses people wrote or of the pages it came from (`answerOf`), and the link on none of
-   * Ember's own `addresses`. Like a bot's reply, it reaches the room as any message does, but goes to no
+   * link only at addresses people wrote or of the pages it came from, and the link on none of Ember's own
+   * `addresses` (`answerOf`). Like a bot's reply, it reaches the room as any message does, but goes to no
    * bot, @ember among them. It's posted only while Ember AI is on and @ember in the room, and `message`
    * still there, so that turning Ember AI off, taking @ember out of the room or deleting the question
    * while the model answers posts nothing. Answers why the room keeps nothing of it, if it doesn't.
    */
   private async postAnswer(roomId: RoomId, said: Said, message: Message, addresses: readonly string[]): Promise<string | null> {
-    const answer = answerOf(said.text, said.sources, said.written);
-    const preview = answer.firstLink === null ? null : await this.previewOf(answer.firstLink, addresses);
+    const answer = answerOf(said.text, said.sources, said.written, addresses);
+    const preview = answer.firstLink === null ? null : await this.previewOf(answer.firstLink);
     const access = await workspace(this.env).assistantIn(roomId, message.creator.id);
     return this.serially(async () => {
       if (await this.isDeleted()) return "the room is gone";
@@ -1253,12 +1253,8 @@ export class ChatRoom extends DurableObject<Env> {
     return previewed && typeof previewed !== "string" ? previewed : this.prepareWithCards(markup, cards);
   }
 
-  /**
-   * The preview of `url`, as the composer would show one, or null when it has none, or none can be had,
-   * as of a page on one of Ember's own `addresses`, which the composer never asks for.
-   */
-  private async previewOf(url: string, addresses: readonly string[]): Promise<LinkPreview | null> {
-    if (isOnHost(url, addresses)) return null;
+  /** The preview of `url`, as the composer would show one, or null when it has none, or none can be had. */
+  private async previewOf(url: string): Promise<LinkPreview | null> {
     return unfurler(this.env)
       .unfurl(url)
       .catch((error: unknown) => {

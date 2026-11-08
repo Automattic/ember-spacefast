@@ -1,10 +1,11 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, isMessageTooLong, MAX_MESSAGE_HTML_LENGTH, type Card, type CardImage, type LinkPreview, type Message, type User, type UserId } from "@ember/protocol";
 import { ANSWER_WORDS, THINKING_TOKENS, type AnswerLength, type AnswerLevels, type WebTool } from "@ember/protocol/assistant";
-import { OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody, previewContent } from "@ember/richtext";
+import { linkedUrls, OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody, previewContent } from "@ember/richtext";
 import { decodeHTMLStrict } from "entities/decode";
 import { Marked } from "marked";
 import { markdownHtml } from "../bots/markdown";
 import { anchor, escapeText, linkHref } from "../bots/mrkdwn";
+import { isOnHost } from "../unfurl";
 import { MAX_SOURCES, type Question, type RefusalReason, type Source, type Turn } from "./gateway";
 
 // What @ember asks its model when someone asks it something, and what it answers with. It reads the
@@ -178,8 +179,14 @@ export interface Answer {
   firstLink: string | null;
 }
 
-/** Whether an answer may have a web address fetched, by the address as its Markdown writes it and as a link to it goes, `url`. */
-type Fetchable = (address: string, url: string) => boolean;
+/**
+ * Which web addresses, each as a link to it goes, an answer may have fetched: by each reader's app, as a
+ * `picture` in its card, and by the Worker, for its `preview`.
+ */
+interface Fetchable {
+  picture(url: string): boolean;
+  preview(url: string): boolean;
+}
 
 const markdown = new Marked({ gfm: true });
 
@@ -196,36 +203,34 @@ const MAX_SOURCE_LINK_LENGTH = MAX_MESSAGE_HTML_LENGTH / (2 * MAX_SOURCES);
  * `text`, the model's answer in Markdown, as @ember posts it, without its name in front, where the
  * conversation's form leads some models to write it, then the `sources` it came from, all cut to what
  * one message holds, which cuts the answer, as its sources are what it says it came from. Only the
- * addresses people wrote in the conversation it read, `written`, and its sources' are fetched for it.
+ * addresses people wrote in the conversation it read, `written`, and its sources' are fetched for it,
+ * and none on Ember's own `ownHosts` for its preview.
  */
-export function answerOf(text: string, sources: readonly Source[] = [], written: readonly string[] = []): Answer {
+export function answerOf(text: string, sources: readonly Source[] = [], written: readonly string[] = [], ownHosts: readonly string[] = []): Answer {
   const answer = text.replace(/^\s*(?:ember:|\*\*ember:\*\*|\*\*ember\*\*:)\s*(?=\S)/i, "");
-  const fetchable = fetchableIn(written, sources);
+  const fetchable = fetchableIn(written, sources, ownHosts);
   const whole = answerIn(answer, sources, fetchable);
   return fits(whole) ? whole : cutToFit(answer, sources, fetchable);
 }
 
 /**
- * Which web addresses an answer may have fetched, as each reader's app fetches the pictures in its card,
- * and the Worker the page it previews: those that people wrote in the conversation @ember read, `written`,
- * as the answer writes them or as a link to them goes, and the pages it came from, its `sources`. Its
- * model reads what everyone wrote, and pages anyone can write, so an address it made up could carry any
- * of that to a host of anyone's choosing. Each address is looked for once, however often the answer is cut.
+ * Which web addresses an answer may have fetched: where the links in what people wrote in the
+ * conversation @ember read, `written`, go, as their messages show them (`linkedUrls`), and the pages it
+ * came from, its `sources`, but for its preview none on Ember's own `ownHosts`, as the composer asks for
+ * none. Its model reads what everyone wrote, and pages anyone can write, so an address it made up could
+ * carry any of that to a host of anyone's choosing. Only whole addresses count, as the start of one can
+ * be another site's: https://example.com starts https://example.com.au/.
  */
-function fetchableIn(written: readonly string[], sources: readonly Source[]): Fetchable {
-  const pages = new Set(sources.map(({ url }) => webAddress(url)));
-  const found = new Map<string, boolean>();
-  const isWritten = (address: string) => {
-    if (!found.has(address)) found.set(address, written.some((text) => text.includes(address)));
-    return found.get(address)!;
-  };
-  return (address, url) => pages.has(url) || isWritten(address) || isWritten(url);
+function fetchableIn(written: readonly string[], sources: readonly Source[], ownHosts: readonly string[]): Fetchable {
+  const addresses = new Set([...written.flatMap(linkedUrls), ...sources.map(({ url }) => url)].map(webAddress));
+  const picture = (url: string) => addresses.has(url);
+  return { picture, preview: (url) => picture(url) && !isOnHost(url, ownHosts) };
 }
 
 /**
  * The answer `text`, in Markdown, makes, followed by the `sources` it came from that it doesn't link to
  * itself: its rich text, a card of the web pictures it shows that are `fetchable`, and the first of its
- * own web links that is, not a source's, for a preview.
+ * own web links, not a source's, that may have a preview.
  */
 function answerIn(text: string, sources: readonly Source[], fetchable: Fetchable): Answer {
   const { images, links, previewed } = webPartsOf(text, fetchable);
@@ -234,8 +239,8 @@ function answerIn(text: string, sources: readonly Source[], fetchable: Fetchable
 }
 
 /**
- * The web pictures Markdown `text` shows that are `fetchable`, the web addresses it links to, in order,
- * and the first of those that is.
+ * The web pictures Markdown `text` shows that may be fetched, the web addresses it links to, in order,
+ * and the first of those that may have a preview.
  */
 function webPartsOf(text: string, fetchable: Fetchable): { images: CardImage[]; links: string[]; previewed: string | null } {
   const images: CardImage[] = [];
@@ -243,20 +248,22 @@ function webPartsOf(text: string, fetchable: Fetchable): { images: CardImage[]; 
   let previewed: string | null = null;
   markdown.walkTokens(markdown.lexer(text), (token) => {
     if (token.type === "image") {
-      const address = decodeHTMLStrict(token.href);
-      const url = webAddress(address);
-      if (url && fetchable(address, url)) images.push({ url, alt: decodeHTMLStrict(token.text) });
+      const url = webAddressOf(token.href);
+      if (url && fetchable.picture(url)) images.push({ url, alt: decodeHTMLStrict(token.text) });
     } else if (token.type === "link") {
-      // As `markdownHtml` reads them: an autolink's address is its text, with no character references,
-      // though a `www.` one's link has "http://" in front.
-      const address = token.autolink ? token.text : decodeHTMLStrict(token.href);
-      const url = webAddress(token.autolink ? token.href : address);
+      const url = webAddressOf(token.href, token.autolink);
       if (!url) return;
       links.push(url);
-      if (previewed === null && fetchable(address, url)) previewed = url;
+      if (previewed === null && fetchable.preview(url)) previewed = url;
     }
   });
   return { images, links, previewed };
+}
+
+/** Where a Markdown link or picture to `href` goes, as `markdownHtml` reads it, when that's a web address. */
+function webAddressOf(href: string, autolink = false): string | null {
+  // An autolink's address is its text, with no character references, though a `www.` one's link has "http://" in front.
+  return webAddress(autolink ? href : decodeHTMLStrict(href));
 }
 
 /**

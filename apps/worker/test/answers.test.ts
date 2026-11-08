@@ -648,17 +648,37 @@ describe("@ember's answer", () => {
     expect(answerOf(text)).toMatchObject({ cards: [], firstLink: null });
   });
 
-  it("takes an address people wrote as they wrote it, or as a link to it goes, but nothing added to it", () => {
+  /** Where the pictures in the card of the answer `text` makes go, and its link for a preview, when people wrote `written`. */
+  const fetchedFor = (text: string, written: readonly string[], ownHosts: readonly string[] = []) => {
+    const { cards, firstLink } = answerOf(text, [], written, ownHosts);
+    return [...cards.flatMap(({ parts }) => parts.map((part) => (part.kind === "image" ? part.image.url : ""))), firstLink];
+  };
+
+  it("takes an address people wrote as their message links to it, however the answer writes it, but nothing added to it", () => {
     const written = ["Our site is https://example.com/, the forum www.example.com/forum, the logo https://example.com/logo.png and the shop https://shop.example/a&b"];
-    const shown = (text: string) => {
-      const { cards, firstLink } = answerOf(text, [], written);
-      return [...cards.flatMap(({ parts }) => parts.map((part) => (part.kind === "image" ? part.image.url : ""))), firstLink];
-    };
+    const shown = (text: string) => fetchedFor(text, written);
     expect(shown("[It](https://example.com)")).toEqual(["https://example.com/"]);
     expect(shown("See www.example.com/forum")).toEqual(["http://www.example.com/forum"]);
     expect(shown("[The shop](https://shop.example/a&amp;b)")).toEqual(["https://shop.example/a&b"]);
     expect(shown("![Logo](https://example.com/logo.png) [It](https://example.com/logo.png?d=bGF1bmNo)")).toEqual(["https://example.com/logo.png", null]);
     expect(shown("![Logo](https://example.com/logo.png?d=bGF1bmNo) [It](https://other.example/logo.png)")).toEqual([null]);
+  });
+
+  it("takes only whole addresses, as the start of one people wrote can be another site's", () => {
+    const written = ["Our logo is at https://example.com.au/logo.png, and the guide at https://docs.example.com/guide?page=2."];
+    expect(fetchedFor("![Logo](https://example.com) [The guide](https://docs.example.com/guide)", written)).toEqual([null]);
+    expect(fetchedFor("![Logo](https://example.com.au/logo) [The docs](https://docs.example.co)", written)).toEqual([null]);
+    expect(fetchedFor("![Logo](https://example.com.au/logo.png) [The guide](https://docs.example.com/guide?page=2).", written)).toEqual([
+      "https://example.com.au/logo.png",
+      "https://docs.example.com/guide?page=2",
+    ]);
+  });
+
+  it("has the first link people wrote that isn't to Ember's own pages for a preview", () => {
+    const written = ["We're at https://ember.test/rooms/1 and http://localhost:8787/rooms/1, and the guide is at https://example.com/guide"];
+    const text = "See [the room](https://ember.test/rooms/1), [here](http://localhost:8787/rooms/1) or [the guide](https://example.com/guide).";
+    expect(fetchedFor(text, written, ["ember.test", "localhost:8787"])).toEqual(["https://example.com/guide"]);
+    expect(fetchedFor(text, written)).toEqual(["https://ember.test/rooms/1"]);
   });
 
   it("is cut, a line at a time, to what a message holds", () => {

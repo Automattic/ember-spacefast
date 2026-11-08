@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoLink, hasLinkable, TagIndex } from "./autolink";
+import { autoLink, hasLinkable, linkedUrls, TagIndex } from "./autolink";
 import { parseHtml } from "./parse";
 
 const link = (html: string) => autoLink(parseHtml, html);
@@ -13,6 +13,19 @@ describe("Addresses a message shows as links", () => {
     for (const text of linkable) expect(hasLinkable(text), text).toBe(true);
     for (const text of unlinkable) expect(hasLinkable(text), text).toBe(false);
     for (const text of [...linkable, ...unlinkable]) expect(link(`<p>${text}</p>`).includes("<a "), text).toBe(hasLinkable(text));
+  });
+
+  it("finds where those links go, but for email addresses", () => {
+    for (const text of [...linkable, ...unlinkable]) {
+      const hrefs = Array.from(link(`<p>${text}</p>`).matchAll(/href="([^"]*)"/g), ([, href]) => href!).filter((href) => !href.startsWith("mailto:"));
+      expect(linkedUrls(text), text).toEqual(hrefs);
+    }
+    expect(linkedUrls('Ours: https://example.com.au/logo.png, www.example.com/forum! (https://en.wikipedia.org/wiki/Fire_(element)) https://example.com/"x"')).toEqual([
+      "https://example.com.au/logo.png",
+      "http://www.example.com/forum",
+      "https://en.wikipedia.org/wiki/Fire_(element)",
+      "https://example.com/",
+    ]);
   });
 });
 
