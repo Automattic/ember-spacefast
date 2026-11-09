@@ -93,13 +93,17 @@ describe("Rich text, safely", () => {
     expect(button).toHaveClass("text-positive", "motion-safe:animate-success");
   });
 
-  it("copies a code block containing a link as plain text", async () => {
+  it("copies a code block containing a link as plain text, its line breaks kept", async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     const content = show("<pre>See https://example.com\n  next line</pre>");
     expect(within(content).getByRole("link")).toHaveTextContent("https://example.com");
     await user.click(within(content).getByRole("button", { name: "Copy code" }));
     expect(writeText).toHaveBeenCalledWith("See https://example.com\n  next line");
+    const broken = show("<pre>curl https://example.com<br>echo done</pre>");
+    expect(within(broken).getByRole("link")).toHaveTextContent("https://example.com");
+    await user.click(within(broken).getByRole("button", { name: "Copy code" }));
+    expect(writeText).toHaveBeenLastCalledWith("curl https://example.com\necho done");
   });
 
   it("leaves the button unchanged when the clipboard refuses", async () => {

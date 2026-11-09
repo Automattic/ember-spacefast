@@ -544,7 +544,7 @@
       border-radius: 0.5ch;
     }
     .code-block pre {
-      @apply min-h-11 pe-10 touch:min-h-14 touch:pe-14;
+      @apply min-h-11 pr-10 touch:min-h-14 touch:pr-14;
     }
 
     blockquote {

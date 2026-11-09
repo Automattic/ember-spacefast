@@ -51,6 +51,13 @@ function codeOf(block: DisplayElement): string | null {
   return code;
 }
 
+/** `node`'s text as it reads, its `<br>`s as newlines, which `textContent` would drop. */
+function textOf(node: Node): string {
+  if (node.nodeName === "BR") return "\n";
+  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
+  return Array.from(node.childNodes, textOf).join("");
+}
+
 /** `token` as React draws it, with what `marks` matches in its text marked. */
 const tokenNode = (token: Token, marks: RegExp | null): ReactNode =>
   typeof token === "string"
@@ -77,7 +84,7 @@ export function CodeBlock({ block, children, ...props }: ComponentProps<"pre"> &
       type="button"
       aria-label="Copy code"
       className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-[6px] bg-background text-muted-foreground opacity-0 hover:bg-hover group-hover/code:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:size-11 touch:opacity-100 [&_svg]:size-4"
-      onClick={(event) => void copyWithSuccess(event.currentTarget, code ?? pre.current?.textContent ?? "")}
+      onClick={(event) => void copyWithSuccess(event.currentTarget, code ?? (pre.current ? textOf(pre.current) : ""))}
     >
       <Copy />
     </button>,
