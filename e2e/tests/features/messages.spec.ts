@@ -455,6 +455,34 @@ test.describe("Message action bar", () => {
     await expect(actions).toBeHidden();
   });
 
+  test("sits on the edge of a follow-up's code block rather than over its Copy code", async ({ members, participant }) => {
+    const grace = await participant("Grace");
+    await grace.say("Deploy it with this");
+    await grace.post(`<pre>${"wrangler deploy --env production --minify ".repeat(4)}</pre>`);
+    const ada = await members.signIn("Ada", { context: { viewport: { width: 1311, height: 900 } } });
+    const message = ada.message("wrangler deploy");
+    const block = message.locator(".code-block");
+    const copy = block.getByRole("button", { name: "Copy code" });
+    await ada.page.getByRole("heading", { level: 1 }).hover();
+    await block.hover();
+    await expect(bar(message)).toBeVisible();
+    await expect(copy).toHaveCSS("opacity", "1");
+
+    // Copy code is in the bar's span, so the bar rises from 17px above the row to the block's top edge.
+    const bounds = await box(bar(message));
+    const button = await box(copy);
+    expect(button.x < bounds.x + bounds.width && button.x + button.width > bounds.x).toBe(true);
+    expect(bounds.y + bounds.height).toBeCloseTo((await box(block)).y, 0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(button.y);
+    const options = await box(message.getByRole("button", { name: "Message options" }));
+    expect(options.y >= bounds.y && options.y + options.height <= bounds.y + bounds.height).toBe(true);
+
+    // The pointer can still cross to the bar.
+    await ada.page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, { steps: 8 });
+    await ada.page.waitForTimeout(250);
+    await expect(bar(message)).toBeVisible();
+  });
+
   test("keeps the bar on its row as a message above grows, as when someone reacts to it", async ({ members, participant }) => {
     const grace = await participant("Grace");
     const above = await grace.say("React to me");

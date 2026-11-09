@@ -79,6 +79,9 @@ const tokenNode = (token: Token, marks: RegExp | null): ReactNode =>
     ? marked(token, marks)
     : createElement("span", { className: token.className }, ...token.children.map((child) => tokenNode(child, marks)));
 
+/** A code block's Copy code, which the bar over a message rises above rather than cover. */
+export const COPY_CODE = "[data-copy-code]";
+
 /**
  * A message's code block, highlighted once highlight.js has loaded, as Campfire's `MessageFormatter`
  * highlights one (app/javascript/models/message_formatter.js): only when it holds nothing but text, so
@@ -98,6 +101,7 @@ export function CodeBlock({ block, children, ...props }: ComponentProps<"pre"> &
     <button
       type="button"
       aria-label="Copy code"
+      data-copy-code
       className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-[6px] bg-background text-muted-foreground opacity-0 hover:bg-hover group-hover/code:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:size-11 touch:opacity-100 [&_svg]:size-4"
       onClick={(event) => void copyWithSuccess(event.currentTarget, code ?? (pre.current ? textOf(pre.current) : ""))}
     >
