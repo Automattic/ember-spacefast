@@ -34,6 +34,10 @@ import {
   type EmailLinkSignUp,
   type EmailSettings,
   type Favorites,
+  type HuddlesForgotten,
+  type HuddlesSaved,
+  type HuddlesSettings,
+  type HuddlesSetup,
   type InvitationOutcome,
   type Invited,
   type Involvement,
@@ -530,6 +534,20 @@ export async function saveTurnstileKeys(keys: TurnstileKeysChange): Promise<Turn
 /** Takes away the Turnstile widget's keys Ember was given, answering where its keys come from then. Fails with a 403 ApiError for anyone but an administrator. */
 export async function forgetTurnstileKeys(): Promise<TurnstileSettings["turnstile"]> {
   return (await request<TurnstileSettings>("/api/account/turnstile_keys", { method: "DELETE" })).turnstile;
+}
+
+/**
+ * Gives Ember a Realtime SFU app's ID and secret to run huddles through, answering huddles as they are
+ * then. Fails with a 422 ApiError on the field Ember or Cloudflare refuses, a 502 one when Ember couldn't
+ * ask Cloudflare, and a 403 one for anyone but an administrator.
+ */
+export async function saveHuddles(setup: HuddlesSetup): Promise<HuddlesSettings> {
+  return (await request<HuddlesSaved>("/api/account/huddles", { method: "PUT", body: JSON.stringify(setup) })).huddles;
+}
+
+/** Turns huddles off, forgetting the SFU app's keys Ember was given. Fails with a 403 ApiError for anyone but an administrator. */
+export async function forgetHuddles(): Promise<null> {
+  return (await request<HuddlesForgotten>("/api/account/huddles", { method: "DELETE" })).huddles;
 }
 
 /**

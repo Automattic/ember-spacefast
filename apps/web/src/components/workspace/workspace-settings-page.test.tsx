@@ -25,6 +25,7 @@ import {
   type WorkspaceSettings,
 } from "@ember/protocol";
 import { ASSISTANT_MODELS, TOP_LEVELS, modelName, type AssistantChanges, type AssistantSettings, type NewAssistantModel } from "@ember/protocol/assistant";
+import type { HuddlesSetup } from "@ember/protocol/huddles";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
 import { AccountContext } from "@/hooks/use-account";
@@ -55,6 +56,7 @@ const asAdministrator: WorkspaceSettings = {
   memberfulWebhooks: false,
   turnstile: null,
   assistant: null,
+  huddles: null,
   cloudflareAccountId: null,
   email: { provider: "cloudflare", resendKey: null, cloudflare: true, from: null },
   invitations: [],
@@ -118,7 +120,7 @@ const EMBER_FLAME = "/users/ember.abc/avatar?v=20261101120000";
 
 /** Answers the page's requests as the server would for `settings`, or as `answers` says. */
 function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, removed, ordered, logoSaved }: Answers = {}) {
-  let { account, emailDomains: keptDomains, email, turnstile, assistant } = settings;
+  let { account, emailDomains: keptDomains, email, turnstile, assistant, huddles } = settings;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = `${init?.method ?? "GET"} ${String(input)}`;
     const person = request.match(/^PATCH \/api\/account\/users\/(.+)$/);
@@ -130,7 +132,7 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
     if (removing) return removed ? removed() : Response.json({ user: { ...everyone.find((user) => user.id === removing[1]), status: "deactivated" } });
     switch (request) {
       case "GET /api/account":
-        return Response.json({ ...settings, account, emailDomains: keptDomains, email, turnstile, assistant });
+        return Response.json({ ...settings, account, emailDomains: keptDomains, email, turnstile, assistant, huddles });
       case "PATCH /api/account": {
         if (saved) return saved();
         const {
@@ -216,6 +218,12 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
       case "DELETE /api/account/assistant":
         assistant = null;
         return Response.json({ assistant });
+      case "PUT /api/account/huddles":
+        huddles = { appId: (JSON.parse(String(init?.body)) as HuddlesSetup).appId };
+        return Response.json({ huddles });
+      case "DELETE /api/account/huddles":
+        huddles = null;
+        return Response.json({ huddles });
       case "POST /api/invitations": {
         const { emailAddresses } = JSON.parse(String(init?.body)) as { emailAddresses: string[] };
         const outcomes = emailAddresses.map((emailAddress) => ({ emailAddress, invitation: invitationTo(emailAddress), link: `https://ember.test/join/invitation#token=${emailAddress}` }));
@@ -1811,6 +1819,70 @@ describe("Ember AI", () => {
     showPage(asLinus);
     expect(await screen.findByText("Community admins manage the AI assistant.")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Ember AI" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Set up huddles", () => {
+  showingSection("channel-settings");
+  /** A Realtime SFU app's keys, as an administrator copies them from Cloudflare's dashboard. */
+  const APP = { appId: "2a95132c15732412d22c1476fa83f27a", appSecret: "66bcf64aa8907b9f9d90ac17746a77ce394c393b92b3916633dc02846e608ad4" };
+  const huddlesCard = () => within(screen.getByRole("region", { name: "Room order and permissions" })).findByRole("region", { name: "Huddles" });
+  const following = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("gives administrators the Huddles card under the rooms' order, whose switch sets up huddles with an SFU app's keys", async () => {
+    const { user } = showPage();
+    const card = await huddlesCard();
+    expect(following(screen.getByRole("list", { name: "Room order" }), card)).toBe(true);
+    expect(card).toHaveTextContent("Huddles let people in a room talk to each other.");
+    const huddlesSwitch = within(card).getByRole("switch", { name: "Huddles" });
+    expect(huddlesSwitch).not.toBeChecked();
+
+    await user.click(huddlesSwitch);
+    const setup = await screen.findByRole("dialog", { name: "Set up huddles" });
+    expect(within(setup).getByRole("link", { name: "Open Serverless SFU in the Cloudflare dashboard" })).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/realtime/sfu");
+    await user.type(within(setup).getByRole("textbox", { name: "App ID" }), APP.appId);
+    await user.type(within(setup).getByRole("textbox", { name: "App Secret" }), APP.appSecret);
+    await user.click(within(setup).getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(card).toHaveTextContent(`Huddles run through the Realtime SFU app ${APP.appId} in your Cloudflare account.`);
+    expect(huddlesSwitch).toBeChecked();
+    expect(fetch).toHaveBeenCalledWith("/api/account/huddles", expect.objectContaining({ method: "PUT", body: JSON.stringify(APP) }));
+
+    await user.click(within(card).getByRole("button", { name: "Change keys" }));
+    expect(await screen.findByRole("textbox", { name: "App ID" })).toHaveValue(APP.appId);
+    expect(screen.getByText("Ember has an app's keys already. Give another app's to run huddles through it instead.")).toBeInTheDocument();
+  });
+
+  it("opens Cloudflare's dashboard at the account Ember is deployed to when the switch sets up huddles", async () => {
+    serve({ ...asAdministrator, cloudflareAccountId: "0123456789abcdef0123456789abcdef" });
+    const { user } = showPage();
+    await user.click(within(await huddlesCard()).getByRole("switch", { name: "Huddles" }));
+    expect(await screen.findByRole("link", { name: "Open Serverless SFU in the Cloudflare dashboard" })).toHaveAttribute(
+      "href",
+      "https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/realtime/sfu",
+    );
+  });
+
+  it("turns huddles off once the administrator confirms", async () => {
+    serve({ ...asAdministrator, huddles: { appId: APP.appId } });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { user } = showPage();
+    const card = await huddlesCard();
+    expect(card).toHaveTextContent(`Huddles run through the Realtime SFU app ${APP.appId} in your Cloudflare account.`);
+    await user.click(within(card).getByRole("switch", { name: "Huddles" }));
+    await waitFor(() => expect(within(card).queryByRole("button", { name: "Change keys" })).not.toBeInTheDocument());
+    expect(within(card).getByRole("switch", { name: "Huddles" })).not.toBeChecked();
+    expect(within(card).getByRole("switch", { name: "Huddles" })).toBeEnabled();
+    expect(card).toHaveTextContent("Huddles let people in a room talk to each other.");
+    expect(fetch).toHaveBeenCalledWith("/api/account/huddles", expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("shows members no Huddles card", async () => {
+    serve(asMember);
+    showPage(asLinus);
+    expect(await screen.findByText("Community admins manage room order and permissions.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Huddles" })).not.toBeInTheDocument();
   });
 });
 

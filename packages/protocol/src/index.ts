@@ -5,6 +5,7 @@
 import type { AssistantSettings, YourAssistant } from "./assistant.ts";
 import type { Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
+import type { HuddlesSettings } from "./huddles.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
 import { MAX_PUSH_ENDPOINT_LENGTH } from "./push.ts";
 import { ROOM_ICON_NAMES } from "./room-icons.ts";
@@ -68,6 +69,8 @@ export type {
   YourAssistantChanged,
   YourAssistantChanges,
 } from "./assistant.ts";
+// And the rest of huddles.ts, from "@ember/protocol/huddles", which only the Huddles card, its setup and the Worker's huddles use.
+export type { HuddlesField, HuddlesForgotten, HuddlesSaved, HuddlesSettings, HuddlesSetup } from "./huddles.ts";
 export {
   FILE_NAME_NOT_KEPT,
   FILE_TOO_LARGE,
@@ -495,6 +498,8 @@ export interface WorkspaceSettings {
   addresses: EmberAddresses;
   /** Ember AI as the AI assistant tab shows it, for administrators while it's on, and null otherwise. */
   assistant: AssistantSettings | null;
+  /** Huddles as Rooms and permissions' Huddles card shows them, for administrators while they're on, and null otherwise. */
+  huddles: HuddlesSettings | null;
   /**
    * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for
    * administrators once the deploy has given it to the Worker, and null otherwise.

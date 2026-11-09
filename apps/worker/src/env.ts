@@ -109,6 +109,12 @@ export interface Env {
    */
   AI_GATEWAY_URL?: string;
   /**
+   * Where the Realtime SFU's API is, which huddles run through, for the browser tests' stand-in, which only
+   * a loopback address can be: `http://127.0.0.1:8794` has Ember ask
+   * `http://127.0.0.1:8794/v1/apps/<id>/...` (huddles/sfu.ts).
+   */
+  REALTIME_SFU_URL?: string;
+  /**
    * The public half of the P-256 key pair that signs push notifications (VAPID): the point, compressed
    * or not, in URL-safe Base64. `pnpm vapid:keys` makes a pair. Without both halves, or with a pair that
    * doesn't match, push notifications are off. Browsers subscribe with it, so changing it orphans every
