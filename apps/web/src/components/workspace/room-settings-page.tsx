@@ -46,7 +46,9 @@ interface Props {
  * A room's settings. Whoever can change the room renames it, and with the Everyone switch, which swaps
  * one form for the other in place, opens it to everyone or makes it private to the people whose switches
  * are on; under the form, they can delete it. Leaving with changes asks first. Everyone else sees its
- * name and people, in the form for the room's kind, and can leave a private room with someone else in it.
+ * name and people, in the form for the room's kind, and can leave a private room. The server refuses
+ * the last of its people who could open it, saying why: the page can't tell who they are, as it lists
+ * active people, bots among them, and none who are suspended.
  */
 export function RoomSettingsPage({ roomId, access, me, askForRoom, onMissing, onFailed }: Props) {
   const [settings, setSettings] = useState<RoomSettings | null>(null);
@@ -178,7 +180,7 @@ export function RoomSettingsPage({ roomId, access, me, askForRoom, onMissing, on
           />
         )}
       </Panel>
-      {settings && !settings.canAdminister && settings.room.kind === "closed" && settings.people.some((person) => person.member && person.id !== me.id) && (
+      {settings && !settings.canAdminister && settings.room.kind === "closed" && (
         <Panel>
           <Button type="button" variant="outline" disabled={busy} onClick={() => goOnceConfirmed(CONFIRM_LEAVE, leaveRoom)} className="max-w-full touch:h-11">
             <LogOut className="size-[1.3em] shrink-0" />

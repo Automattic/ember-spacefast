@@ -468,7 +468,7 @@ describe("Leave a private room", () => {
   const confirmed = (answer: boolean) => vi.spyOn(window, "confirm").mockReturnValue(answer);
   const asMember: RoomSettings = { ...closedSettings, canAdminister: false };
 
-  it("offers Leave to someone in a private room they can't change, with someone else in it, in its own panel", async () => {
+  it("offers Leave to someone in a private room they can't change, in its own panel", async () => {
     serve(asMember);
     showPage(leads);
     const button = await leaveButton();
@@ -526,11 +526,10 @@ describe("Leave a private room", () => {
     expect(screen.queryByRole("button", { name: /^Leave/ })).not.toBeInTheDocument();
   });
 
-  it("offers no Leave to the only one in a private room", async () => {
+  it("offers Leave when it lists nobody else in the room, leaving it to the server to count someone suspended", async () => {
     serve({ ...asMember, people: asMember.people.map((person) => ({ ...person, member: person.id === ada.id })) });
     showPage(leads);
-    await screen.findByRole("heading", { level: 2, name: "Leads" });
-    expect(screen.queryByRole("button", { name: /^Leave/ })).not.toBeInTheDocument();
+    expect(await leaveButton()).toBeEnabled();
   });
 });
 
