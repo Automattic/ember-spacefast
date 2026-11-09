@@ -2,8 +2,10 @@ import { HISTORY_PAGE_SIZE, threadPath, type BotAnswer, type BotSettings, type M
 import { botMessagesPath } from "@ember/protocol/bots";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MESSAGE_GONE } from "../src/chat-room";
+import type { Env } from "../src/env";
 import {
   api,
   connect,
@@ -69,6 +71,9 @@ async function openThread(client: Socket, parentId: string) {
 
 /** The ids of `messages`, in order. */
 const idsOf = (messages: Message[]) => messages.map(({ id }) => id);
+
+/** The keys of the files R2 keeps. */
+const storedFiles = async () => (await (env as unknown as Env).FILES!.list({ prefix: "files/" })).objects.map(({ key }) => key);
 
 /** How a message mentioning `person` is written. */
 const mention = (person: Pick<User, "id">) => `<action-text-attachment sgid="${mentionSgid(person.id)}" content-type="${MENTION_CONTENT_TYPE}"></action-text-attachment>`;
@@ -509,7 +514,7 @@ describe("Bots in threads", () => {
     expect(idsOf((await openThread(client, parent.id)).messages)).toEqual([message.id]);
   });
 
-  it("answers 404 to a bot posting to a thread the room doesn't have, or to a reply, which has no thread, and posts nothing", async () => {
+  it("answers 404 to a bot posting to a thread the room doesn't have, or to a reply, which has no thread, posting nothing and keeping none of its file", async () => {
     const { ada, general } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
     const client = await connect(general, ada);
@@ -521,6 +526,7 @@ describe("Bots in threads", () => {
       const form = new FormData();
       form.set("attachment", new File([recordedImage("moon-thumb.jpg")], "moon.jpg", { type: "image/jpeg" }));
       expect((await api(botMessagesPath(general, bot.key, threadId), { method: "POST", body: form })).status).toBe(404);
+      expect(await storedFiles()).toEqual([]);
     }
     await settle(client);
     expect(await roomSql(general, "SELECT id FROM messages WHERE room_id = ? AND id NOT IN (?, ?)", general, parent.id, asked.id)).toEqual([]);
