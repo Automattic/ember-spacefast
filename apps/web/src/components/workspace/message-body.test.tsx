@@ -75,11 +75,46 @@ describe("Rich text, safely", () => {
     expect(content.querySelector(".hljs-keyword")).toHaveTextContent("SELECT");
   });
 
-  it("highlights a code block's lines, read from its line breaks", async () => {
-    const content = show('<pre data-language="javascript">const a = 1;<br>const b = 2;</pre>');
+  it("copies a highlighted code block's lines without the surrounding prose or another block", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const content = show('<p>Run this</p><pre data-language="javascript">const a = 1;<br>const b = 2;</pre><pre>another block</pre>');
     await highlighted(content);
     expect(content.querySelector("pre")!.textContent).toBe("const a = 1;\nconst b = 2;");
     expect(content.querySelectorAll(".hljs-keyword")).toHaveLength(2);
+    const button = within(content).getAllByRole("button", { name: "Copy code" })[0]!;
+    expect(content.querySelector("pre")).toHaveAttribute("data-language", "javascript");
+    expect(content.querySelector("pre button")).toBeNull();
+    await user.click(button);
+    expect(writeText).toHaveBeenCalledWith("const a = 1;\nconst b = 2;");
+    expect(button).toHaveClass("text-positive", "motion-safe:animate-success");
+    await user.click(button);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(button).toHaveClass("text-positive", "motion-safe:animate-success");
+  });
+
+  it("copies a code block containing a link as plain text, its line breaks kept", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const content = show("<pre>See https://example.com\n  next line</pre>");
+    expect(within(content).getByRole("link")).toHaveTextContent("https://example.com");
+    await user.click(within(content).getByRole("button", { name: "Copy code" }));
+    expect(writeText).toHaveBeenCalledWith("See https://example.com\n  next line");
+    const broken = show("<pre>curl https://example.com<br>echo done</pre>");
+    expect(within(broken).getByRole("link")).toHaveTextContent("https://example.com");
+    await user.click(within(broken).getByRole("button", { name: "Copy code" }));
+    expect(writeText).toHaveBeenLastCalledWith("curl https://example.com\necho done");
+  });
+
+  it("leaves the button unchanged when the clipboard refuses", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Denied"));
+    show("<pre>puts 1</pre>");
+    const button = screen.getByRole("button", { name: "Copy code" });
+    const classes = button.className;
+    await user.click(button);
+    expect(writeText).toHaveBeenCalledWith("puts 1");
+    expect(button.className).toBe(classes);
   });
 
   it("highlights neither inline code nor a code block with a link in it", async () => {
@@ -264,11 +299,15 @@ describe("Search results mark what a search matched", () => {
   });
 
   it("keeps the words it matched in a code block marked once the code is highlighted", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     const content = showMarked('<pre data-language="javascript">const deploy = "deploy now";</pre>', ["deploy"]);
     await highlighted(content);
     expect([...content.querySelectorAll("mark[data-search-match]")].map((mark) => mark.textContent)).toEqual(["deploy", "deploy"]);
     expect(content.querySelector(".hljs-string mark")).toHaveTextContent("deploy");
     expect(content.textContent).toBe('const deploy = "deploy now";');
+    await user.click(within(content).getByRole("button", { name: "Copy code" }));
+    expect(writeText).toHaveBeenCalledWith('const deploy = "deploy now";');
   });
 
   it("marks nothing when the search had no words, nor Lexxy's highlights as matches", () => {

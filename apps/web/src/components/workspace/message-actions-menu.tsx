@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { mentionedPerson, PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { permalinkOf } from "@/hooks/use-route";
+import { copyWithSuccess } from "@/lib/clipboard";
 import { replyQuote } from "@/lib/messages";
 import { canShare } from "@/lib/share";
 import { cn } from "@/lib/utils";
@@ -48,9 +49,6 @@ const PANEL = "rounded-[11px] border border-message-border bg-background shadow-
 /** An item of More actions: its icon, as the bar draws it, then its name, the panel's whole width. */
 const ITEM =
   "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[6px] px-2 text-left text-sm whitespace-nowrap text-message-ink transition-colors duration-150 hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:h-11 [&_svg]:size-4 [&_svg]:shrink-0";
-
-/** Campfire's `btn--success` (buttons.css) in Ember's colors: Copy link turns green as it copies. */
-const COPIED = ["text-positive", "motion-safe:animate-success"];
 
 interface Props {
   message: Message;
@@ -492,7 +490,7 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
               </QuoteButton>
             )}
             {text !== null && (
-              <button type="button" className={ITEM} onClick={(event) => void copy(event, text)}>
+              <button type="button" className={ITEM} onClick={(event) => void copyWithSuccess(event.currentTarget, text)}>
                 <Copy />
                 Copy text
               </button>
@@ -602,25 +600,9 @@ function QuoteButton({ message, nodes, onQuote, onClick, ...props }: QuoteButton
   return <button type="button" onClick={quote} {...props} />;
 }
 
-/**
- * Copies `text`, then turns the button clicked green and plays its success animation from the start. It
- * stays green until it's clicked again, and a clipboard that refuses leaves it as it was.
- */
-async function copy({ currentTarget: button }: MouseEvent<HTMLButtonElement>, text: string) {
-  button.classList.remove(...COPIED);
-  // Reading the layout ends the last run of the animation, so adding the classes starts it again.
-  void button.offsetWidth;
-  try {
-    await navigator.clipboard.writeText(text);
-    button.classList.add(...COPIED);
-  } catch {
-    // Nothing to show.
-  }
-}
-
 /** Copies the message's address, as Copy link does. Pages carry only the path, made absolute against the page. */
 function copyLink(event: MouseEvent<HTMLButtonElement>, message: Message) {
-  return copy(event, new URL(permalinkOf(message), document.baseURI).href);
+  return copyWithSuccess(event.currentTarget, new URL(permalinkOf(message), document.baseURI).href);
 }
 
 interface Placed {

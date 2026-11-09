@@ -1,5 +1,7 @@
-import { createElement, useContext, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { createElement, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { DisplayElement } from "@ember/richtext/dom";
+import { Copy } from "@/components/icons/iconoir";
+import { copyWithSuccess } from "@/lib/clipboard";
 import type { Token } from "@/lib/highlight";
 import { marked, SearchMarks } from "./search-marks";
 
@@ -49,6 +51,13 @@ function codeOf(block: DisplayElement): string | null {
   return code;
 }
 
+/** `node`'s text as it reads, its `<br>`s as newlines, which `textContent` would drop. */
+function textOf(node: Node): string {
+  if (node.nodeName === "BR") return "\n";
+  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
+  return Array.from(node.childNodes, textOf).join("");
+}
+
 /** `token` as React draws it, with what `marks` matches in its text marked. */
 const tokenNode = (token: Token, marks: RegExp | null): ReactNode =>
   typeof token === "string"
@@ -61,10 +70,23 @@ const tokenNode = (token: Token, marks: RegExp | null): ReactNode =>
  * not when an address in it is linked. What a search's results mark in it stays marked.
  */
 export function CodeBlock({ block, children, ...props }: ComponentProps<"pre"> & { block: DisplayElement }) {
+  const pre = useRef<HTMLPreElement>(null);
   const code = codeOf(block);
   const language = block.attrs["data-language"];
   const highlighter = useHighlighter(code !== null);
   const marks = useContext(SearchMarks);
   const tokens = useMemo(() => (highlighter && code !== null ? highlighter.highlight(code, language) : null), [highlighter, code, language]);
-  return createElement("pre", props, ...(tokens ? tokens.map((token) => tokenNode(token, marks)) : [children]));
+  return createElement(
+    "div",
+    { className: "code-block group/code relative" },
+    createElement("pre", { ...props, ref: pre }, ...(tokens ? tokens.map((token) => tokenNode(token, marks)) : [children])),
+    <button
+      type="button"
+      aria-label="Copy code"
+      className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-[6px] bg-background text-muted-foreground opacity-0 hover:bg-hover group-hover/code:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:size-11 touch:opacity-100 [&_svg]:size-4"
+      onClick={(event) => void copyWithSuccess(event.currentTarget, code ?? (pre.current ? textOf(pre.current) : ""))}
+    >
+      <Copy />
+    </button>,
+  );
 }

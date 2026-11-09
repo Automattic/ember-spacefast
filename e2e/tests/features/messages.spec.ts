@@ -722,6 +722,35 @@ test.describe("Quote a message", () => {
   });
 });
 
+test("copies a code block from its corner, keeping its line breaks", async ({ members, participant }) => {
+  const code = 'const greeting = "Hello";\nconsole.log(greeting);';
+  await (await participant("Grace")).post(`<p>Run this snippet</p><pre data-language="javascript">${code}</pre>`);
+  const ada = await members.signIn("Ada");
+  await ada.page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const block = ada.message("Run this snippet").locator(".code-block");
+  const copy = block.getByRole("button", { name: "Copy code" });
+  await ada.page.getByRole("heading", { level: 1 }).hover();
+  await expect(copy).toHaveCSS("opacity", "0");
+  await copy.focus();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await ada.composer().focus();
+  await block.hover();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await expect(block.locator(".hljs-keyword")).toHaveText("const");
+  const color = await copy.evaluate((button) => getComputedStyle(button).color);
+  await copy.click();
+  await expect.poll(() => ada.page.evaluate(() => navigator.clipboard.readText())).toBe(code);
+  await expect(copy).not.toHaveCSS("color", color);
+  await expect(copy).toHaveClass(/motion-safe:animate-success/);
+  await ada.composer().focus();
+  await ada.page.keyboard.press("ControlOrMeta+v");
+  await expect(ada.composer()).toContainText("console.log(greeting);");
+  await ada.page.setViewportSize(phone.viewport);
+  await ada.page.getByRole("heading", { level: 1 }).hover();
+  await expect(copy).toHaveCSS("opacity", "1");
+  await expect(copy).toHaveCSS("width", "44px");
+});
+
 test.describe("Copy a link to a message", () => {
   test("copies the message's address from More actions, keeping it open and turning Copy link green", async ({ members, participant, rooms, baseURL }) => {
     await (await participant("Grace")).say("Link to me");
