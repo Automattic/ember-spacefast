@@ -1,7 +1,7 @@
 import { toBase64url, urlsafeDecode64 } from "./encoding";
 
 // Secrets an administrator gives Ember to keep, a Resend API key, a Turnstile widget's secret key, the
-// Cloudflare API token Ember AI asks AI Gateway with and the secret of the Realtime SFU app calls run
+// Cloudflare API token Ember AI asks AI Gateway with and the secret of the Realtime SFU app huddles run
 // through, which the database holds sealed under SESSION_SECRET, so that a copy of the database alone
 // doesn't give them away: AES-GCM, under a 256-bit key HKDF derives from SESSION_SECRET for what the
 // secret is kept for, with a random nonce each time. Sealed, a secret is `v1.`, then its nonce and

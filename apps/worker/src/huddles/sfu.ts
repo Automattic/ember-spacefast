@@ -1,8 +1,8 @@
-import { APP_ID_UNKNOWN, APP_SECRET_UNKNOWN, CALLS_UNCHECKED, type CallsField, type CallsSetup } from "@ember/protocol/calls";
+import { APP_ID_UNKNOWN, APP_SECRET_UNKNOWN, HUDDLES_UNCHECKED, type HuddlesField, type HuddlesSetup } from "@ember/protocol/huddles";
 import type { Env } from "../env";
 import { isLoopback } from "../loopback";
 
-// Cloudflare's Realtime SFU, which calls run through, by its HTTPS API
+// Cloudflare's Realtime SFU, which huddles run through, by its HTTPS API
 // (https://developers.cloudflare.com/realtime/sfu/https-api/). A request names an SFU app by its ID and
 // carries the app's secret as its bearer token, so only the Worker asks, and the secret never leaves it.
 // What the SFU answers is logged by its status and error code alone.
@@ -15,7 +15,7 @@ const SFU_TIMEOUT_MS = 10_000;
 const MAX_LOGGED_CODE_LENGTH = 40;
 
 /** A Realtime SFU app's keys: its ID and its secret, as Cloudflare's dashboard shows them when the app is made. */
-export type SfuApp = CallsSetup;
+export type SfuApp = HuddlesSetup;
 
 /** Where the SFU's API is: the browser tests' stand-in, which `REALTIME_SFU_URL` names at a loopback address, or Cloudflare's own. */
 function sfuApiOf(env: Env): string {
@@ -37,7 +37,7 @@ function errorCodeOf(said: unknown): string | null {
  * app is there and that the secret is its own. Nobody connects to that session, so the SFU drops it by
  * itself.
  */
-export async function refusalOfApp(env: Env, app: SfuApp): Promise<{ error: string; field?: CallsField; status: number } | null> {
+export async function refusalOfApp(env: Env, app: SfuApp): Promise<{ error: string; field?: HuddlesField; status: number } | null> {
   let answer: Response;
   let said: unknown;
   try {
@@ -50,12 +50,12 @@ export async function refusalOfApp(env: Env, app: SfuApp): Promise<{ error: stri
     said = await answer.json().catch(() => null);
   } catch (error) {
     console.error("Asking the Realtime SFU to start a session failed:", error instanceof Error ? error.name : "unknown error");
-    return { error: CALLS_UNCHECKED, status: 502 };
+    return { error: HUDDLES_UNCHECKED, status: 502 };
   }
   if (answer.ok && isRecord(said) && typeof said.sessionId === "string") return null;
   const code = errorCodeOf(said);
   console.warn("The Realtime SFU didn't start a session:", answer.status, code);
   if (answer.status === 404 || code === "not_found") return { error: APP_ID_UNKNOWN, field: "appId", status: 422 };
   if (answer.status === 401 || answer.status === 403 || code === "unauthorized") return { error: APP_SECRET_UNKNOWN, field: "appSecret", status: 422 };
-  return { error: CALLS_UNCHECKED, status: 502 };
+  return { error: HUDDLES_UNCHECKED, status: 502 };
 }

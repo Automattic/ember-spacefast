@@ -109,9 +109,9 @@ export interface Env {
    */
   AI_GATEWAY_URL?: string;
   /**
-   * Where the Realtime SFU's API is, which calls run through, for the browser tests' stand-in, which only
+   * Where the Realtime SFU's API is, which huddles run through, for the browser tests' stand-in, which only
    * a loopback address can be: `http://127.0.0.1:8794` has Ember ask
-   * `http://127.0.0.1:8794/v1/apps/<id>/...` (calls/sfu.ts).
+   * `http://127.0.0.1:8794/v1/apps/<id>/...` (huddles/sfu.ts).
    */
   REALTIME_SFU_URL?: string;
   /**

@@ -4,11 +4,11 @@ import {
   APP_ID_UNKNOWN,
   APP_SECRET_REFUSED,
   APP_SECRET_UNKNOWN,
-  CALLS_FORBIDDEN,
-  CALLS_UNCHECKED,
-  type CallsForgotten,
-  type CallsSaved,
-} from "@ember/protocol/calls";
+  HUDDLES_FORBIDDEN,
+  HUDDLES_UNCHECKED,
+  type HuddlesForgotten,
+  type HuddlesSaved,
+} from "@ember/protocol/huddles";
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
@@ -32,9 +32,9 @@ async function setUp(): Promise<Session> {
 
 const as = (session?: Session | null): Record<string, string> => (session ? { Cookie: session.cookie } : {});
 
-/** Gives Ember an SFU app's keys as `session`, as Set up calls does, on a deployment whose bindings differ from this suite's by `changes`. */
+/** Gives Ember an SFU app's keys as `session`, as Set up huddles does, on a deployment whose bindings differ from this suite's by `changes`. */
 const giveKeys = (session: Session | null, app: unknown, changes: Partial<Env> = {}) =>
-  apiWith(changes, "/api/account/calls", { method: "PUT", headers: as(session), body: JSON.stringify(app) });
+  apiWith(changes, "/api/account/huddles", { method: "PUT", headers: as(session), body: JSON.stringify(app) });
 
 /** Gives Ember `app`'s keys as `administrator`, which has to work. */
 async function saveKeys(administrator: Session, app = APP): Promise<void> {
@@ -42,11 +42,11 @@ async function saveKeys(administrator: Session, app = APP): Promise<void> {
   expect(response.status, await response.clone().text()).toBe(200);
 }
 
-/** Turns calls off as `session`, as the Calls card's switch does. */
-const turnOff = (session: Session | null) => api("/api/account/calls", { method: "DELETE", headers: as(session) });
+/** Turns huddles off as `session`, as the Huddles card's switch does. */
+const turnOff = (session: Session | null) => api("/api/account/huddles", { method: "DELETE", headers: as(session) });
 
-/** Calls as the workspace's settings show them to `session`. */
-const callsSettings = async (session: Session) => ((await (await api("/api/account", { headers: as(session) })).json()) as WorkspaceSettings).calls;
+/** Huddles as the workspace's settings show them to `session`. */
+const huddlesSettings = async (session: Session) => ((await (await api("/api/account", { headers: as(session) })).json()) as WorkspaceSettings).huddles;
 
 /** The account's settings, as the database keeps them. */
 const storedSettings = async () => JSON.parse(((await workspaceSql("SELECT settings FROM accounts")) as Array<{ settings: string }>)[0]!.settings) as Record<string, unknown>;
@@ -76,39 +76,39 @@ function fakeSfu(answer: () => Response | Promise<Response> = started) {
 beforeEach(freshDeploy);
 afterEach(() => vi.restoreAllMocks());
 
-describe("Set up calls", () => {
+describe("Set up huddles", () => {
   it("keeps an SFU app's keys once Cloudflare has started a session with them, its secret sealed", async () => {
     const administrator = await setUp();
-    expect(await callsSettings(administrator)).toBeNull();
+    expect(await huddlesSettings(administrator)).toBeNull();
     const requests = fakeSfu();
     const response = await giveKeys(administrator, { appId: ` ${APP.appId} `, appSecret: `${APP.appSecret}\n` });
     expect(response.status, await response.clone().text()).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({ calls: { appId: APP.appId } } satisfies CallsSaved);
+    expect(await response.json()).toEqual({ huddles: { appId: APP.appId } } satisfies HuddlesSaved);
     expect(requests).toEqual([{ url: newSession(APP.appId), method: "POST", authorization: `Bearer ${APP.appSecret}`, body: "" }]);
 
     // The database holds the secret sealed, never as it was given.
-    const stored = (await storedSettings()).calls as { app_id: string; app_secret: string };
+    const stored = (await storedSettings()).huddles as { app_id: string; app_secret: string };
     expect(stored).toEqual({ app_id: APP.appId, app_secret: expect.stringMatching(/^v1\.[\w-]{16}\.[\w-]+$/) as unknown });
     expect(JSON.stringify(await workspaceSql("SELECT * FROM accounts"))).not.toContain(APP.appSecret);
-    expect(await callsSettings(administrator)).toEqual({ appId: APP.appId });
+    expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
     // As it does once the Workspace starts afresh.
     await evictDurableObject(workspaceStub());
-    expect(await callsSettings(administrator)).toEqual({ appId: APP.appId });
+    expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
 
     // Given again, it's sealed afresh.
     await saveKeys(administrator);
-    expect(((await storedSettings()).calls as typeof stored).app_secret).not.toBe(stored.app_secret);
+    expect(((await storedSettings()).huddles as typeof stored).app_secret).not.toBe(stored.app_secret);
   });
 
-  it("runs calls through another app once its keys are given", async () => {
+  it("runs huddles through another app once its keys are given", async () => {
     const administrator = await setUp();
     const requests = fakeSfu();
     await saveKeys(administrator);
     const response = await giveKeys(administrator, OTHER_APP);
-    expect(await response.json()).toEqual({ calls: { appId: OTHER_APP.appId } });
+    expect(await response.json()).toEqual({ huddles: { appId: OTHER_APP.appId } });
     expect(requests.at(-1)).toEqual({ url: newSession(OTHER_APP.appId), method: "POST", authorization: `Bearer ${OTHER_APP.appSecret}`, body: "" });
-    expect(await callsSettings(administrator)).toEqual({ appId: OTHER_APP.appId });
+    expect(await huddlesSettings(administrator)).toEqual({ appId: OTHER_APP.appId });
     expect(JSON.stringify(await storedSettings())).not.toContain(APP.appId);
   });
 
@@ -116,7 +116,7 @@ describe("Set up calls", () => {
     const administrator = await setUp();
     const unasked = fakeSfu();
     const refusals: Array<[unknown, string, string]> = [
-      [{ ...APP, appId: "my calls app" }, "appId", APP_ID_REFUSED],
+      [{ ...APP, appId: "my huddles app" }, "appId", APP_ID_REFUSED],
       [{ ...APP, appId: APP.appId.slice(1) }, "appId", APP_ID_REFUSED],
       [{ ...APP, appId: `${APP.appId.slice(0, 30)}/.` }, "appId", APP_ID_REFUSED],
       [{ ...APP, appId: APP.appSecret }, "appId", APP_ID_REFUSED],
@@ -136,7 +136,7 @@ describe("Set up calls", () => {
       expect(await response.json()).toEqual({ error, field });
     }
     expect(unasked).toEqual([]);
-    expect(await storedSettings()).not.toHaveProperty("calls");
+    expect(await storedSettings()).not.toHaveProperty("huddles");
   });
 
   it("says why Cloudflare didn't start a session, keeping no keys, and logs its status and error code but never a key", async () => {
@@ -150,13 +150,13 @@ describe("Set up calls", () => {
       [refused(401, "unauthorized", "The SFU App Secret was not accepted."), 422, { error: APP_SECRET_UNKNOWN, field: "appSecret" }],
       [() => new Response(null, { status: 403 }), 422, { error: APP_SECRET_UNKNOWN, field: "appSecret" }],
       [refused(400, "unauthorized"), 422, { error: APP_SECRET_UNKNOWN, field: "appSecret" }],
-      [refused(500, "internal_error"), 502, { error: CALLS_UNCHECKED }],
-      [refused(429, "rate_limited"), 502, { error: CALLS_UNCHECKED }],
+      [refused(500, "internal_error"), 502, { error: HUDDLES_UNCHECKED }],
+      [refused(429, "rate_limited"), 502, { error: HUDDLES_UNCHECKED }],
       // A session it doesn't name isn't one it started.
-      [() => new Response("<html>", { status: 201 }), 502, { error: CALLS_UNCHECKED }],
-      [() => Response.json({ sessionId: 7 }, { status: 201 }), 502, { error: CALLS_UNCHECKED }],
-      [() => new Response(null, { status: 302, headers: { Location: "https://example.com/" } }), 502, { error: CALLS_UNCHECKED }],
-      [() => Promise.reject(new TypeError("Network connection lost")), 502, { error: CALLS_UNCHECKED }],
+      [() => new Response("<html>", { status: 201 }), 502, { error: HUDDLES_UNCHECKED }],
+      [() => Response.json({ sessionId: 7 }, { status: 201 }), 502, { error: HUDDLES_UNCHECKED }],
+      [() => new Response(null, { status: 302, headers: { Location: "https://example.com/" } }), 502, { error: HUDDLES_UNCHECKED }],
+      [() => Promise.reject(new TypeError("Network connection lost")), 502, { error: HUDDLES_UNCHECKED }],
     ];
     for (const [answer, status, refusal] of refusals) {
       const requests = fakeSfu(answer);
@@ -167,8 +167,8 @@ describe("Set up calls", () => {
       expect(requests).toHaveLength(1);
       vi.mocked(fetch).mockRestore();
     }
-    expect(await storedSettings()).not.toHaveProperty("calls");
-    expect(await callsSettings(administrator)).toBeNull();
+    expect(await storedSettings()).not.toHaveProperty("huddles");
+    expect(await huddlesSettings(administrator)).toBeNull();
     expect(warned).toHaveBeenCalledWith("The Realtime SFU didn't start a session:", 404, "not_found");
     expect(warned).toHaveBeenCalledWith("The Realtime SFU didn't start a session:", 403, null);
     expect(logged).toHaveBeenCalledWith("Asking the Realtime SFU to start a session failed:", "TypeError");
@@ -177,7 +177,7 @@ describe("Set up calls", () => {
     expect(said).not.toContain(APP.appId);
   });
 
-  it("keeps the app calls run through when another's keys are refused", async () => {
+  it("keeps the app huddles run through when another's keys are refused", async () => {
     const administrator = await setUp();
     fakeSfu();
     await saveKeys(administrator);
@@ -185,59 +185,59 @@ describe("Set up calls", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     fakeSfu(() => Response.json({ errorCode: "unauthorized" }, { status: 401 }));
     expect((await giveKeys(administrator, OTHER_APP)).status).toBe(422);
-    expect(await callsSettings(administrator)).toEqual({ appId: APP.appId });
+    expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
   });
 
-  it("lets only administrators turn calls on or off, asking Cloudflare nothing for anyone else", async () => {
+  it("lets only administrators turn huddles on or off, asking Cloudflare nothing for anyone else", async () => {
     const administrator = await setUp();
     const member = await signIn("Grace");
     const requests = fakeSfu();
     const forbidden = await giveKeys(member, APP);
     expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toEqual({ error: CALLS_FORBIDDEN });
+    expect(await forbidden.json()).toEqual({ error: HUDDLES_FORBIDDEN });
     expect((await giveKeys(null, APP)).status).toBe(401);
     // Before anything they sent is read.
     expect((await giveKeys(member, { appId: "not an app" })).status).toBe(403);
     expect(requests).toEqual([]);
-    expect(await storedSettings()).not.toHaveProperty("calls");
+    expect(await storedSettings()).not.toHaveProperty("huddles");
 
     await saveKeys(administrator);
     const refused = await turnOff(member);
     expect(refused.status).toBe(403);
-    expect(await refused.json()).toEqual({ error: CALLS_FORBIDDEN });
+    expect(await refused.json()).toEqual({ error: HUDDLES_FORBIDDEN });
     expect((await turnOff(null)).status).toBe(401);
-    expect(await callsSettings(administrator)).toEqual({ appId: APP.appId });
+    expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
     // Which app they run through is the administrators' to see.
-    expect(await callsSettings(member)).toBeNull();
+    expect(await huddlesSettings(member)).toBeNull();
   });
 
-  it("turns calls off, forgetting the app's keys", async () => {
+  it("turns huddles off, forgetting the app's keys", async () => {
     const administrator = await setUp();
     const requests = fakeSfu();
     await saveKeys(administrator);
     const response = await turnOff(administrator);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({ calls: null } satisfies CallsForgotten);
-    expect((await storedSettings()).calls).toBeNull();
-    expect(await callsSettings(administrator)).toBeNull();
+    expect(await response.json()).toEqual({ huddles: null } satisfies HuddlesForgotten);
+    expect((await storedSettings()).huddles).toBeNull();
+    expect(await huddlesSettings(administrator)).toBeNull();
     await evictDurableObject(workspaceStub());
-    expect(await callsSettings(administrator)).toBeNull();
+    expect(await huddlesSettings(administrator)).toBeNull();
     // Turning off what's off changes nothing, and Cloudflare is asked nothing to turn them off.
-    expect(await (await turnOff(administrator)).json()).toEqual({ calls: null });
+    expect(await (await turnOff(administrator)).json()).toEqual({ huddles: null });
     expect(requests).toHaveLength(1);
   });
 
-  it("counts calls as off while the app's secret doesn't open under SESSION_SECRET, which it logs", async () => {
+  it("counts huddles as off while the app's secret doesn't open under SESSION_SECRET, which it logs", async () => {
     const administrator = await setUp();
     fakeSfu();
     await saveKeys(administrator);
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await withWorkspaceEnv({ SESSION_SECRET: "another secret, after the app's was sealed" }, async () => {
-      expect(await callsSettings(administrator)).toBeNull();
+      expect(await huddlesSettings(administrator)).toBeNull();
     });
-    expect(logged).toHaveBeenCalledWith("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so calls are off.");
-    expect(await callsSettings(administrator)).toEqual({ appId: APP.appId });
+    expect(logged).toHaveBeenCalledWith("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so huddles are off.");
+    expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
   });
 
   it("asks a stand-in for the Realtime SFU only at a loopback address", async () => {

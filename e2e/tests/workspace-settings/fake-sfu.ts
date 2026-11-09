@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { SFU_APP, SFU_PORT } from "../../projects/workspace-settings";
 
-// Cloudflare's Realtime SFU for the calls spec, at the address the second test server's REALTIME_SFU_URL
-// names, as Ember asks it (apps/worker/src/calls/sfu.ts): it knows one app, `SFU_APP`, starts a session
+// Cloudflare's Realtime SFU for the huddles spec, at the address the second test server's REALTIME_SFU_URL
+// names, as Ember asks it (apps/worker/src/huddles/sfu.ts): it knows one app, `SFU_APP`, starts a session
 // for it when asked with its secret, and refuses as Cloudflare does an app it doesn't know, or a secret
 // that isn't the app's. Cloudflare documents that refusal's error code but not its status, so 401 here
 // is a guess, and Ember reads either.

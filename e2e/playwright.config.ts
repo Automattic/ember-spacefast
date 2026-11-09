@@ -68,8 +68,8 @@ export default defineConfig<MobileOptions>({
     // checks once it's given a widget's keys in Set up Turnstile, the address of the AI Gateway the
     // Ember AI spec fakes, which Ember asks models through once it's given an account in Set up Ember AI,
     // the ID of the account Ember is deployed to, as `pnpm run deploy` gives it, which Set up Ember AI
-    // fills in, and the address of the Realtime SFU the calls spec fakes, which Ember asks to start a
-    // session with an app's keys before it keeps them in Set up calls. Servers start in turn, so the app
+    // fills in, and the address of the Realtime SFU the huddles spec fakes, which Ember asks to start a
+    // session with an app's keys before it keeps them in Set up huddles. Servers start in turn, so the app
     // is built by then.
     {
       command: [

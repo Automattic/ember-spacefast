@@ -78,8 +78,8 @@ Objects, D1 or speed call for something else.
   styles. Ember's custom domain and tagline are more of those settings (`custom_domain` and
   `tagline`), so they took no migration and are read with the rest of the account, and so are the
   address its email comes from (`email_from`), the keys of the Turnstile widget an administrator
-  gave it (`turnstile_keys`, the secret key sealed) and those of the Realtime SFU app calls run
-  through (`calls`, the app's secret sealed).
+  gave it (`turnstile_keys`, the secret key sealed) and those of the Realtime SFU app huddles run
+  through (`huddles`, the app's secret sealed).
 - **Unread marks are a column of the membership.** `memberships.unread_at` is when a room was marked
   unread for someone, null while it isn't, and one `UPDATE` marks every member a message should. We
   skip Campfire's `connections` and `connected_at` columns: each room's object knows from its
