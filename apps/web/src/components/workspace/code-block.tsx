@@ -51,11 +51,26 @@ function codeOf(block: DisplayElement): string | null {
   return code;
 }
 
-/** `node`'s text as it reads, its `<br>`s as newlines, which `textContent` would drop. */
+/** The elements a message can hold that start a line of their own, as a bot's `<div>` lines in a code block do. */
+const BLOCKS = new Set(["ADDRESS", "BLOCKQUOTE", "DD", "DIV", "DL", "DT", "FIGCAPTION", "FIGURE", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "TABLE", "TR", "UL"]);
+
+/** `node`'s text as it reads, its `<br>`s and the lines its blocks start as newlines, which `textContent` would drop. */
 function textOf(node: Node): string {
   if (node.nodeName === "BR") return "\n";
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
-  return Array.from(node.childNodes, textOf).join("");
+  let text = "";
+  // Whether what comes next starts a line, as a block and whatever follows one do.
+  let broken = false;
+  for (const child of node.childNodes) {
+    const block = BLOCKS.has(child.nodeName);
+    if (block) broken = true;
+    const part = textOf(child);
+    if (part === "") continue;
+    if (broken && text !== "" && !text.endsWith("\n")) text += "\n";
+    text += part;
+    broken = block;
+  }
+  return text;
 }
 
 /** `token` as React draws it, with what `marks` matches in its text marked. */
