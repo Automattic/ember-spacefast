@@ -543,6 +543,9 @@
     pre[data-language] {
       border-radius: 0.5ch;
     }
+    .code-block pre {
+      @apply min-h-11 pe-10 touch:min-h-14 touch:pe-14;
+    }
 
     blockquote {
       border-inline-start: 0.5ch solid var(--muted-foreground);
