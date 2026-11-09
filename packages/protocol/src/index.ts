@@ -3,6 +3,7 @@
 // worker and the web app both import it directly as TypeScript.
 
 import type { AssistantSettings, YourAssistant } from "./assistant.ts";
+import type { CallsSettings } from "./calls.ts";
 import type { Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
@@ -68,6 +69,8 @@ export type {
   YourAssistantChanged,
   YourAssistantChanges,
 } from "./assistant.ts";
+// And the rest of calls.ts, from "@ember/protocol/calls", which only the Calls card, its setup and the Worker's calls use.
+export type { CallsField, CallsForgotten, CallsSaved, CallsSettings, CallsSetup } from "./calls.ts";
 export {
   FILE_NAME_NOT_KEPT,
   FILE_TOO_LARGE,
@@ -495,6 +498,8 @@ export interface WorkspaceSettings {
   addresses: EmberAddresses;
   /** Ember AI as the AI assistant tab shows it, for administrators while it's on, and null otherwise. */
   assistant: AssistantSettings | null;
+  /** Calls as Rooms and permissions' Calls card shows them, for administrators while they're on, and null otherwise. */
+  calls: CallsSettings | null;
   /**
    * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for
    * administrators once the deploy has given it to the Worker, and null otherwise.

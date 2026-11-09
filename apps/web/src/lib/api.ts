@@ -20,6 +20,10 @@ import {
   type BotChanges,
   type Bots,
   type BotSettings,
+  type CallsForgotten,
+  type CallsSaved,
+  type CallsSettings,
+  type CallsSetup,
   type ChangedPerson,
   type CustomDomainCheck,
   type CustomDomainLookup,
@@ -530,6 +534,20 @@ export async function saveTurnstileKeys(keys: TurnstileKeysChange): Promise<Turn
 /** Takes away the Turnstile widget's keys Ember was given, answering where its keys come from then. Fails with a 403 ApiError for anyone but an administrator. */
 export async function forgetTurnstileKeys(): Promise<TurnstileSettings["turnstile"]> {
   return (await request<TurnstileSettings>("/api/account/turnstile_keys", { method: "DELETE" })).turnstile;
+}
+
+/**
+ * Gives Ember a Realtime SFU app's ID and secret to run calls through, answering calls as they are then.
+ * Fails with a 422 ApiError on the field Ember or Cloudflare refuses, a 502 one when Ember couldn't ask
+ * Cloudflare, and a 403 one for anyone but an administrator.
+ */
+export async function saveCalls(setup: CallsSetup): Promise<CallsSettings> {
+  return (await request<CallsSaved>("/api/account/calls", { method: "PUT", body: JSON.stringify(setup) })).calls;
+}
+
+/** Turns calls off, forgetting the SFU app's keys Ember was given. Fails with a 403 ApiError for anyone but an administrator. */
+export async function forgetCalls(): Promise<null> {
+  return (await request<CallsForgotten>("/api/account/calls", { method: "DELETE" })).calls;
 }
 
 /**

@@ -20,6 +20,7 @@ account, as [Deploying](#deploying) describes.
   - [Push notifications](#push-notifications)
   - [Files](#files)
   - [Ember AI](#ember-ai)
+  - [Calls](#calls)
   - [A preview from GitHub Actions](#a-preview-from-github-actions)
   - [A demo from GitHub Actions](#a-demo-from-github-actions)
   - [Resetting a password](#resetting-a-password)
@@ -576,6 +577,23 @@ again without them, told it can't search this time. Its searches are written fro
 the provider's search sees what the room was asking about. While it's off, @ember is told it can't
 search, and that an administrator can turn Search the web on.
 
+### Calls
+
+Calls aren't finished: for now the Calls card only keeps the keys they'll run through, and nobody can
+call anybody until the updates that follow.
+
+An administrator turns calls on with the Calls card, under Rooms and permissions in community
+settings. Calls run through Cloudflare's [Realtime SFU](https://developers.cloudflare.com/realtime/sfu/),
+which carries what each person in a call says to the others, by an SFU app in your Cloudflare
+account. Turning the card on opens Set up calls, which takes the app's App ID and App Secret: create
+the app under Realtime, Serverless SFU in the Cloudflare dashboard, which the dialog links to, in the
+account Ember is deployed to when the deploy gave it. Before it keeps the keys, the Worker asks the
+SFU to start a session with them (`POST /apps/{appId}/sessions/new`), which nobody connects to, so an
+app Cloudflare doesn't know, or a secret that isn't the app's, is refused on its field. Cloudflare
+can take a minute to know a new app everywhere. Change keys takes another app's, and turning the card
+off forgets them. The secret stays in the Worker, which alone asks the SFU's API. What the SFU charges
+is in [What it costs](#what-it-costs).
+
 ### A preview from GitHub Actions
 
 The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
@@ -702,7 +720,8 @@ What a self-hoster should know, beyond keeping the setup password and link to th
 - A Resend API key pasted into Set up email is kept encrypted, and never shown again, even to
   administrators: Membership says only that Ember has one. Make it a key with Sending access, as Resend
   suggests, so that one that got out could do no more than send email. A Turnstile secret key given in
-  Set up Turnstile, and an API token given in Set up Ember AI, are kept the same way.
+  Set up Turnstile, an API token given in Set up Ember AI, and an SFU app's secret given in Set up
+  calls, are kept the same way.
 - A code to reset a password goes to the account's email address, so whoever reads mail there can
   take the account over, as on most sites. Nobody checks an address is its owner's when someone
   joins, unless they join with an invitation or Email domain, so someone could join with another
@@ -756,12 +775,16 @@ pages had them in October 2026:
   models you're happy to pay for. While Search the web is on, an answer can also search up to 5 times,
   which Anthropic charges $10 per 1,000 searches for and OpenAI its own price per search, and the
   results and pages it reads count as input, up to about 10,000 tokens a page.
+- **Calls**, if they're on: Cloudflare's Realtime SFU charges for what it sends to the people in a
+  call, and nothing for what they send it. The first 1,000 GB a month are free, and it's $0.05 per GB
+  after that, as its page had it in November 2026.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),
 [R2 pricing](https://developers.cloudflare.com/r2/pricing/),
-[Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) and
-[AI Gateway's Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
+[Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/),
+[AI Gateway's Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/) and
+[Realtime SFU pricing](https://developers.cloudflare.com/realtime/sfu/pricing/).
 
 ## Storage: Durable Object SQLite or D1
 

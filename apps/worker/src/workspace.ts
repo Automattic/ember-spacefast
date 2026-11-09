@@ -31,6 +31,7 @@ import {
   type Bot,
   type BotChanges,
   type BotSettings,
+  type CallsSettings,
   type CustomStyles,
   type DirectoryUser,
   type DirectRoom,
@@ -86,6 +87,7 @@ import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, TooSoon, tooSoonAfter, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";
 import { botKeyOf, isBotToken, newBotToken } from "./bots/keys";
+import type { SfuApp } from "./calls/sfu";
 import { openDb, type Db } from "./db";
 import { alreadyAMemberEmail, emailDomainLinkEmail, invitationEmail, passwordResetCodeEmail, testEmail } from "./emails";
 import { guestSignIn, type Env } from "./env";
@@ -856,6 +858,7 @@ export class Workspace extends DurableObject<Env> {
       emailDomains: canAdminister ? account.emailDomains : [],
       addresses: canAdminister ? { deployed: account.deployedAddress, others: account.otherAddresses } : { deployed: null, others: [] },
       assistant: canAdminister ? await this.assistantSettings(account) : null,
+      calls: canAdminister ? await this.callsSettings(account) : null,
     };
   }
 
@@ -1032,6 +1035,34 @@ export class Workspace extends DurableObject<Env> {
     const secretKey = await unseal(this.env.SESSION_SECRET, "turnstile-secret-key", saved.sealedSecretKey);
     if (secretKey === null) console.error("The Turnstile secret key Ember was given doesn't open under SESSION_SECRET, so it isn't used.");
     return secretKey === null ? null : { siteKey: saved.siteKey, secretKey };
+  }
+
+  /**
+   * Turns calls on as the person `credentials` signs in, through the Realtime SFU app whose keys `app`
+   * are, which the Worker has had Cloudflare start a session with, its secret sealed under SESSION_SECRET
+   * (`seal`), or changes the app while they're on, or turns them off with null, which forgets the app's
+   * keys, answering calls as the Calls card then shows them: "forbidden" unless they're an administrator,
+   * or null without a valid session. Only that card shows them, so no socket hears of it.
+   */
+  async changeCalls(credentials: Credentials, app: SfuApp | null): Promise<{ calls: CallsSettings | null } | "forbidden" | null> {
+    return this.administerAccount(credentials, async (account) => {
+      if (app === null && account.calls === null) return { calls: null };
+      const calls = app && { appId: app.appId, sealedAppSecret: await seal(this.env.SESSION_SECRET, "sfu-app-secret", app.appSecret) };
+      await this.saveAccount({ ...account, calls }, (now) => this.store.changeAccount({ calls }, now));
+      return { calls: calls && { appId: calls.appId } };
+    });
+  }
+
+  /**
+   * Calls as the Calls card shows them: the SFU app they run through, by its ID, while `account` keeps
+   * its keys, or null while it keeps none, or while the app's secret doesn't open under SESSION_SECRET,
+   * as once that's changed, when it's as if calls were off until an administrator sets them up again.
+   */
+  private async callsSettings({ calls: saved }: Pick<JoinableAccount, "calls">): Promise<CallsSettings | null> {
+    if (!saved) return null;
+    const appSecret = await unseal(this.env.SESSION_SECRET, "sfu-app-secret", saved.sealedAppSecret);
+    if (appSecret === null) console.error("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so calls are off.");
+    return appSecret === null ? null : { appId: saved.appId };
   }
 
   /**
@@ -1468,6 +1499,7 @@ export class Workspace extends DurableObject<Env> {
       turnstileKeys: null,
       assistant: null,
       assistantMost: TOP_LEVELS,
+      calls: null,
       deployedAddress: null,
       otherAddresses: [],
     };

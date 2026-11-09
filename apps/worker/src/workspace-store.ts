@@ -135,6 +135,8 @@ export interface JoinableAccount extends Omit<Account, "logo"> {
   assistant: SavedAssistant | null;
   /** The most each of @ember's dials goes to for anyone's questions, as administrators set it, whether Ember AI is on or not. */
   assistantMost: AnswerLevels;
+  /** The SFU app calls run through, while an administrator has them on, or else null. */
+  calls: SavedCalls | null;
   /** Where a deploy puts Ember, as the latest page opened there told it, or null until one has (`EmberAddresses.deployed`). */
   deployedAddress: string | null;
   /** The custom domains Ember has moved away from, newest first, which may still reach it (`EmberAddresses.others`). */
@@ -145,6 +147,12 @@ export interface JoinableAccount extends Omit<Account, "logo"> {
 export interface SavedTurnstileKeys {
   siteKey: string;
   sealedSecretKey: string;
+}
+
+/** A Realtime SFU app's keys as the account keeps them: its ID, and its secret sealed (`seal`). */
+export interface SavedCalls {
+  appId: string;
+  sealedAppSecret: string;
 }
 
 /**
@@ -178,8 +186,9 @@ export interface NewAccount {
 /**
  * What `WorkspaceStore.changeAccount` changes: the name, the tagline, the settings workspace settings'
  * switches change, the custom domain and the ones it moved away from, the navigation icons whose slots
- * change, the From address, the sealed Resend API key, Turnstile's keys, and the domains Email domain
- * lets in. Memberful's two settings change together, or not at all, as `memberful`.
+ * change, the From address, the sealed Resend API key, Turnstile's keys, the SFU app calls run through,
+ * and the domains Email domain lets in. Memberful's two settings change together, or not at all, as
+ * `memberful`.
  */
 export type AccountChange = Partial<
   Pick<
@@ -197,6 +206,7 @@ export type AccountChange = Partial<
     | "emailFrom"
     | "resendApiKey"
     | "turnstileKeys"
+    | "calls"
   >
 > & {
   memberful?: Pick<Account, "memberfulJoin" | "memberfulSignIn">;
@@ -878,6 +888,17 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 }
 
 /**
+ * The Realtime SFU app calls run through, which the account's settings keep as `calls`,
+ * `{ app_id, app_secret }`, the secret sealed, or null while calls are off.
+ */
+function callsIn(settings: Record<string, unknown> | null): SavedCalls | null {
+  const kept = settings?.calls;
+  if (typeof kept !== "object" || kept === null) return null;
+  const { app_id: appId, app_secret: sealedAppSecret } = kept as Record<string, unknown>;
+  return typeof appId === "string" && typeof sealedAppSecret === "string" ? { appId, sealedAppSecret } : null;
+}
+
+/**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
  * `{ account_id, api_token, model, format, models, web_tools, web_tools_asked_at }`, the API token sealed,
  * or null while it's off. Its models are `[{ id, name, format }]`, which Ember AI set up before people
@@ -1433,6 +1454,7 @@ const SET_EMAIL_DOMAINS = setSetting("email_domains");
 const SET_EMAIL_FROM = setSetting("email_from");
 const SET_RESEND_API_KEY = setSetting("resend_api_key");
 const SET_TURNSTILE_KEYS = setSetting("turnstile_keys");
+const SET_CALLS = setSetting("calls");
 const SET_ASSISTANT = setSetting("assistant");
 
 /**
@@ -1950,6 +1972,7 @@ export class WorkspaceStore {
       turnstileKeys: turnstileKeysIn(settings),
       assistant: assistantIn(settings),
       assistantMost: assistantMostIn(settings),
+      calls: callsIn(settings),
       deployedAddress: deployedAddressIn(settings),
       otherAddresses: otherAddressesIn(settings),
     };
@@ -1957,9 +1980,9 @@ export class WorkspaceStore {
 
   /**
    * Changes the workspace's name, tagline, settings, custom domain and the ones it moved away from,
-   * navigation icons, From address, Resend API key, Turnstile's keys and email domains, as `change` has
-   * them, in one batch. Memberful's settings are stored both at once, so that an account from before
-   * `memberful_join` reads as they're saved.
+   * navigation icons, From address, Resend API key, Turnstile's keys, calls' SFU app and email domains, as
+   * `change` has them, in one batch. Memberful's settings are stored both at once, so that an account
+   * from before `memberful_join` reads as they're saved.
    */
   async changeAccount(
     {
@@ -1978,6 +2001,7 @@ export class WorkspaceStore {
       emailFrom,
       resendApiKey,
       turnstileKeys,
+      calls,
     }: AccountChange,
     now: string,
   ): Promise<void> {
@@ -1999,6 +2023,7 @@ export class WorkspaceStore {
       ...(emailFrom === undefined ? [] : [statement(SET_EMAIL_FROM, JSON.stringify(emailFrom), now)]),
       ...(resendApiKey === undefined ? [] : [statement(SET_RESEND_API_KEY, JSON.stringify(resendApiKey), now)]),
       ...(turnstileKeys === undefined ? [] : [statement(SET_TURNSTILE_KEYS, JSON.stringify(turnstileKeys && { site_key: turnstileKeys.siteKey, secret_key: turnstileKeys.sealedSecretKey }), now)]),
+      ...(calls === undefined ? [] : [statement(SET_CALLS, JSON.stringify(calls && { app_id: calls.appId, app_secret: calls.sealedAppSecret }), now)]),
     ]);
   }
 

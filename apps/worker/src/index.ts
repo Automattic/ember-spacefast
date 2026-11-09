@@ -113,6 +113,7 @@ import type { BanProblem } from "./bans";
 import { BodyTooLarge, jsonBodyOf } from "./bodies";
 import { botPage, changeBot, createBot, deleteBot, listBots, resetBotKey, showBot } from "./bots/accounts";
 import { botAction, exception, isBotPath, withoutBotKeys } from "./bots/api";
+import { forgetCalls, saveCalls } from "./calls/settings";
 import { ADDRESS_HEADER, AUTHORIZED_AT_HEADER, BANNED_HEADER, ROOM_HEADER, SESSION_HEADER, USER_HEADER } from "./chat-room";
 import { guestSignIn, type Env } from "./env";
 import { failed, notFound } from "./error-pages";
@@ -1060,6 +1061,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/assistant/web_search" && request.method === "PUT") return () => changeWebSearch(request, env);
   if (pathname === "/api/account/assistant/avatar" && request.method === "PUT") return () => changeAssistantAvatar(request, env);
   if (pathname === "/api/account/assistant/avatar" && request.method === "DELETE") return () => removeAssistantAvatar(request, env);
+  if (pathname === "/api/account/calls" && request.method === "PUT") return () => saveCalls(request, env);
+  if (pathname === "/api/account/calls" && request.method === "DELETE") return () => forgetCalls(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);
   if (pathname === "/api/account/custom_domain_lookups" && request.method === "POST") return () => lookUpCustomDomain(request, env);
   if (pathname === LOGO_PATH && request.method === "PUT") return () => changeLogo(request, env);

@@ -35,6 +35,8 @@ import { apart } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
 import { AssistantSettings } from "./assistant-settings";
 import { AssistantSetup } from "./assistant-setup";
+import { CallsSettings } from "./calls-settings";
+import { CallsSetup } from "./calls-setup";
 import { CustomDomainSettings } from "./custom-domain-settings";
 import { EmberVersion } from "./ember-version";
 import { EmailSettings, sendsEmail } from "./email-settings";
@@ -90,8 +92,9 @@ interface Props {
  *   The rail's icons are in Custom styles (`NavigationIconSettings`), where the project's owner moved
  *   them.
  * - Rooms and permissions: New room, which members don't get while only administrators can create
- *   rooms, then for administrators, the switch that says so and the rooms' order for everyone, each
- *   linking to its settings.
+ *   rooms, then for administrators, the switch that says so, the rooms' order for everyone, each
+ *   linking to its settings, and whether calls are on, through the Realtime SFU app whose keys Set up
+ *   calls takes.
  * - Membership: for administrators, who can join, with switches for Open, the join link, which they can
  *   regenerate, and Memberful, how Ember sends email, and whether Cloudflare Turnstile checks who joins,
  *   or for members, the links that let people in, then the administrators and members, whom
@@ -133,6 +136,7 @@ export function WorkspaceSettingsPage({
   const [emailSetup, setEmailSetup] = useState<{ then?: () => void } | null>(null);
   const [settingUpTurnstile, setSettingUpTurnstile] = useState(false);
   const [settingUpAssistant, setSettingUpAssistant] = useState(false);
+  const [settingUpCalls, setSettingUpCalls] = useState(false);
   const account = useAccount();
   const name = typedName ?? account.name;
   const tagline = typedTagline ?? account.tagline;
@@ -297,6 +301,8 @@ export function WorkspaceSettingsPage({
   const showTurnstile = (turnstile: WorkspaceSettings["turnstile"]) => setSettings((settings) => settings && { ...settings, turnstile });
   /** Shows Ember AI as Set up Ember AI, or turning it off, changes it, which only workspace settings shows. */
   const showAssistant = (assistant: WorkspaceSettings["assistant"]) => setSettings((settings) => settings && { ...settings, assistant });
+  /** Shows calls as Set up calls, or turning them off, changes them, which only workspace settings shows. */
+  const showCalls = (calls: WorkspaceSettings["calls"]) => setSettings((settings) => settings && { ...settings, calls });
 
   // Regenerate join link: no confirmation first, and no notice after.
   const regenerate = () => {
@@ -465,6 +471,16 @@ export function WorkspaceSettingsPage({
               />
             </div>
             {sharedRooms && <RoomOrder rooms={sharedRooms} sharedOrder={sharedOrder} onSaved={onSharedOrderSaved} onSessionChanged={onSessionChanged} />}
+            <CallsSettings calls={settings.calls} onSetUp={() => setSettingUpCalls(true)} onStopped={() => showCalls(null)} onFailed={onFailed} />
+            {settingUpCalls && (
+              <CallsSetup
+                calls={settings.calls}
+                deployedAccountId={settings.cloudflareAccountId}
+                onSaved={showCalls}
+                onClose={() => setSettingUpCalls(false)}
+                onFailed={onFailed}
+              />
+            )}
           </>
         ) : (
           settings && <p className="text-muted-foreground">Community admins manage room order and permissions.</p>
