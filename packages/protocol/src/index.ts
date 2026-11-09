@@ -2,7 +2,7 @@
 // object with a `type`, and what the API sends and takes. Keep this file dependency-free: the
 // worker and the web app both import it directly as TypeScript.
 
-import type { AssistantSettings, YourAnswerLevels } from "./assistant.ts";
+import type { AssistantSettings, YourAssistant } from "./assistant.ts";
 import type { Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
@@ -48,15 +48,25 @@ export type {
   AnswerLength,
   AnswerLevelChanges,
   AnswerLevels,
-  AnswerLevelsAnswer,
+  AssistantCatalog,
   AssistantChanged,
+  AssistantChanges,
   AssistantForgotten,
+  AssistantKeys,
+  AssistantModel,
   AssistantSaved,
   AssistantSettings,
   AssistantSetup,
   ModelFormat,
+  ModelPrice,
+  NewAssistantModel,
   ThinkingLevel,
-  YourAnswerLevels,
+  WebSearchChange,
+  WebSearchChanged,
+  WebTool,
+  YourAssistant,
+  YourAssistantChanged,
+  YourAssistantChanges,
 } from "./assistant.ts";
 export {
   FILE_NAME_NOT_KEPT,
@@ -123,16 +133,29 @@ export {
 } from "./push.ts";
 export { TRANSLATIONS, type TranslationKey } from "./translations.ts";
 export {
+  hasFilters,
+  hasWords,
   isSearchable,
   MAX_SEARCH_LENGTH,
+  normalizedSearch,
   parseSearch,
   RECENT_SEARCHES,
   sanitizeSearch,
+  SEARCH_FLAGS,
   SEARCH_LIMIT,
   SEARCH_TOO_LONG,
+  searchKey,
+  searchOfQuery,
   searchPath,
+  searchQuery,
   searchTerms,
+  type Search,
+  type SearchFilters,
+  type SearchFlag,
+  type SearchMatch,
+  type SearchParams,
   type SearchResults,
+  type SearchSort,
 } from "./search.ts";
 
 export type UserId = string;
@@ -164,7 +187,7 @@ export interface DirectoryUser extends User {
   bio: string | null;
   role: Role;
   status: UserStatus;
-  /** Their avatar, `/users/<token>/avatar?v=<version>`, whose address changes whenever they do. */
+  /** Their avatar, `/users/<token>/avatar?v=<version>`, whose address changes whenever they do, and @ember's with each release too. */
   avatarUrl: string;
 }
 
@@ -434,8 +457,12 @@ export interface Account {
 /** What `GET /api/account` answers for workspace settings. */
 export interface WorkspaceSettings {
   account: Account;
-  /** The join link's code, which everyone in the workspace can share. */
-  joinCode: string;
+  /**
+   * The join link's code, which everyone in the workspace can share, or null for someone who signed in
+   * with just a name, unless they're an administrator, since a member's account they made with it would
+   * stay once `EMBER_GUEST_SIGN_IN` turns guests away.
+   */
+  joinCode: string | null;
   /** Whether you can change the workspace, as administrators can. Members see it read-only. */
   canAdminister: boolean;
   /**
@@ -468,6 +495,11 @@ export interface WorkspaceSettings {
   addresses: EmberAddresses;
   /** Ember AI as the AI assistant tab shows it, for administrators while it's on, and null otherwise. */
   assistant: AssistantSettings | null;
+  /**
+   * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for
+   * administrators once the deploy has given it to the Worker, and null otherwise.
+   */
+  cloudflareAccountId: string | null;
 }
 
 /**
@@ -746,14 +778,28 @@ export const EMBER_REPOSITORY = "https://github.com/NYLLON-SOFTWARE/ember-cloudf
 export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#updating`;
 
 /**
- * What `GET /api/account/release` answers an administrator, for General settings to say: the release
- * this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release of
- * Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
+ * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
+ * /api/account/release_checks`, which opening Admin makes to have the Worker ask GitHub afresh: the
+ * release this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release
+ * of Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
  * one, or null when GitHub didn't name one.
  */
 export interface ReleaseCheck {
   release: string;
   newest: { release: string; notes: string; newer: boolean } | null;
+  /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
+  copy: CopyOnGitHub | null;
+}
+
+/**
+ * A copy of Ember on GitHub, as its deploy tells the Worker: its repository, as `owner/name`, the branch
+ * that deploys, and whether it has the Update Ember workflow, for General's release card to link to
+ * running it, or to adding it.
+ */
+export interface CopyOnGitHub {
+  repository: string;
+  branch: string;
+  workflow: boolean;
 }
 
 /** The roles an administrator can give someone with the crown on workspace settings. Bots stay bots. */
@@ -808,13 +854,14 @@ export interface Profile {
    */
   membershipNeeded: boolean;
   /**
-   * Whether you've connected your account to an account at the Memberful site, which you can sign in with
-   * then, or null while Memberful isn't members only, or the deployment lacks its keys, or for a guest,
-   * who has nothing to connect.
+   * Where you stand with Memberful (`MemberfulStatus`): the account at the Memberful site you've connected
+   * your account to, which you can sign in with then, or none yet while Memberful is members only. Null
+   * when there's nothing to show: while the deployment lacks Memberful's keys, for a guest, who has
+   * nothing to connect, or while Memberful isn't members only and you haven't connected one.
    */
-  memberful: boolean | null;
-  /** How much @ember thinks and how long it answers you, and the most each may be, or null while Ember AI is off. */
-  assistant: YourAnswerLevels | null;
+  memberful: MemberfulStatus | null;
+  /** How much @ember thinks and how long it answers you, and the most each may be, and the model you picked, if you did, and the ones you can pick, or null while Ember AI is off. */
+  assistant: YourAssistant | null;
 }
 
 /** What `GET /api/users/me/profile` answers, and `PATCH` once it has saved. */
@@ -849,12 +896,15 @@ export interface SetupPlaceholders {
 }
 
 /**
- * How setup can be reached from where the app runs: with the deploy's setup link, which ends in the
- * deployment's `EMBER_SETUP_TOKEN` secret; open to whoever is here, over loopback, where `wrangler dev`
- * serves, while no token is set; or closed until a deploy, or `wrangler secret put EMBER_SETUP_TOKEN`,
- * gives the deployment a token.
+ * How setup can be reached from where the app runs, while Ember waits to be set up:
+ * - "password": with the deployment's setup password, which Deploy to Cloudflare's form asks the deployer
+ *   to make up (`EMBER_SETUP_PASSWORD`), typed into the page;
+ * - "link": with the setup link a deploy from a terminal prints, which ends in the deployment's
+ *   `EMBER_SETUP_TOKEN`;
+ * - "open": by whoever is here, over loopback, where `wrangler dev` serves, while the deployment has neither;
+ * - "closed": by nobody, while it has neither.
  */
-export type SetupAccess = "link" | "open" | "closed";
+export type SetupAccess = "password" | "link" | "open" | "closed";
 
 /** What the app asks first (`GET /api/bootstrap`): whether Ember is set up, and who this browser is signed in as. */
 export interface Bootstrap {
@@ -1167,6 +1217,38 @@ export interface MemberfulConnectionStart {
 }
 
 /**
+ * The Memberful account you've connected, as Memberful described it when you connected it or last
+ * signed in with it: its name and email address there, either null when Memberful didn't say, or for
+ * an account connected before Ember kept them, until you sign in with it again.
+ */
+export interface MemberfulAccount {
+  name: string | null;
+  emailAddress: string | null;
+}
+
+/**
+ * Where you stand with Memberful, as your profile's Memberful section shows it: the account you've
+ * connected, which you sign in with, or null while you haven't, when the section offers Connect
+ * Memberful, and whether Memberful is members only, when members sign in with Memberful alone, unless
+ * they need no membership (`Profile.membershipNeeded`).
+ */
+export interface MemberfulStatus {
+  membersOnly: boolean;
+  connected: MemberfulAccount | null;
+}
+
+/**
+ * What disconnecting your Memberful account from your profile takes (`DELETE
+ * /api/users/me/memberful_connections`): your password, so that holding your session isn't enough to
+ * change how you sign in, as connecting one takes it, and this browser's push subscription, if it has
+ * one, which it keeps while it forgets your other browsers', as a new password does.
+ */
+export interface MemberfulDisconnection {
+  currentPassword?: string;
+  pushSubscriptionEndpoint?: string;
+}
+
+/**
  * Where to sign in at the Memberful site, within ten minutes, to connect the account you sign in to there
  * to yours here: what connecting from your profile answers, and what signing in with a password answers a
  * member whose password checks out while Memberful is members only, until they've connected one.
@@ -1221,6 +1303,17 @@ export const memberfulProblemOf = (value: string | null): MemberfulSignInProblem
 
 /** Why connecting Memberful from your profile is refused without your password, while you have one. */
 export const MEMBERFUL_PASSWORD_NEEDED = "Enter your password to connect Memberful.";
+
+/** Why disconnecting it is refused without your password. */
+export const MEMBERFUL_DISCONNECT_PASSWORD_NEEDED = "Enter your password to disconnect Memberful.";
+/** Why it's refused while you have no password, which you'd have nothing to sign in with without. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD = "Set a password first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you have no email address, which signing in with your password takes. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_EMAIL = "Add your email address first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you haven't connected a Memberful account. */
+export const MEMBERFUL_NOT_CONNECTED = "Your account isn't connected to a Memberful account.";
+/** What your profile says once your Memberful account is disconnected. */
+export const MEMBERFUL_DISCONNECTED_NOTICE = "Your Memberful account is disconnected.";
 
 /** Why signing in with a password, joining with the join link, or signing in with just a name is refused while Memberful is members only. */
 export const MEMBERFUL_SIGN_IN_NEEDED = "Members sign in with Memberful. Only administrators and invited people sign in with a password.";
@@ -2206,6 +2299,21 @@ export function parseProfileChanges(data: unknown): ProfileChanges | string {
     return `Endpoint can't be longer than ${MAX_PUSH_ENDPOINT_LENGTH} characters`;
   }
   return changes;
+}
+
+/**
+ * Parses an untrusted disconnection of your Memberful account. Returns why it's refused instead. Whether
+ * the password is yours, and whether you have one, the server checks once it knows who's asking.
+ */
+export function parseMemberfulDisconnection(data: unknown): MemberfulDisconnection | string {
+  if (!isJsonObject(data)) return "Expected a JSON object";
+  const { currentPassword, pushSubscriptionEndpoint } = data;
+  if (currentPassword !== undefined && typeof currentPassword !== "string") return "Current password must be text";
+  if (pushSubscriptionEndpoint !== undefined && typeof pushSubscriptionEndpoint !== "string") return "Push subscription endpoint must be text";
+  if (pushSubscriptionEndpoint !== undefined && pushSubscriptionEndpoint.length > MAX_PUSH_ENDPOINT_LENGTH) {
+    return `Endpoint can't be longer than ${MAX_PUSH_ENDPOINT_LENGTH} characters`;
+  }
+  return { ...(currentPassword === undefined ? {} : { currentPassword }), ...(pushSubscriptionEndpoint === undefined ? {} : { pushSubscriptionEndpoint }) };
 }
 
 /**

@@ -246,16 +246,22 @@ export async function isolateRoom(page: Page, room: TestRoom, { joinCode }: { jo
 /**
  * The welcome card's invitation: the workspace's first room, the general that setup made, which every
  * open room's member is in, and the join code. Only administrators get it with their rooms, so it's
- * what anyone can see: the oldest room in their sidebar, and the join link on workspace settings.
+ * what they'd see: the oldest room in `session`'s sidebar, and the join link on the administrator's
+ * workspace settings, since guests, as people signed in with `createSession` are, aren't given its code.
  */
 export async function invitation(request: APIRequestContext, session: Session): Promise<Invitation> {
-  const headers = { Cookie: cookieHeader(session) };
-  const [sidebar, account] = await Promise.all([request.get("/api/sidebar", { headers }), request.get("/api/account", { headers })]);
+  const administrator = await administratorSession(request);
+  const [sidebar, account] = await Promise.all([
+    request.get("/api/sidebar", { headers: { Cookie: cookieHeader(session) } }),
+    request.get("/api/account", { headers: { Cookie: cookieHeader(administrator) } }),
+  ]);
   expect(sidebar.status(), await sidebar.text()).toBe(200);
   expect(account.status(), await account.text()).toBe(200);
   const [first] = ((await sidebar.json()) as Sidebar).rooms;
   expect(first, "Everyone is in general, where the welcome card is").toBeDefined();
-  return { roomId: first!.id, joinCode: ((await account.json()) as WorkspaceSettings).joinCode };
+  const { joinCode } = (await account.json()) as WorkspaceSettings;
+  expect(joinCode, "Administrators are given the join code").not.toBeNull();
+  return { roomId: first!.id, joinCode: joinCode! };
 }
 
 /** Opens a room and waits until its socket has connected and the history has loaded. */

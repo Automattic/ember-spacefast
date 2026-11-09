@@ -16,7 +16,7 @@ jobs:
     if: github.repository == 'NYLLON-SOFTWARE/ember-cloudflare'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Released migrations stay as they are
         # Deployments apply each migration once, by name, so a change to a released one would reach
         # only new deployments, never those that update: a schema change goes in a new migration.
@@ -31,8 +31,17 @@ jobs:
             echo "::error::${release#refs/tags/} released these migrations, so they can't change; add a new one instead:" $changed
             exit 1
           fi
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Copies are offered Ember's Update Ember workflow
+        # A copy without the workflow is offered the one kept beside the deploy script, by the deploy and
+        # by General's release card, and the tests read that one, since a copy's .github keeps its own
+        # workflow, or none. Only Ember's own .github has Ember's, to check it against.
+        run: |
+          if ! diff -u .github/workflows/update-ember.yml apps/worker/scripts/update-ember.yml; then
+            echo "::error::Copies are offered apps/worker/scripts/update-ember.yml, which has to match .github/workflows/update-ember.yml: copy that over it."
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
@@ -45,16 +54,16 @@ jobs:
     if: github.repository == 'NYLLON-SOFTWARE/ember-cloudflare'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @ember/e2e exec playwright install --with-deps chromium
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report

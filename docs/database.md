@@ -30,9 +30,10 @@ schema is in `apps/worker/search-migrations/`, which only the index applies, lis
 So far rooms keep `messages`, `boosts`, `revocations`, `room_events`, `unindexed_messages`,
 `message_deletions` and `blobs`, the Workspace keeps `accounts`, `users`, `sessions`, `identities`,
 `pending_identities`, `membership_checks`, `membership_catch_ups`, `push_subscriptions`, `webhooks`,
-`bans`, `email_links`, `email_link_requests`, `password_resets`, `searches`, `rooms`, `memberships`,
-`favorites`, `pending_revocations`, `pending_purges`, `pending_reindexes` and `deleted_rooms`, and the
-search index keeps `search_messages`, `search_rooms` and the FTS5 table `search_index`. A room's id also
+`bans`, `email_links`, `email_link_requests`, `password_resets`, `searches`, `recent_searches`, `rooms`,
+`memberships`, `favorites`, `pending_revocations`, `pending_purges`, `pending_reindexes` and
+`deleted_rooms`, and the search index keeps `search_messages`, `search_mentions`, `search_rooms` and the
+FTS5 table `search_index`. A room's id also
 names its Durable Object, and the Worker asks the Workspace whether someone is a member before it
 wakes the room for their socket. First run creates the account and its administrator, who signs in
 with an email address and password, found through the unique index on `users.email_address`, as do
@@ -117,6 +118,19 @@ Objects, D1 or speed call for something else.
   a word in a quarter of them takes 0.3 ms of SQLite for someone in every room, where reading all
   1,000 matches took 1.2 ms; for someone in one of the 50, reading the 1,000 and then their room's
   matches takes about 12 ms. A word in one message takes 0.03 ms.
+- **Search filters are conditions on the index's own rows.** Slack narrows a search with modifiers
+  such as `in:`, `from:` and `has:link`, which Campfire has none of. The index keeps what they narrow
+  by beside each message (search migration 0003): who wrote it, the thread it's in, whether it has a
+  link or a file, and, in `search_mentions`, whom it mentions. Includes me finds the messages that
+  mention you, are in your DMs, or are in threads you've written in. A search's filters are
+  conditions the probe reads as it walks the index, newest first or oldest, so they cost nothing
+  while the first matches meet them, and only when those don't fill a page does the rest of the
+  search ask SQLite for just the messages that meet them, through an index on the person and the
+  number, or of the messages with links, or files. A search of filters alone walks `search_messages`
+  in the same way. Show more starts past the number of the last match shown, so each page is read as
+  the first was, and FTS5's `highlight` gives the words each match matched, as its text has them, for
+  results to mark. Workspace migration 0047 had every room log its messages once more, for the index
+  to take each with its filters.
 - **Is there another page?** We fetch one more row than the page holds, rather than counting the
   room.
 - **A created message answers with the row it stored** rather than reading it back.
@@ -171,7 +185,9 @@ Objects, D1 or speed call for something else.
   Workers) are replaced as their passwords sign in. A request on Workers Free gets 10 ms of CPU, so
   hashing runs in a `PasswordHasher` Durable Object made for it, whose requests get 30 seconds.
 - **Guests are marked.** `users.guest` is 1 for people who signed in with just a name, which only
-  Ember allows, so turning `EMBER_GUEST_SIGN_IN` off keeps them out without deleting anyone.
+  Ember allows, so turning `EMBER_GUEST_SIGN_IN` off keeps them out without deleting anyone. Unless
+  they're administrators, they aren't given the join link's code, since an account they made with it
+  would stay.
 - **Sessions are kept in memory.** Campfire looks up each request's session in its database. Ours
   live in the Workspace, which every request and socket upgrade calls, and on D1 the lookup would
   add a round trip to each. So the Workspace keeps the 10,000 sessions used most recently
@@ -368,7 +384,10 @@ Objects, D1 or speed call for something else.
   recording one is one upsert that numbers it one past the person's highest, and two searches can't
   tie, as two in the same instant could by time. The batch that records it also forgets all but the
   newest 10 and reads them back with the rooms the search needs, so searching takes the Workspace
-  one round trip, as it did before searches were recorded.
+  one round trip, as it did before searches were recorded. A search with filters is the JSON of its
+  words and the filters it has on (`searchKey`) in `recent_searches` (workspace migration 0048),
+  which started as a copy of `searches`, trimmed with each run of spaces made one as `searchKey` makes
+  them, so the same search isn't kept twice, and whose rows stay for the release before.
 - **Each browser's subscription is saved once, in one batch, and each person keeps ten.** Campfire
   looks a subscription up by its endpoint and keys before adding it or touching it, with an index on
   those three in `push_subscriptions` and another on the person, so two saves at once can add it
@@ -440,7 +459,14 @@ Objects, D1 or speed call for something else.
   new password deletes that person's rows, and the identity is inserted only while
   `users.password_digest` is still the one the row kept, so a new password while the callback waits
   on Memberful connects nothing either. That insert, which `identities`' unique indexes guard, runs
-  one at a time with sign-ins, then a session starts unless the browser is signed in as them.
+  one at a time with sign-ins, then a session starts unless the browser is signed in as them. A new
+  password that replaces one deletes the person's `identities` rows too, in the same batch, before
+  the statement that saves it, so that a reset ends every way in, while a first password keeps them,
+  as does one saved without an email address, which signing in with a password takes; Disconnect
+  Memberful deletes one, with the person's other sessions, push subscriptions and
+  `pending_identities` rows, each statement checking that the row is still there, `password_digest`
+  is still the one the Worker checked and `email_address` is one. Each row keeps the account's name and email address as Memberful last described it
+  (workspace migration 0049), refreshed as it signs them in, only so their profile can name it.
 - **Memberships are asked about, not taken from webhooks.** Memberful sends its webhooks in no
   particular order, so one only queues a check of a linked member in `membership_checks` (workspace
   migration 0038), keyed by issuer and subject, as `identities` is, which the Workspace's alarm asks
@@ -507,13 +533,18 @@ Objects, D1 or speed call for something else.
   last reply goes too. `room_events.in_room` is 0 for a reply sent only to its thread, which marks
   the room unread for nobody and isn't its latest activity, and an upload's row in `blobs` keeps the
   thread it goes to in `parent_id`, and in `also_sent` whether it goes to the room too.
-- **@ember's levels are columns of the person, and the most of each is a setting.** Campfire has no
-  AI assistant. The levels someone picks of @ember's Thinking and Answer length are
-  `users.assistant_thinking` and `users.assistant_answer_length` (workspace migration 0045), null for
-  a dial they haven't picked. Their profile reads them in the statement that already reads it, and a
-  question for @ember in a statement of its own, in parallel with the account and @ember's membership
-  of the room. The most administrators allow is `assistant_limits` in the account's settings, kept
-  while Ember AI is off.
+- **@ember's levels and model are columns of the person, and the most of each level, and the models
+  people can pick, are settings.** Campfire has no AI assistant. The levels someone picks of @ember's
+  Thinking and Answer length are `users.assistant_thinking` and `users.assistant_answer_length`
+  (workspace migration 0045), null for a dial they haven't picked, and the model they pick is
+  `users.assistant_model` (workspace migration 0046), null to follow the administrators' default.
+  Their profile reads them in the statement that already reads it, and a question for @ember in a
+  statement of its own, in parallel with the account and @ember's membership of the room. The most
+  administrators allow is `assistant_limits` in the account's settings, kept while Ember AI is off.
+  The models people can pick, each its ID, name and the format AI Gateway takes it in, are `models`
+  in the `assistant` setting, beside the API token, at most 20 of them, so they're forgotten with
+  the token when Ember AI is turned off. A pick that's no longer among them is kept, and followed
+  again once the model is added back.
 
 ## Writing SQL here
 

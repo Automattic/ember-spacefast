@@ -1,27 +1,27 @@
 name: Preview
 
 # Deploys main to a Worker named ember-production on the account's workers.dev subdomain, then checks
-# it end to end. It needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets and
-# skips without them, so forks don't try to deploy. A new Worker takes its setup token from an
-# EMBER_SETUP_TOKEN repository secret, if there is one (`openssl rand -hex 32`), since this log may be
-# public and the deploy prints no token into it; without one, nobody can set the Worker up until a
-# deploy from a terminal, or `wrangler secret put EMBER_SETUP_TOKEN`, gives it a token.
-# EMBER_SETUP_NAME_PLACEHOLDER and EMBER_SETUP_EMAIL_PLACEHOLDER repository variables, if set, are the
-# name and email address its Set up Ember form suggests in place of Kevin Rose's. MEMBERFUL_URL,
-# MEMBERFUL_CLIENT_ID and MEMBERFUL_CLIENT_SECRET repository secrets, if set, are a Memberful custom
-# app's keys, which go up with each deploy so its members can sign in once an administrator turns that on,
-# and MEMBERFUL_API_KEY and MEMBERFUL_WEBHOOK_SECRET the app's API key and its site's webhook secret,
-# with which Ember hears when a membership lapses. TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY
-# repository secrets, if set, are a Turnstile widget's keys, with which open sign-up and the forms that
-# email someone check that whoever uses them is a person, in place of any an administrator gave in Set
-# up Turnstile, and a RESEND_API_KEY repository secret, if set, has Ember send its email with Resend
-# rather than Cloudflare Email Service.
+# it end to end. It runs only when started from the Actions tab, so nothing brings back a Worker that
+# was deleted, or binds the bucket wrangler.jsonc names, `ember`, which a Deploy to Cloudflare copy in
+# the same account may use too, without someone choosing to. It needs the CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID repository secrets and skips without them, so forks don't try to deploy. A new
+# Worker takes its setup token from an EMBER_SETUP_TOKEN repository secret, if there is one (`openssl
+# rand -hex 32`), since this log may be public and the deploy prints no token into it; without one,
+# nobody can set the Worker up until a deploy from a terminal, or `wrangler secret put
+# EMBER_SETUP_TOKEN`, gives it a token. EMBER_SETUP_NAME_PLACEHOLDER and EMBER_SETUP_EMAIL_PLACEHOLDER
+# repository variables, if set, are the name and email address its Set up Ember form suggests in place
+# of Kevin Rose's. MEMBERFUL_URL, MEMBERFUL_CLIENT_ID and MEMBERFUL_CLIENT_SECRET repository secrets,
+# if set, are a Memberful custom app's keys, which go up with each deploy so its members can sign in
+# once an administrator turns that on, and MEMBERFUL_API_KEY and MEMBERFUL_WEBHOOK_SECRET the app's
+# API key and its site's webhook secret, with which Ember hears when a membership lapses.
+# TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY repository secrets, if set, are a Turnstile widget's
+# keys, with which open sign-up and the forms that email someone check that whoever uses them is a
+# person, in place of any an administrator gave in Set up Turnstile, and a RESEND_API_KEY repository
+# secret, if set, has Ember send its email with Resend rather than Cloudflare Email Service.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# One deploy at a time. A push while one runs waits for it rather than cancelling it mid-upload.
+# One deploy at a time. A run while one deploys waits for it rather than cancelling it mid-upload.
 concurrency:
   group: preview
   cancel-in-progress: false
@@ -59,10 +59,10 @@ jobs:
       WRANGLER_SEND_METRICS: "false"
     steps:
       # Pinned to commits, not tags, because this job holds the Cloudflare token: a moved tag
-      # can't change what runs before the deploy step. These are the commits v4 pointed at.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      # can't change what runs before the deploy step. These are the commits the tags beside them pointed at.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: pnpm

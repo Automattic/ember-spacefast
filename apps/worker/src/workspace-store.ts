@@ -14,6 +14,7 @@ import {
   isRoomIcon,
   mailboxOf,
   mailboxText,
+  parseSearch,
   suggestedCount,
   type Account,
   type BotChanges,
@@ -35,13 +36,30 @@ import {
   type RoomId,
   type RoomKind,
   type RoomSettings,
+  type Search,
   type SharedRoom,
   type SidebarRoom,
   type User,
   type UserId,
   type UserStatus,
 } from "@ember/protocol";
-import { ANSWER_LENGTHS, MODEL_FORMATS, THINKING_LEVELS, TOP_LEVELS, type AnswerLength, type AnswerLevelChanges, type AnswerLevels, type ModelFormat, type ThinkingLevel } from "@ember/protocol/assistant";
+import {
+  ANSWER_LENGTHS,
+  MODEL_FORMATS,
+  modelName,
+  modelNameOf,
+  modelOf,
+  THINKING_LEVELS,
+  TOP_LEVELS,
+  WEB_TOOLS,
+  type AnswerLength,
+  type AnswerLevels,
+  type AssistantModel,
+  type ModelFormat,
+  type ThinkingLevel,
+  type WebTool,
+  type YourAssistantChanges,
+} from "@ember/protocol/assistant";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
 import { messagePayload, type PushPayload } from "./push/payload";
@@ -131,14 +149,24 @@ export interface SavedTurnstileKeys {
 
 /**
  * How Ember AI asks AI Gateway, as the account keeps it: the Cloudflare account, its API token sealed
- * (`seal`), the model and the format the model took Set up Ember AI's test question in.
+ * (`seal`), the model it answers anyone with who hasn't picked another, and the format the model took
+ * its test question in, the models people can pick from, that one among them, in the order they were
+ * added, what @ember may do on the web, which Search the web found the model that answers everyone could
+ * when it was turned on, or nothing while it's off, and when that was asked for, if Search the web has
+ * been turned on or off for that model.
  */
 export interface SavedAssistant {
   accountId: string;
   sealedApiToken: string;
   model: string;
   format: ModelFormat;
+  models: SavedModel[];
+  webTools: WebTool[];
+  webToolsAskedAt: string | null;
 }
+
+/** A model people can pick, as the account keeps it: its ID, its name, and the format it took its test question in. */
+export type SavedModel = Pick<AssistantModel, "id" | "name" | "format">;
 
 /** The account first run creates. */
 export interface NewAccount {
@@ -219,16 +247,20 @@ export interface OwnProfileEntry extends ProfileEntry {
   password: boolean;
   /** Whether they need a Memberful membership to sign in while Memberful is members only, as everyone does but administrators and the people they invited. */
   membershipNeeded: boolean;
-  /** The issuers of the accounts elsewhere they've connected, such as the Memberful site's address. */
-  issuers: string[];
-  /** How much @ember thinks and how long it answers them, as they picked. */
-  levels: PickedLevels;
+  /** The accounts elsewhere they've connected, such as one at the Memberful site. */
+  accounts: LinkedAccount[];
+  /** How much @ember thinks and how long it answers them, and the model it answers with, as they picked. */
+  picks: AssistantPicks;
 }
 
-/** How much @ember thinks and how long it answers someone, as they picked each, or null for a dial they haven't. */
-export interface PickedLevels {
+/**
+ * How much @ember thinks and how long it answers someone, and the model it answers them with, as they
+ * picked each, or null for one they haven't.
+ */
+export interface AssistantPicks {
   thinking: ThinkingLevel | null;
   length: AnswerLength | null;
+  model: string | null;
 }
 
 /** Someone who signs in with a Memberful account, which no account here is linked to yet. */
@@ -236,6 +268,18 @@ export interface NewLinkedPerson {
   id: UserId;
   name: string;
   /** Their Memberful account's email address, or null for one Ember can't keep. */
+  emailAddress: string | null;
+}
+
+/**
+ * An account elsewhere, as `issuer`, the address of the Memberful site it's on, and `subject`, its member
+ * id there, name it, and what it says of itself: its name and email address there, or null for either
+ * it didn't say, or Ember didn't keep, for one linked before it kept them.
+ */
+export interface LinkedAccount {
+  issuer: string;
+  subject: string;
+  name: string | null;
   emailAddress: string | null;
 }
 
@@ -295,6 +339,12 @@ export interface EndedByPassword {
   dueAt: number;
 }
 
+/** What disconnecting an account elsewhere did: whether it was unlinked, and whether it queued any revocations. */
+export interface Disconnection {
+  disconnected: boolean;
+  queued: boolean;
+}
+
 /** A bot as the bots page lists it, with its token, which its key is made from, and the rooms it's in but its DMs. */
 export interface StoredBot extends DirectoryEntry {
   /** Null for a bot from before bots had tokens, which no key works for. */
@@ -332,6 +382,11 @@ export interface ProfileChange extends Pick<Profile, "name" | "emailAddress" | "
 export interface AvatarOwner {
   name: string;
   bot: boolean;
+  avatar: StoredPicture | null;
+}
+
+/** Someone as the people directory lists them, with the avatar they've uploaded, or a bot was given. */
+export interface PicturedEntry extends DirectoryEntry {
   avatar: StoredPicture | null;
 }
 
@@ -642,13 +697,50 @@ const CONNECTING_PERSON = `SELECT NOT ${NEEDS_NO_MEMBERSHIP} AS membership_neede
   FROM users WHERE id = ?1 AND ${CONNECTABLE}`;
 
 /**
- * Links the account at issuer ?1 with subject ?2, its membership read at ?3, to person ?5 at ?4, if they
- * can have one connected and their password's digest is still ?6, or "" without one, as it was when they
- * started connecting it.
+ * Links the account at issuer ?1 with subject ?2, its membership read at ?3, named ?7 with the email
+ * address ?8, to person ?5 at ?4, if they can have one connected and their password's digest is still
+ * ?6, or "" without one, as it was when they started connecting it.
  */
-const CONNECT_IDENTITY = `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at)
-  SELECT ?1, ?2, id, ?3, ?4, ?4 FROM users WHERE id = ?5 AND ${CONNECTABLE} AND coalesce(password_digest, '') = ?6
+const CONNECT_IDENTITY = `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at, name, email_address)
+  SELECT ?1, ?2, id, ?3, ?4, ?4, ?7, ?8 FROM users WHERE id = ?5 AND ${CONNECTABLE} AND coalesce(password_digest, '') = ?6
   RETURNING user_id`;
+
+/** Keeps what the account at issuer ?1 with subject ?2 says of itself now, its name ?3 and email address ?4, recording when, ?5, if either has changed. */
+const REFRESH_IDENTITY = `UPDATE identities SET name = ?3, email_address = ?4, updated_at = ?5
+  WHERE issuer = ?1 AND subject = ?2 AND (name IS NOT ?3 OR email_address IS NOT ?4)`;
+
+/**
+ * Unlinks every account elsewhere from person ?1 as a reset replaces the password they have, which
+ * connected each, so that a new password, as a reset gives someone whose account was taken over, ends
+ * every other way in. Someone without one, as people who signed in with Memberful are, keeps theirs
+ * as they set a first password, and so does someone without an email address, who'd have nothing to
+ * sign in with once unlinked, since signing in with a password takes one (a reset finds them by it).
+ * Before the statement that gives them the new one.
+ */
+const UNLINK_ON_RESET = `DELETE FROM identities WHERE user_id = ?1
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND coalesce(password_digest, '') <> '' AND coalesce(email_address, '') <> '')`;
+
+/** The same as their profile saves a new password, with ?2 as their email address from then on, or none, as the save gives it. */
+const UNLINK_ON_NEW_PASSWORD = `DELETE FROM identities WHERE user_id = ?1 AND coalesce(?2, '') <> ''
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND coalesce(password_digest, '') <> '')`;
+
+/**
+ * Whether person ?1 is linked to an account at issuer ?2 and has the password whose digest is ?3, as the
+ * Worker checked it, and an email address to sign in with it by: what each of a disconnection's
+ * statements checks, so that a password or email address changed meanwhile, or an account disconnected
+ * already, changes nothing.
+ */
+const DISCONNECTING = `EXISTS (SELECT 1 FROM identities JOIN users ON users.id = identities.user_id
+  WHERE identities.user_id = ?1 AND identities.issuer = ?2 AND users.password_digest = ?3 AND coalesce(users.email_address, '') <> '')`;
+
+/** Queues revoking the sockets of every session of person ?1 but ?7, in every room they're in, while `DISCONNECTING`, as `QUEUE_OTHER_SESSION_REVOCATIONS` does. */
+const QUEUE_DISCONNECTED_SESSION_REVOCATIONS = `INSERT INTO pending_revocations (room_id, tag, code, due_at)
+  SELECT memberships.room_id, ?4 || sessions.id, ?5, ?6 FROM sessions JOIN memberships ON memberships.user_id = sessions.user_id
+  WHERE sessions.user_id = ?1 AND sessions.id <> ?7 AND ${DISCONNECTING} RETURNING id`;
+
+/** Unlinks the account at issuer ?2 from person ?1, while their password's digest is ?3 and they have an email address, answering its subject. */
+const DISCONNECT_IDENTITY = `DELETE FROM identities WHERE user_id = ?1 AND issuer = ?2
+  AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND password_digest = ?3 AND coalesce(email_address, '') <> '') RETURNING subject`;
 
 /**
  * The same, for someone signing in with a sign-in link, unless they're no longer active, or are a guest
@@ -787,15 +879,41 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format }`, the API token sealed, or null while it's off.
+ * `{ account_id, api_token, model, format, models, web_tools, web_tools_asked_at }`, the API token sealed,
+ * or null while it's off. Its models are `[{ id, name, format }]`, which Ember AI set up before people
+ * could pick has none of: it then has its own model alone, as it does when they leave it out. Without
+ * `web_tools`, as Ember AI was kept before Search the web, @ember does nothing on the web.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format } = kept as Record<string, unknown>;
-  if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string") return null;
-  return (MODEL_FORMATS as readonly unknown[]).includes(format) ? { accountId, sealedApiToken, model, format: format as ModelFormat } : null;
+  const { account_id: accountId, api_token: sealedApiToken, model, format, models, web_tools: webTools, web_tools_asked_at: webToolsAskedAt } = kept as Record<string, unknown>;
+  if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string" || !isModelFormat(format)) return null;
+  const listed = savedModelsIn(models);
+  const own = listed.some(({ id }) => id === model) ? listed : [{ id: model, name: modelName(model), format }, ...listed];
+  return {
+    accountId,
+    sealedApiToken,
+    model,
+    format,
+    models: own,
+    webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)),
+    webToolsAskedAt: typeof webToolsAskedAt === "string" ? webToolsAskedAt : null,
+  };
 }
+
+/** The models people can pick that `kept` lists, as `assistantIn` reads them, once each, leaving out what can't be one. */
+function savedModelsIn(kept: unknown): SavedModel[] {
+  const models = new Map<string, SavedModel>();
+  for (const model of Array.isArray(kept) ? kept : []) {
+    const { id, name, format } = typeof model === "object" && model !== null ? (model as Record<string, unknown>) : {};
+    if (typeof id !== "string" || modelOf(id) !== id || models.has(id) || !isModelFormat(format)) continue;
+    models.set(id, { id, name: modelNameOf(name) ?? modelName(id), format });
+  }
+  return [...models.values()];
+}
+
+const isModelFormat = (format: unknown): format is ModelFormat => (MODEL_FORMATS as readonly unknown[]).includes(format);
 
 /**
  * The most each of @ember's dials goes to, which the account's settings keep as `assistant_limits`,
@@ -812,7 +930,17 @@ const levelIn = <T extends string>(levels: readonly T[], kept: unknown): T | nul
 
 /** Ember AI as the account's settings keep it (`assistantIn`), or null for off. */
 const assistantSetting = (assistant: SavedAssistant | null) =>
-  JSON.stringify(assistant && { account_id: assistant.accountId, api_token: assistant.sealedApiToken, model: assistant.model, format: assistant.format });
+  JSON.stringify(
+    assistant && {
+      account_id: assistant.accountId,
+      api_token: assistant.sealedApiToken,
+      model: assistant.model,
+      format: assistant.format,
+      models: assistant.models.map(({ id, name, format }) => ({ id, name, format })),
+      web_tools: assistant.webTools,
+      web_tools_asked_at: assistant.webToolsAskedAt,
+    },
+  );
 
 /**
  * Whether the join link lets people in, which the account's settings keep as `join_link`: until the
@@ -1317,6 +1445,7 @@ const rememberSetting = (key: string) => `UPDATE accounts SET settings = json_se
     '$.${key}', json(?1)
   )`;
 const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
+const REMEMBER_ASSISTANT = rememberSetting("assistant");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
@@ -1532,23 +1661,39 @@ const RENAME_BOT = `UPDATE users SET name = ?1, updated_at = ?2 WHERE id = ?3 AN
 const CHANGE_BOT_TOKEN = `UPDATE users SET bot_token = ?, updated_at = ? WHERE id = ?`;
 
 /**
- * Records a search as someone's newest: a search they have already moves to the front, rather than being
- * added again.
+ * Records a search, by its key (@ember/protocol `searchKey`), as someone's newest: a search they have
+ * already moves to the front, rather than being added again.
  */
-const RECORD_SEARCH = `INSERT INTO searches (user_id, query, position)
-  VALUES (?1, ?2, (SELECT coalesce(max(position), 0) + 1 FROM searches WHERE user_id = ?1))
-  ON CONFLICT (user_id, query) DO UPDATE SET position = excluded.position`;
+const RECORD_SEARCH = `INSERT INTO recent_searches (user_id, search, position)
+  VALUES (?1, ?2, (SELECT coalesce(max(position), 0) + 1 FROM recent_searches WHERE user_id = ?1))
+  ON CONFLICT (user_id, search) DO UPDATE SET position = excluded.position`;
 
 /**
  * Forgets someone's searches past their newest ?2 + 1, as Campfire's `trim_recent_searches` does, which
  * it runs as it adds one. With no more than that, the subquery finds none to keep the rest newer than,
  * and nothing goes.
  */
-const TRIM_SEARCHES = `DELETE FROM searches WHERE user_id = ?1
-  AND position < (SELECT position FROM searches WHERE user_id = ?1 ORDER BY position DESC LIMIT 1 OFFSET ?2)`;
+const TRIM_SEARCHES = `DELETE FROM recent_searches WHERE user_id = ?1
+  AND position < (SELECT position FROM recent_searches WHERE user_id = ?1 ORDER BY position DESC LIMIT 1 OFFSET ?2)`;
 
-/** Someone's recent searches, newest first. */
-const RECENT_SEARCHES_FOR_USER = `SELECT query FROM searches WHERE user_id = ? ORDER BY position DESC LIMIT ?`;
+/** Someone's recent searches, newest first, by their keys. */
+const RECENT_SEARCHES_FOR_USER = `SELECT search FROM recent_searches WHERE user_id = ? ORDER BY position DESC LIMIT ?`;
+
+/** Forgets someone's recent searches, and those from before searches had filters (migrations/0048_recent_searches.sql). */
+const forgettingSearches = (userId: UserId): Statement[] => [
+  statement(`DELETE FROM recent_searches WHERE user_id = ?`, userId),
+  statement(`DELETE FROM searches WHERE user_id = ?`, userId),
+];
+
+/** A recent search from its key, or null for one that isn't a search. */
+function recentSearchOf(key: string): Search | null {
+  try {
+    const search = parseSearch(JSON.parse(key));
+    return typeof search === "string" ? null : search.search;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Saves a browser's push subscription for someone, with its user agent, or, when they've saved one at
@@ -1605,6 +1750,9 @@ const DEACTIVATE = `UPDATE users SET status = ${DEACTIVATED}, email_address = re
 /** Someone as the directory lists them, whatever their status. */
 const PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ?`;
 
+/** The same, with the avatar they've uploaded, or a bot was given. */
+const PERSON_WITH_AVATAR = `SELECT id, name, bio, role, status, updated_at, avatar_key, avatar_variant FROM users WHERE id = ?`;
+
 /**
  * The IP addresses recorded on someone's sessions, each once, without none or blanks.
  */
@@ -1616,22 +1764,33 @@ const PERSON_WITH_PROFILE = `SELECT id, name, email_address, bio, role, status, 
 /** The same, with the avatar they've uploaded, and whether they have a password, which people without one keep as none or blank. */
 const OWN_PROFILE = `SELECT id, name, email_address, bio, role, status, updated_at, avatar_key, avatar_variant,
     coalesce(password_digest, '') <> '' AS password, NOT ${NEEDS_NO_MEMBERSHIP} AS membership_needed,
-    (SELECT json_group_array(issuer) FROM identities WHERE identities.user_id = users.id) AS issuers,
-    assistant_thinking, assistant_answer_length
+    (SELECT json_group_array(json_object('issuer', issuer, 'subject', subject, 'name', identities.name, 'emailAddress', identities.email_address))
+      FROM identities WHERE identities.user_id = users.id) AS accounts,
+    assistant_thinking, assistant_answer_length, assistant_model
   FROM users WHERE id = ?`;
 
-/** How much someone picked for @ember to think and how long its answers to them are. */
-const ANSWER_LEVELS = `SELECT assistant_thinking, assistant_answer_length FROM users WHERE id = ?`;
+/** How much someone picked for @ember to think, how long its answers to them are, and the model it answers them with. */
+const ASSISTANT_PICKS = `SELECT assistant_thinking, assistant_answer_length, assistant_model FROM users WHERE id = ?`;
 
-/** Changes the dials someone picks a level of, ?1 and ?2, a null one staying as it is. */
-const CHANGE_ANSWER_LEVELS = `UPDATE users SET assistant_thinking = coalesce(?1, assistant_thinking), assistant_answer_length = coalesce(?2, assistant_answer_length) WHERE id = ?3`;
+/**
+ * Changes the dials someone picks a level of, ?1 and ?2, a null one staying as it is, and when ?3 is 1,
+ * the model they pick, to ?4, or to none with null.
+ */
+const CHANGE_ASSISTANT_PICKS = `UPDATE users SET assistant_thinking = coalesce(?1, assistant_thinking), assistant_answer_length = coalesce(?2, assistant_answer_length),
+    assistant_model = CASE WHEN ?3 = 1 THEN ?4 ELSE assistant_model END
+  WHERE id = ?5`;
 
-/** What a row's `assistant_thinking` and `assistant_answer_length` say someone picked. */
-const pickedLevelsOf = (row: LevelColumns): PickedLevels => ({ thinking: levelIn(THINKING_LEVELS, row.assistant_thinking), length: levelIn(ANSWER_LENGTHS, row.assistant_answer_length) });
+/** What a row's `assistant_thinking`, `assistant_answer_length` and `assistant_model` say someone picked. */
+const assistantPicksOf = (row: PickColumns): AssistantPicks => ({
+  thinking: levelIn(THINKING_LEVELS, row.assistant_thinking),
+  length: levelIn(ANSWER_LENGTHS, row.assistant_answer_length),
+  model: row.assistant_model,
+});
 
-interface LevelColumns {
+interface PickColumns {
   assistant_thinking: string | null;
   assistant_answer_length: string | null;
+  assistant_model: string | null;
 }
 
 /** Gives someone an avatar, or none, recording when, which changes its address. */
@@ -1935,32 +2094,24 @@ export class WorkspaceStore {
   }
 
   /**
-   * Adds someone who signed in with an account elsewhere, the one `issuer` and `subject` name, as a
-   * member with no password, linked to it, with their session, in every open room, spending the links to
-   * their email address, as `createMember` adds someone who joins. If someone has their
-   * email address already, or the account is linked to someone already, a unique index refuses its
-   * statement, and so the whole batch.
+   * Adds someone who signed in with `account`, an account elsewhere, as a member with no password, linked
+   * to it, with their session, in every open room, spending the links to their email address, as
+   * `createMember` adds someone who joins. If someone has their email address already, or the account
+   * is linked to someone already, a unique index refuses its statement, and so the whole batch.
    */
-  async createLinkedMember(
-    person: NewLinkedPerson,
-    issuer: string,
-    subject: string,
-    checkedAt: number,
-    sessionId: string,
-    tokenDigest: string,
-    client: Client,
-    now: string,
-  ): Promise<void> {
+  async createLinkedMember(person: NewLinkedPerson, account: LinkedAccount, checkedAt: number, sessionId: string, tokenDigest: string, client: Client, now: string): Promise<void> {
     await this.db.batch([
       statement(`INSERT INTO users (id, name, email_address, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, person.id, person.name, person.emailAddress, now, now),
       statement(
-        `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-        issuer,
-        subject,
+        `INSERT INTO identities (issuer, subject, user_id, checked_at, created_at, updated_at, name, email_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        account.issuer,
+        account.subject,
         person.id,
         checkedAt,
         now,
         now,
+        account.name,
+        account.emailAddress,
       ),
       statement(INSERT_SESSION, sessionId, person.id, tokenDigest, client.ip, client.userAgent, now, now, now),
       statement(GRANT_OPEN_ROOMS_TO_USER, person.id, now, now),
@@ -1984,12 +2135,16 @@ export class WorkspaceStore {
     );
   }
 
-  /** Starts a session for someone who signed in with an account elsewhere that's linked to them, unless they've stopped being active. */
-  async startLinkedSession(userId: UserId, sessionId: string, tokenDigest: string, client: Client, now: string): Promise<StoredSession | null> {
-    const [, [row]] = (await this.db.batch([
+  /**
+   * Starts a session for someone who signed in with `account`, an account elsewhere that's linked to
+   * them, unless they've stopped being active, keeping what the account says of itself now.
+   */
+  async startLinkedSession(userId: UserId, sessionId: string, tokenDigest: string, client: Client, now: string, account: LinkedAccount): Promise<StoredSession | null> {
+    const [, , [row]] = (await this.db.batch([
       statement(INSERT_LINKED_SESSION, sessionId, tokenDigest, client.ip, client.userAgent, now, userId),
+      statement(REFRESH_IDENTITY, account.issuer, account.subject, account.name, account.emailAddress, now),
       statement(SESSION, tokenDigest),
-    ])) as [unknown[], SessionRow[]];
+    ])) as [unknown[], unknown[], SessionRow[]];
     return row ? storedSession(row) : null;
   }
 
@@ -2030,13 +2185,34 @@ export class WorkspaceStore {
   }
 
   /**
-   * Links the account elsewhere that `issuer` and `subject` name to the person `connecting` is for, its
-   * membership read at `checkedAt`, unless they've stopped being able to have one connected, or their
-   * password has changed since it checked out. Whether it's linked. A unique index refuses it for an
-   * account linked to anyone already, or a second account of theirs at `issuer`.
+   * Links `account`, an account elsewhere, to the person `connecting` is for, its membership read at
+   * `checkedAt`, unless they've stopped being able to have one connected, or their password has changed
+   * since it checked out. Whether it's linked. A unique index refuses it for an account linked to
+   * anyone already, or a second account of theirs at its issuer.
    */
-  async connectIdentity({ userId, passwordDigest }: Connecting, issuer: string, subject: string, checkedAt: number, now: string): Promise<boolean> {
-    return (await this.db.all(CONNECT_IDENTITY, issuer, subject, checkedAt, now, userId, passwordDigest)).length > 0;
+  async connectIdentity({ userId, passwordDigest }: Connecting, account: LinkedAccount, checkedAt: number, now: string): Promise<boolean> {
+    const { issuer, subject, name, emailAddress } = account;
+    return (await this.db.all(CONNECT_IDENTITY, issuer, subject, checkedAt, now, userId, passwordDigest, name, emailAddress)).length > 0;
+  }
+
+  /**
+   * Unlinks the account at `issuer` from `userId`, while their password's digest is still
+   * `passwordDigest`, as the Worker checked it, and in the same transaction ends the sessions and
+   * forgets the push subscriptions `ended` says, queuing closing those sessions' sockets, and forgets
+   * the connections their browsers started and haven't finished, as a new password does. Each
+   * statement checks both, so a password changed meanwhile, or an account disconnected already, changes
+   * nothing. Answers whether it was unlinked, and whether it queued any.
+   */
+  async disconnectIdentity(userId: UserId, issuer: string, passwordDigest: string, ended: EndedByPassword): Promise<Disconnection> {
+    const [queued, , , , unlinked] = await this.db.batch([
+      // Before their sessions go, which it finds their sockets by, and before the link, which each checks.
+      statement(QUEUE_DISCONNECTED_SESSION_REVOCATIONS, userId, issuer, passwordDigest, SESSION_TAG_PREFIX, ended.code, ended.dueAt, ended.kept),
+      statement(`DELETE FROM sessions WHERE user_id = ?1 AND id <> ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.kept),
+      statement(`DELETE FROM push_subscriptions WHERE user_id = ?1 AND endpoint IS NOT ?4 AND ${DISCONNECTING}`, userId, issuer, passwordDigest, ended.pushEndpoint),
+      statement(`DELETE FROM pending_identities WHERE user_id = ?1 AND ${DISCONNECTING}`, userId, issuer, passwordDigest),
+      statement(DISCONNECT_IDENTITY, userId, issuer, passwordDigest),
+    ]);
+    return { disconnected: unlinked!.length > 0, queued: queued!.length > 0 };
   }
 
   /** Whether anyone, whatever their status, has an account at `issuer` linked to them. */
@@ -2287,13 +2463,15 @@ export class WorkspaceStore {
   /**
    * Gives someone the password `passwordDigest` is the digest of, recording when, and ends all their
    * sessions, keeping their role and status, and forgets their push subscriptions, the accounts
-   * elsewhere their old password started connecting, and any code they were emailed to reset it. In the
-   * same transaction it queues closing each session's sockets with `code` in every room they're in, due
-   * at `dueAt`, as signing out does. Answers whether it queued any.
+   * elsewhere their old password started connecting, or connected (`UNLINK_ON_RESET`), and any
+   * code they were emailed to reset it. In the same transaction it queues closing each session's
+   * sockets with `code` in every room they're in, due at `dueAt`, as signing out does. Answers whether
+   * it queued any.
    */
   async resetPassword(userId: UserId, passwordDigest: string, code: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [queued] = await this.db.batch([
       statement(QUEUE_PERSON_SESSION_REVOCATIONS, SESSION_TAG_PREFIX, code, dueAt, userId),
+      statement(UNLINK_ON_RESET, userId),
       statement(`UPDATE users SET password_digest = ?, updated_at = ? WHERE id = ?`, passwordDigest, now, userId),
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
@@ -2316,7 +2494,7 @@ export class WorkspaceStore {
       statement(QUEUE_PERSON_SESSION_REVOCATIONS, SESSION_TAG_PREFIX, code, dueAt, userId),
       statement(LEAVE_SHARED_ROOMS, userId),
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
-      statement(`DELETE FROM searches WHERE user_id = ?`, userId),
+      ...forgettingSearches(userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
       statement(DEACTIVATE, `-deactivated-${uuid}@`, now, userId),
     ]);
@@ -2571,11 +2749,11 @@ export class WorkspaceStore {
   }
 
   /**
-   * What someone's search page needs: the rooms they're in, with the people in their DMs, as their
-   * sidebar lists them, and their recent searches, newest first, having first recorded `recording` as
-   * their newest, when it's given, in the same transaction.
+   * What someone's search needs: the rooms they're in, with the people in their DMs, as their sidebar
+   * lists them, and their recent searches, newest first, having first recorded the search whose key is
+   * `recording` as their newest, when it's given, in the same transaction.
    */
-  async searcherOf(userId: UserId, recording: string | null): Promise<{ rooms: Room[]; recent: string[] }> {
+  async searcherOf(userId: UserId, recording: string | null): Promise<{ rooms: Room[]; recent: Search[] }> {
     const records = recording === null ? [] : [statement(RECORD_SEARCH, userId, recording), statement(TRIM_SEARCHES, userId, RECENT_SEARCHES - 1)];
     const results = await this.db.batch([
       ...records,
@@ -2583,14 +2761,14 @@ export class WorkspaceStore {
       statement(DIRECT_MEMBERS_FOR_USER, userId),
       statement(RECENT_SEARCHES_FOR_USER, userId, RECENT_SEARCHES),
     ]);
-    const [rows, members, recent] = results.slice(records.length) as [SidebarRow[], DirectMemberRow[], Array<{ query: string }>];
+    const [rows, members, recent] = results.slice(records.length) as [SidebarRow[], DirectMemberRow[], Array<{ search: string }>];
     const membersByRoom = Map.groupBy(members, (member) => member.room_id);
-    return { rooms: rows.map((row) => roomOf(row, membersByRoom.get(row.id))), recent: recent.map((row) => row.query) };
+    return { rooms: rows.map((row) => roomOf(row, membersByRoom.get(row.id))), recent: recent.flatMap((row) => recentSearchOf(row.search) ?? []) };
   }
 
   /** Forgets all of someone's recent searches. */
   async clearSearches(userId: UserId): Promise<void> {
-    await this.db.run(`DELETE FROM searches WHERE user_id = ?`, userId);
+    await this.db.batch(forgettingSearches(userId));
   }
 
   /**
@@ -2967,7 +3145,8 @@ export class WorkspaceStore {
    * Saves someone's profile, and a new password when `passwordDigest` is one's, recording when. With a
    * new password, in the same transaction it ends the sessions and forgets the push subscriptions
    * `ended` says, queuing closing those sessions' sockets, and forgets the accounts elsewhere their old
-   * password started connecting. Answers whether it queued any.
+   * password started connecting, or connected, if they had one and keep an email address to sign in
+   * with (`UNLINK_ON_NEW_PASSWORD`). Answers whether it queued any.
    */
   async changeProfile(userId: UserId, { name, emailAddress, bio, passwordDigest }: ProfileChange, now: string, ended: EndedByPassword | null): Promise<boolean> {
     const change = statement(CHANGE_PROFILE, name, emailAddress, bio, passwordDigest, now, userId);
@@ -2981,6 +3160,7 @@ export class WorkspaceStore {
       statement(`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userId, ended.kept),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint IS NOT ?`, userId, ended.pushEndpoint),
       statement(`DELETE FROM pending_identities WHERE user_id = ?`, userId),
+      statement(UNLINK_ON_NEW_PASSWORD, userId, emailAddress),
       change,
     ]);
     return queued!.length > 0;
@@ -3001,32 +3181,41 @@ export class WorkspaceStore {
     return row ? { name: row.name, bot: ROLES[row.role] === "bot", avatar: avatarOf(row) } : null;
   }
 
+  /** Someone with the avatar they've uploaded, or a bot was given, whatever their status, or null if nobody has id `userId`. */
+  async personWithAvatar(userId: UserId): Promise<PicturedEntry | null> {
+    const [row] = await this.db.all<DirectoryRow & AvatarColumns>(PERSON_WITH_AVATAR, userId);
+    return row ? { ...directoryEntry(row), avatar: avatarOf(row) } : null;
+  }
+
   /** Someone with their profile and the avatar they've uploaded, whatever their status, or null if nobody has id `userId`. */
   async ownProfile(userId: UserId): Promise<OwnProfileEntry | null> {
-    const [row] = await this.db.all<DirectoryRow & AvatarColumns & LevelColumns & { email_address: string | null; password: number; membership_needed: number; issuers: string }>(
+    const [row] = await this.db.all<DirectoryRow & AvatarColumns & PickColumns & { email_address: string | null; password: number; membership_needed: number; accounts: string }>(
       OWN_PROFILE,
       userId,
     );
     if (!row) return null;
-    const issuers = JSON.parse(row.issuers) as string[];
+    const accounts = JSON.parse(row.accounts) as LinkedAccount[];
     const membershipNeeded = row.membership_needed === 1;
-    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, issuers, levels: pickedLevelsOf(row) };
+    return { ...directoryEntry(row), emailAddress: row.email_address, avatar: avatarOf(row), password: row.password === 1, membershipNeeded, accounts, picks: assistantPicksOf(row) };
   }
 
-  /** How much `userId` picked for @ember to think and how long its answers to them are, or null for nobody. */
-  async pickedLevels(userId: UserId): Promise<PickedLevels | null> {
-    const [row] = await this.db.all<LevelColumns>(ANSWER_LEVELS, userId);
-    return row ? pickedLevelsOf(row) : null;
+  /** How much `userId` picked for @ember to think, how long its answers to them are and the model it answers them with, or null for nobody. */
+  async assistantPicks(userId: UserId): Promise<AssistantPicks | null> {
+    const [row] = await this.db.all<PickColumns>(ASSISTANT_PICKS, userId);
+    return row ? assistantPicksOf(row) : null;
   }
 
-  /** Changes the levels `userId` picks of @ember's dials to `changes`, keeping a dial they leave out. */
-  async changePickedLevels(userId: UserId, changes: AnswerLevelChanges): Promise<void> {
-    await this.db.run(CHANGE_ANSWER_LEVELS, changes.thinking ?? null, changes.length ?? null, userId);
+  /** Changes what `userId` picks of @ember's dials and its model to `changes`, keeping what they leave out. */
+  async changeAssistantPicks(userId: UserId, changes: YourAssistantChanges): Promise<void> {
+    await this.db.run(CHANGE_ASSISTANT_PICKS, changes.thinking ?? null, changes.length ?? null, changes.model === undefined ? 0 : 1, changes.model ?? null, userId);
   }
 
-  /** Sets the most each of @ember's dials goes to for anyone's questions, without recording when, as no page's address goes by it. */
-  async changeAssistantMost(most: AnswerLevels): Promise<void> {
-    await this.db.run(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most));
+  /**
+   * Changes Ember AI while it's on to `assistant`, and the most each of @ember's dials goes to for anyone's
+   * questions to `most`, in one batch, without recording when, as no page's address goes by either.
+   */
+  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels): Promise<void> {
+    await this.db.batch([statement(REMEMBER_ASSISTANT, assistantSetting(assistant)), statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most))]);
   }
 
   /**

@@ -45,7 +45,7 @@ import { PeopleList } from "./people-list";
 import { PicturePicker } from "./picture-picker";
 import { RoomOrder } from "./room-order";
 import { workspaceSectionOf } from "./settings-navigation";
-import { CHANGES_SAVED, PageHeading, Panel, SECTION_HEADING, SettingsPage } from "./settings-page";
+import { CHANGES_SAVED, PageHeading, Panel, SECTION_HEADING, SettingsPage, TITLE, TITLE_LINK } from "./settings-page";
 import { TurnstileSettings } from "./turnstile-settings";
 import { TurnstileSetup } from "./turnstile-setup";
 import { HowPeopleJoin, WaysToJoin } from "./ways-to-join";
@@ -171,7 +171,8 @@ export function WorkspaceSettingsPage({
         setTypedName(null);
         setTypedTagline(null);
         answered(settings.account);
-        onJoinCodeChanged(settings.joinCode);
+        // Only administrators have the welcome card, and they're always given the code.
+        if (settings.joinCode !== null) onJoinCodeChanged(settings.joinCode);
       },
       (error: unknown) => {
         // A page left before its settings load only reports a session that's ended, which goes to sign in.
@@ -440,14 +441,11 @@ export function WorkspaceSettingsPage({
       </Panel>
       <Panel id="channel-settings" hidden={section !== "channel-settings"} aria-labelledby="channel-settings-heading" className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center justify-between gap-3 upto-500px:items-start">
-          <h2 id="channel-settings-heading" className="text-[24px] font-semibold upto-500px:text-[22px]">
+          <h2 id="channel-settings-heading" className={TITLE}>
             Room order and permissions
           </h2>
           {(me.administrator || !account.restrictRoomCreation) && (
-            <PageLink
-              href={newRoomPath("open")}
-              className="inline-flex min-h-11 items-center justify-center gap-[0.5em] rounded-[9px] border bg-background px-3.5 py-2.5 font-medium"
-            >
+            <PageLink href={newRoomPath("open")} className={TITLE_LINK}>
               <Plus className="size-[18px]" />
               <span>New room</span>
             </PageLink>
@@ -486,7 +484,7 @@ export function WorkspaceSettingsPage({
                   saveEmailDomains={saveEmailDomains}
                   onSetUpEmail={setUpEmail}
                   onSetUpTurnstile={() => setSettingUpTurnstile(true)}
-                  joinLink={<InviteLink joinCode={settings.joinCode} onRegenerate={regenerate} regenerating={regenerating} />}
+                  joinLink={settings.joinCode !== null && <InviteLink joinCode={settings.joinCode} onRegenerate={regenerate} regenerating={regenerating} />}
                 />
                 <InviteByEmail
                   invitations={settings.invitations}
@@ -526,7 +524,7 @@ export function WorkspaceSettingsPage({
                 )}
               </div>
             ) : (
-              <HowPeopleJoin joinLink={<InviteLink joinCode={settings.joinCode} />} memberfulSite={settings.memberfulSite} />
+              <HowPeopleJoin joinCode={settings.joinCode} memberfulSite={settings.memberfulSite} />
             )}
             <hr className="my-4 w-full" />
             <PeopleList
@@ -570,7 +568,13 @@ export function WorkspaceSettingsPage({
                 onFailed={onFailed}
               />
               {settingUpAssistant && (
-                <AssistantSetup assistant={settings.assistant} onSaved={showAssistant} onClose={() => setSettingUpAssistant(false)} onFailed={onFailed} />
+                <AssistantSetup
+                  assistant={settings.assistant}
+                  deployedAccountId={settings.cloudflareAccountId}
+                  onSaved={showAssistant}
+                  onClose={() => setSettingUpAssistant(false)}
+                  onFailed={onFailed}
+                />
               )}
             </>
           ) : (

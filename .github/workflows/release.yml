@@ -22,8 +22,8 @@ jobs:
     if: github.repository == 'NYLLON-SOFTWARE/ember-cloudflare'
     runs-on: ubuntu-latest
     steps:
-      # Pinned to a commit, not a tag, because this job can write to the repository. It's the commit v4 pointed at.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Pinned to a commit, not a tag, because this job can write to the repository. It's the commit v5 pointed at.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Release the version, if it's new
         env:
           GH_TOKEN: ${{ github.token }}
