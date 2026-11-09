@@ -64,7 +64,7 @@ elif [ "$1 $2" = "secret list" ]; then
   esac
 elif [ "$1 $2" = "deploy --secrets-file" ]; then
   echo "$3" > "$OUT/secrets-path"
-  stat -c %a "$3" > "$OUT/secrets-mode"
+  { stat -c %a "$3" 2>/dev/null || stat -f %Lp "$3"; } > "$OUT/secrets-mode"
   cp "$3" "$OUT/secrets.json"
   shift 3
   echo "$*" > "$OUT/deploy-args"
