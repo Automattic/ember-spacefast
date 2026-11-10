@@ -568,10 +568,10 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     pressed(() => setHuddlePreview(room.id));
   });
   // Cmd+/ or Ctrl+/ opens the keyboard shortcuts: from the composer too, which has no
-  // key of its own there, but not over another dialog.
+  // key of its own there, but not over another dialog, a native <dialog> like Notification setup included.
   const shortcutsPressed = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || !opensShortcuts(event)) return;
-    if (event.target instanceof Element && event.target.closest("[role=dialog]")) return;
+    if (event.target instanceof Element && event.target.closest("dialog, [role=dialog]")) return;
     event.preventDefault();
     setShortcutsOpen(true);
   });

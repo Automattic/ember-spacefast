@@ -1526,6 +1526,24 @@ describe("Keyboard shortcuts", () => {
     expect(fireEvent.keyDown(screen.getByRole("combobox", { name: "Search people" }), { key: "/", ctrlKey: true })).toBe(true);
     expect(shortcuts()).not.toBeInTheDocument();
   });
+
+  it("stays shut over a native modal dialog, which has no role attribute", async () => {
+    vi.stubGlobal("WebSocket", OpenRoomSocket);
+    showWorkspace("/rooms/general");
+    await roomHeading();
+    const modal = document.createElement("dialog");
+    const button = document.createElement("button");
+    button.textContent = "Allow";
+    modal.append(button);
+    document.body.append(modal);
+    modal.showModal();
+    try {
+      expect(fireEvent.keyDown(button, { key: "/", ctrlKey: true })).toBe(true);
+      expect(shortcuts()).not.toBeInTheDocument();
+    } finally {
+      modal.remove();
+    }
+  });
 });
 
 describe("Welcome card for administrators, until they dismiss it", () => {
