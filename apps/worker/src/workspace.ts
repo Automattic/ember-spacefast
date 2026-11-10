@@ -3032,18 +3032,19 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Lifts the ban on `userId` as the person `credentials` signs in, unblocking their IP addresses and
-   * making them active, whatever their status was, removed included, without bringing back their
-   * messages, though rooms yet to delete theirs keep what they write from then on. Answers them as the
-   * people directory then lists them, or why not, as `banPerson` does. Everyone's workspace sockets hear
-   * of it.
+   * making them active, whatever their status was, removed included, in every open room, without
+   * bringing back their messages, though rooms yet to delete theirs keep what they write from then on.
+   * Answers them as the people directory then lists them, or why not, as `banPerson` does. Everyone's
+   * workspace sockets hear of it.
    */
   async unbanPerson(credentials: Credentials, userId: UserId): Promise<DirectoryUser | "forbidden" | "not found" | null> {
     const user = await this.authenticate(credentials);
     if (!user) return null;
     return this.closingSockets(async () => {
       if (!(await this.store.isAdministrator(user.id))) return "forbidden";
-      // As when banning, @ember goes with Ember AI, which lifting a ban would otherwise bring back.
-      const person = userId === ASSISTANT_ID ? null : await this.store.person(userId);
+      // As when banning, @ember and the agents go with Ember AI, which lifting a ban would otherwise
+      // bring back, and an agent kept to the open rooms picked would be put in every one.
+      const person = (await this.goesWithEmberAi(userId)) ? null : await this.store.person(userId);
       if (!person) return "not found";
 
       const now = Date.now();
