@@ -508,6 +508,23 @@ describe("@ember", () => {
     client.close();
   });
 
+  it.each([
+    [2016, "Prompt blocked due to security configurations", "guardrails"],
+    [2017, "Response blocked due to security configurations", "guardrails answer"],
+    [2029, "Request content blocked due to DLP policy violations", "dlp"],
+    [2030, "Response content blocked due to DLP policy violations", "dlp answer"],
+  ] as const)("says the gateway's Guardrails or Data Loss Prevention blocked it when AI Gateway answers %i, asking nothing again", async (code, said, reason) => {
+    const { ada, general } = await setUp();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(() => refusal(424, code, said));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(EMBER)} hello?</p>`);
+    expect(await nextAnswer(client)).toMatchObject({ creator: EMBER, plainText: NOTES[reason] });
+    expect(questions).toHaveLength(1);
+    client.close();
+  });
+
   it("posts nothing once Ember AI is turned off while the model answers, and stops typing", async () => {
     const { ada, general } = await setUp();
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
