@@ -26,6 +26,7 @@ import {
   type Me,
   type SignUp,
 } from "@ember/protocol";
+import { agentsName } from "@ember/protocol/agents";
 import { authenticate, clientOf, newSessionToken, sessionCookie, tokenDigest } from "./auth";
 import { userFormOf, userFormPhoto } from "./avatars";
 import { jsonBodyOf } from "./bodies";
@@ -150,6 +151,7 @@ export async function join(request: Request, env: Env, code: string): Promise<Re
   if (user === "not found") return formAnswer({ error: "Not found" }, 404);
   if (user === "memberful") return formAnswer(MEMBERFUL_INSTEAD, 403);
   if (user === "off") return formAnswer(signInInsteadOf("link_off"), 403);
+  if (user === "agent's name") return agentsNameRefused(form.name);
   if (!user) return emailAddressTaken(form.emailAddress);
   return formAnswer({ user } satisfies { user: Me }, 201, sessionCookie(request, token));
 }
@@ -187,6 +189,7 @@ export async function signUp(request: Request, env: Env): Promise<Response> {
   const token = newSessionToken();
   const user = await workspace(env).signUp(person, await tokenDigest(token, env.SESSION_SECRET), client, limited);
   if (user === "closed" || user === "full") return signUpRefused(user, form.emailAddress);
+  if (user === "agent's name") return agentsNameRefused(form.name);
   if (!user) return emailAddressTaken(form.emailAddress);
   return formAnswer({ user } satisfies { user: Me }, 201, sessionCookie(request, token));
 }
@@ -222,6 +225,7 @@ export async function joinWithEmailLink(request: Request, env: Env, kind: EmailL
   const token = newSessionToken();
   const user = await workspace(env).joinWithEmailLink(kind, linkDigest, person, await tokenDigest(token, env.SESSION_SECRET), clientOf(request));
   if (user === "gone") return linkGone(kind);
+  if (user === "agent's name") return agentsNameRefused(form.name);
   if (!user) return emailAddressTaken(link.emailAddress);
   return formAnswer({ user } satisfies { user: Me }, 201, sessionCookie(request, token));
 }
@@ -275,6 +279,9 @@ async function personOf(env: Env, form: SignUp, photo: FormData | null): Promise
   const passwordDigest = await passwordHasher(env).hash(form.password);
   return { name: form.name, emailAddress: form.emailAddress, passwordDigest, avatar };
 }
+
+/** What a form for joining answers for a name that's an AI agent's, which nobody else can take, on its field. */
+const agentsNameRefused = (name: string) => formAnswer({ error: agentsName(name), field: "name" }, 422);
 
 /** What a form for joining answers for an email address that has an account: sign in with it, filled in. */
 function emailAddressTaken(emailAddress: string): Response {

@@ -34,6 +34,7 @@ const savedOf = ({ accountId, model, modelName: name }: Pick<Setup, "accountId" 
     models: [{ id: model, name: name ?? modelName(model), format }],
     most: TOP_LEVELS,
     webTools: format === "chat" ? null : [],
+    instructions: "",
     avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
     avatar: false,
   };

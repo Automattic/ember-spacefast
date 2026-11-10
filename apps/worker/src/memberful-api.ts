@@ -28,8 +28,12 @@ export interface MemberfulMember {
   id: string;
   /** Their full name at Memberful, cut to the longest name here, or null when they gave none. */
   fullName: string | null;
-  /** What someone new is called here: their full name, else their email address's local part, else "Member". */
-  name: string;
+  /**
+   * What someone new can be called here, the one they'd rather first: their full name, then their email
+   * address's local part, passing over @ember's (`namesOf`). They're called the first that isn't an AI
+   * agent's, else "Member" (`NAMELESS_MEMBER`).
+   */
+  names: string[];
   /** Their email address, or null when they have none Ember can keep. */
   emailAddress: string | null;
   /** Whether they have an active subscription, or the all access pass (`unrestrictedAccess`). */
@@ -167,7 +171,7 @@ function memberOf(answer: unknown): MemberfulMember | null {
   return {
     id,
     fullName: typeof fullName === "string" ? cutName(fullName) || null : null,
-    name: nameOf(fullName, emailAddress),
+    names: namesOf(fullName, emailAddress),
     emailAddress,
     subscribed: isSubscribed(member as Record<string, unknown>),
   };
@@ -179,13 +183,16 @@ function isSubscribed({ unrestrictedAccess, subscriptions }: Record<string, unkn
   return unrestrictedAccess === true || active;
 }
 
+/** What someone new is called here when Memberful gives no name they can have. */
+export const NAMELESS_MEMBER = "Member";
+
 /**
- * What someone new is called here: `fullName`, else their email address's local part, else "Member", cut
- * to the longest name, passing over either when it's @ember's (`isReservedName`).
+ * What someone new can be called here: `fullName`, then their email address's local part, cut to the
+ * longest name, passing over either when it's blank or @ember's (`isReservedName`).
  */
-function nameOf(fullName: unknown, emailAddress: string | null): string {
+function namesOf(fullName: unknown, emailAddress: string | null): string[] {
   const names = [typeof fullName === "string" ? fullName : "", emailAddress?.split("@")[0] ?? ""].map(cutName);
-  return names.find((name) => name && !isReservedName(name)) ?? "Member";
+  return names.filter((name) => name && !isReservedName(name));
 }
 
 /** `name` without the spaces around it, cut to the longest name, without half of a character cut in two. */

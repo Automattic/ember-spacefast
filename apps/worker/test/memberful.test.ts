@@ -764,6 +764,23 @@ describe("Sign in with Memberful", () => {
       expect((await signedInAs(await signInWithMemberful())).name).toBe("Member");
     });
 
+    it("passes over an AI agent's name too, even while Ember AI is off", async () => {
+      const administrator = await setUpWithMemberful();
+      // As making an agent called Katherine Johnson leaves it once Ember AI is turned off.
+      const now = new Date().toISOString();
+      await workspaceSql("INSERT INTO users (id, name, role, status, created_at, updated_at) VALUES ('0agent', 'katherine johnson', 2, 1, ?, ?)", now, now);
+      await workspaceSql(
+        `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, every_open_room, created_by, updated_by, created_at, updated_at)
+          VALUES ('0agent', 'Sums up threads', 'Sum up.', 'anthropic/claude-haiku-5.5', 'Claude Haiku 5.5', 'messages', 'off', 'short', 1, ?1, ?1, ?2, ?2)`,
+        administrator.user.id,
+        now,
+      );
+      const site = fakeMemberful();
+      expect((await signedInAs(await signInWithMemberful())).name).toBe("katherine");
+      site.member = { ...katherine, id: "4243", email: null };
+      expect((await signedInAs(await signInWithMemberful())).name).toBe("Member");
+    });
+
     it("signs nobody in with a state this browser didn't start with, or without a code, and asks Memberful nothing", async () => {
       await setUpWithMemberful();
       const site = fakeMemberful();

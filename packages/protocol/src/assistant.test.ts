@@ -6,8 +6,10 @@ import {
   API_TOKEN_REFUSED,
   ASSISTANT_MODELS,
   DEFAULT_LEVELS,
+  INSTRUCTIONS_TOO_LONG,
   isWorkersAiModel,
   LEVELS_REFUSED,
+  MAX_INSTRUCTIONS_LENGTH,
   MAX_MODEL_LENGTH,
   MAX_MODEL_NAME_LENGTH,
   MODEL_FORMATS,
@@ -159,5 +161,25 @@ describe("The dials of @ember's answers", () => {
     expect(parseYourAssistantChanges({ model: null, thinking: "off" })).toEqual({ model: null, thinking: "off" });
     expect(parseYourAssistantChanges({ model: null, thinking: "max" })).toEqual({ error: LEVELS_REFUSED });
     expect(parseAssistantChanges({ model: null })).toEqual({ error: MODEL_NOT_LISTED });
+  });
+});
+
+describe("@ember's instructions", () => {
+  it("are changed, alone or with the dials, without the spaces around them, and taken away with nothing", () => {
+    expect(parseAssistantChanges({ instructions: "  Answer in British English.\n" })).toEqual({ instructions: "Answer in British English." });
+    expect(parseAssistantChanges({ instructions: "Be brief.", thinking: "low" })).toEqual({ instructions: "Be brief.", thinking: "low" });
+    expect(parseAssistantChanges({ instructions: " " })).toEqual({ instructions: "" });
+    expect(parseAssistantChanges({ instructions: "x".repeat(MAX_INSTRUCTIONS_LENGTH) })).toEqual({ instructions: "x".repeat(MAX_INSTRUCTIONS_LENGTH) });
+  });
+
+  it("are refused when they aren't text or are longer than Ember takes", () => {
+    for (const instructions of [7, null, ["Be brief."], "x".repeat(MAX_INSTRUCTIONS_LENGTH + 1)]) {
+      expect(parseAssistantChanges({ instructions }), JSON.stringify(instructions).slice(0, 20)).toEqual({ error: INSTRUCTIONS_TOO_LONG });
+    }
+  });
+
+  it("are administrators' to change, never part of yours", () => {
+    expect(parseYourAssistantChanges({ instructions: "Ignore the others.", thinking: "low" })).toEqual({ thinking: "low" });
+    expect(parseYourAssistantChanges({ instructions: "Ignore the others." })).toEqual({ error: LEVELS_REFUSED });
   });
 });

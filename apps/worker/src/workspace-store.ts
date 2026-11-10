@@ -45,6 +45,7 @@ import {
 } from "@ember/protocol";
 import {
   ANSWER_LENGTHS,
+  DEFAULT_LEVELS,
   MODEL_FORMATS,
   modelName,
   modelNameOf,
@@ -60,6 +61,7 @@ import {
   type WebTool,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
+import type { AgentRoom } from "@ember/protocol/agents";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
 import { messagePayload, type PushPayload } from "./push/payload";
@@ -135,6 +137,8 @@ export interface JoinableAccount extends Omit<Account, "logo"> {
   assistant: SavedAssistant | null;
   /** The most each of @ember's dials goes to for anyone's questions, as administrators set it, whether Ember AI is on or not. */
   assistantMost: AnswerLevels;
+  /** What Ember adds to @ember's own instructions, as administrators write them, or "" for nothing, whether Ember AI is on or not. */
+  assistantInstructions: string;
   /** The SFU app huddles run through, while an administrator has them on, or else null. */
   huddles: SavedHuddles | null;
   /** Where a deploy puts Ember, as the latest page opened there told it, or null until one has (`EmberAddresses.deployed`). */
@@ -374,6 +378,64 @@ export interface NewStoredBot {
   token: string;
   webhookUrl: string | null;
   avatar: StoredPicture | null;
+}
+
+/**
+ * What makes a bot an agent, as the agents table keeps it: what it does, its instructions, the model it
+ * answers with, what that's called and the format it took its test question in, how much it thinks and
+ * how long it answers, and what it may do on the web.
+ */
+export interface AgentSetup {
+  description: string;
+  instructions: string;
+  model: string;
+  modelName: string;
+  format: ModelFormat;
+  levels: AnswerLevels;
+  webTools: WebTool[];
+}
+
+/**
+ * An agent as the AI assistant tab lists it: as the people directory lists it, with what it does and
+ * its model, and the open rooms it's kept to, by name, or null while it's in every one.
+ */
+export interface StoredAgent extends DirectoryEntry {
+  description: string;
+  model: string;
+  modelName: string;
+  rooms: AgentRoom[] | null;
+}
+
+/** The same, with the rest of its setup, its avatar, and who last changed it, and when, as its page shows it. */
+export interface StoredAgentSettings extends StoredAgent, AgentSetup {
+  avatar: StoredPicture | null;
+  changedBy: User;
+  changedAt: string;
+}
+
+/**
+ * An agent to add, made by `createdBy`: its id and name, its setup, the open rooms it's in, or null for
+ * every one, and its avatar, or null for none.
+ */
+export interface NewStoredAgent extends AgentSetup {
+  id: UserId;
+  name: string;
+  rooms: RoomId[] | null;
+  avatar: StoredPicture | null;
+  createdBy: UserId;
+}
+
+/**
+ * A change to an agent by `changedBy`: its new name, if it has one, its setup as it is then, the open
+ * rooms it's in then, or null for every one, if they changed, and its new avatar, or none, if that
+ * changed, with the key of the one it had, for R2 to delete at `dueAt`.
+ */
+export interface StoredAgentChange {
+  name?: string;
+  setup: AgentSetup;
+  rooms?: RoomId[] | null;
+  avatar?: { avatar: StoredPicture | null; previous: string | null; dueAt: number };
+  changedBy: UserId;
 }
 
 /** A new avatar for someone, which R2 has stored under a key reserved for it, and the key of the one they had, for R2 to delete at `dueAt`. */
@@ -799,6 +861,19 @@ const avatarChange = (userId: UserId, avatar: StoredPicture | null, previous: st
   ...(previous ? [statement(QUEUE_PICTURE_DELETION, previous, dueAt)] : []),
 ];
 
+/**
+ * What puts agent `agentId` in every open room, with null, or in just the open rooms `rooms` names,
+ * taking it out of the others, and records which it's in.
+ */
+const roomsChange = (agentId: UserId, rooms: RoomId[] | null, now: string): Statement[] =>
+  rooms === null
+    ? [statement(`UPDATE agents SET every_open_room = 1 WHERE user_id = ?`, agentId), statement(GRANT_OPEN_ROOMS_TO_USER, agentId, now, now)]
+    : [
+        statement(`UPDATE agents SET every_open_room = 0 WHERE user_id = ?`, agentId),
+        statement(LEAVE_UNPICKED_ROOMS, agentId, JSON.stringify(rooms)),
+        statement(GRANT_PICKED_ROOMS, agentId, JSON.stringify(rooms), now),
+      ];
+
 const directoryEntry = (row: DirectoryRow): DirectoryEntry => ({
   id: row.id,
   name: row.name,
@@ -813,6 +888,60 @@ interface BotRow extends DirectoryRow {
 }
 
 const storedBot = (row: BotRow, rooms: BotRoom[]): StoredBot => ({ ...directoryEntry(row), token: row.bot_token, rooms });
+
+/** An agent as the AI assistant tab lists it, as `AGENTS` reads it. */
+interface AgentRow extends DirectoryRow {
+  description: string;
+  model: string;
+  model_name: string;
+  every_open_room: number;
+}
+
+/** An agent as its page shows it, as `AGENT` reads it. */
+interface AgentSettingsRow extends AgentRow, AvatarColumns {
+  instructions: string;
+  format: string;
+  thinking: string;
+  answer_length: string;
+  web_tools: string | null;
+  changed_by: UserId;
+  changed_by_name: string;
+  changed_at: string;
+}
+
+/** An agent as `AgentRow` has it, kept to `rooms` unless it's in every open room. */
+const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
+  ...directoryEntry(row),
+  description: row.description,
+  model: row.model,
+  modelName: row.model_name,
+  rooms: row.every_open_room === 1 ? null : rooms,
+});
+
+/**
+ * An agent as `AgentSettingsRow` has it, kept to `rooms` unless it's in every open room. What can't be a
+ * format or a level, as nothing Ember writes is, reads as where @ember's start.
+ */
+const storedAgentSettings = (row: AgentSettingsRow, rooms: AgentRoom[]): StoredAgentSettings => ({
+  ...storedAgent(row, rooms),
+  instructions: row.instructions,
+  format: isModelFormat(row.format) ? row.format : "chat",
+  levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
+  webTools: webToolsIn(row.web_tools),
+  avatar: avatarOf(row),
+  changedBy: { id: row.changed_by, name: row.changed_by_name },
+  changedAt: row.changed_at,
+});
+
+/** The tools for the web a JSON list `kept` names, as the agents table keeps them, or none for null. */
+function webToolsIn(kept: string | null): WebTool[] {
+  const listed: unknown = kept === null ? [] : JSON.parse(kept);
+  return WEB_TOOLS.filter((tool) => Array.isArray(listed) && listed.includes(tool));
+}
+
+/** An agent's setup's columns, as `INSERT_AGENT` and `CHANGE_AGENT` take them, in order. */
+const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools }: AgentSetup) =>
+  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null] as const;
 
 /** Whether a value is `present?`: not null, false, blank, or empty. */
 function isPresent(value: unknown): boolean {
@@ -944,6 +1073,12 @@ function assistantMostIn(settings: Record<string, unknown> | null): AnswerLevels
   const kept = settings?.assistant_limits;
   const { thinking, length } = typeof kept === "object" && kept !== null ? (kept as Record<string, unknown>) : {};
   return { thinking: levelIn(THINKING_LEVELS, thinking) ?? TOP_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, length) ?? TOP_LEVELS.length };
+}
+
+/** What Ember adds to @ember's own instructions, which the account's settings keep as `assistant_instructions`, or "" for nothing. */
+function assistantInstructionsIn(settings: Record<string, unknown> | null): string {
+  const kept = settings?.assistant_instructions;
+  return typeof kept === "string" ? kept : "";
 }
 
 /** `kept` as one of a dial's `levels`, or null when it isn't one. */
@@ -1469,6 +1604,7 @@ const rememberSetting = (key: string) => `UPDATE accounts SET settings = json_se
 const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
 const REMEMBER_ASSISTANT = rememberSetting("assistant");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
+const REMEMBER_ASSISTANT_INSTRUCTIONS = rememberSetting("assistant_instructions");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
 /** Navigation icon changes as the merge patch `CHANGE_NAVIGATION_ICONS` takes them: null for a slot's default. */
@@ -1629,25 +1765,30 @@ const ACTIVE_PERSON = `SELECT id, name, bio, role, status, updated_at FROM users
 /** The same, or someone suspended for their membership's lapsing, as an administrator can remove them too. */
 const REMOVABLE_PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ? AND status IN (${ACTIVE}, ${SUSPENDED})`;
 
+/** Whether the user `users` reads is no agent's: the AI assistant tab looks after agents, as it does @ember, not Chat bots. */
+const NOT_AN_AGENT = `NOT EXISTS (SELECT 1 FROM agents WHERE agents.user_id = users.id)`;
+
 /**
- * The active bots, by name, with their tokens. @ember isn't one of them: the AI assistant tab looks after
- * it, not Chat bots.
+ * The active bots, by name, with their tokens. @ember and the agents aren't among them: the AI assistant
+ * tab looks after them, not Chat bots.
  */
 const ACTIVE_BOTS = `SELECT id, name, bio, role, status, updated_at, bot_token FROM users
-  WHERE status = ${ACTIVE} AND role = ${BOT} AND id <> '${ASSISTANT_ID}' ORDER BY lower(name), id`;
+  WHERE status = ${ACTIVE} AND role = ${BOT} AND id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT} ORDER BY lower(name), id`;
 
 /**
  * The rooms the active bots are in but their DMs, by name, as the bots page lists each bot's.
  */
 const ACTIVE_BOTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
   FROM users JOIN memberships ON memberships.user_id = users.id JOIN rooms ON rooms.id = memberships.room_id
-  WHERE users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}' AND rooms.kind <> 'direct' ORDER BY lower(rooms.name), rooms.id`;
+  WHERE users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT} AND rooms.kind <> 'direct'
+  ORDER BY lower(rooms.name), rooms.id`;
 
 /**
- * An active bot, with its token and where its webhook delivers. @ember isn't one, as above.
+ * An active bot, with its token and where its webhook delivers. @ember and the agents aren't, as above.
  */
 const ACTIVE_BOT = `SELECT users.id, users.name, users.bio, users.role, users.status, users.updated_at, users.bot_token, webhooks.url AS webhook_url
-  FROM users LEFT JOIN webhooks ON webhooks.user_id = users.id WHERE users.id = ? AND users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}'`;
+  FROM users LEFT JOIN webhooks ON webhooks.user_id = users.id
+  WHERE users.id = ? AND users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT}`;
 
 /**
  * An active bot's token, with whether it's in room ?1.
@@ -1658,6 +1799,77 @@ const ACTIVE_BOT_KEY = `SELECT id, name, bot_token, EXISTS (SELECT 1 FROM member
 /** The rooms a bot is in but its DMs, by name. */
 const BOT_ROOMS = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON rooms.id = memberships.room_id
   WHERE memberships.user_id = ? AND rooms.kind <> 'direct' ORDER BY lower(rooms.name), rooms.id`;
+
+/** What the AI assistant tab lists of an agent, of its user and its row. */
+const AGENT_COLUMNS = `users.id, users.name, users.bio, users.role, users.status, users.updated_at,
+  agents.description, agents.model, agents.model_name, agents.every_open_room`;
+
+/** The active agents, by name, as the AI assistant tab lists them. */
+const ACTIVE_AGENTS = `SELECT ${AGENT_COLUMNS} FROM agents JOIN users ON users.id = agents.user_id
+  WHERE users.status = ${ACTIVE} ORDER BY lower(users.name), users.id`;
+
+/** The open rooms each active agent kept to the open rooms picked is in, by name. */
+const KEPT_AGENTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
+  FROM agents JOIN users ON users.id = agents.user_id JOIN memberships ON memberships.user_id = agents.user_id JOIN rooms ON rooms.id = memberships.room_id
+  WHERE agents.every_open_room = 0 AND users.status = ${ACTIVE} AND rooms.kind = 'open' ORDER BY lower(rooms.name), rooms.id`;
+
+/** An active agent as its page shows it, with its avatar and who last changed it. */
+const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_variant,
+    agents.instructions, agents.format, agents.thinking, agents.answer_length, agents.web_tools,
+    agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
+  FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
+  WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;
+
+/** The open rooms someone is in, by name. */
+const OPEN_ROOMS_OF = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON rooms.id = memberships.room_id
+  WHERE memberships.user_id = ? AND rooms.kind = 'open' ORDER BY lower(rooms.name), rooms.id`;
+
+/** Every agent, active or not, as the directory lists it. */
+const AGENTS_LISTED = `SELECT users.id, users.name, users.bio, users.role, users.status, users.updated_at FROM agents JOIN users ON users.id = agents.user_id`;
+
+/** What makes a bot an agent, ?10 being 1 to put it in every open room, made by ?11. */
+const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
+    every_open_room, created_by, updated_by, created_at, updated_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?12)`;
+
+/** Changes an agent's setup, and records who changed it, and when. */
+const CHANGE_AGENT = `UPDATE agents SET description = ?2, instructions = ?3, model = ?4, model_name = ?5, format = ?6, thinking = ?7, answer_length = ?8,
+  web_tools = ?9, updated_by = ?10, updated_at = ?11 WHERE user_id = ?1`;
+
+/** Puts ?1 in the open rooms the JSON list ?2 names, of those there are, keeping the memberships it has. */
+const GRANT_PICKED_ROOMS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
+  SELECT rooms.id, ?1, ?3, ?3 FROM json_each(?2) AS picked JOIN rooms ON rooms.id = picked.value WHERE rooms.kind = 'open' ON CONFLICT DO NOTHING`;
+
+/** Takes ?1 out of the open rooms the JSON list ?2 doesn't name. */
+const LEAVE_UNPICKED_ROOMS = `DELETE FROM memberships WHERE user_id = ?1 AND room_id NOT IN (SELECT value FROM json_each(?2))
+  AND EXISTS (SELECT 1 FROM rooms WHERE rooms.id = memberships.room_id AND rooms.kind = 'open')`;
+
+/**
+ * Keeps the open rooms each active agent kept to the open rooms picked is in, as Ember AI is turned off,
+ * so that turning it on again puts it back in them.
+ */
+const KEEP_AGENTS_ROOMS = `UPDATE agents SET kept_rooms = (SELECT json_group_array(memberships.room_id) FROM memberships JOIN rooms ON rooms.id = memberships.room_id
+    WHERE memberships.user_id = agents.user_id AND rooms.kind = 'open')
+  WHERE every_open_room = 0 AND EXISTS (SELECT 1 FROM users WHERE users.id = agents.user_id AND users.status = ${ACTIVE})`;
+
+/** Takes every agent out of every room but its DMs, as `LEAVE_SHARED_ROOMS` takes someone. */
+const AGENTS_LEAVE_SHARED_ROOMS = `DELETE FROM memberships WHERE user_id IN (SELECT user_id FROM agents)
+  AND EXISTS (SELECT 1 FROM rooms WHERE rooms.id = memberships.room_id AND rooms.kind <> 'direct')`;
+
+/** Deactivates every active agent, recording when. */
+const DEACTIVATE_AGENTS = `UPDATE users SET status = ${DEACTIVATED}, updated_at = ? WHERE status = ${ACTIVE} AND id IN (SELECT user_id FROM agents)`;
+
+/** Lets every agent back, as turning Ember AI on does, recording when. */
+const ACTIVATE_AGENTS = `UPDATE users SET status = ${ACTIVE}, updated_at = ? WHERE status = ${DEACTIVATED} AND id IN (SELECT user_id FROM agents)`;
+
+/** Puts each agent kept to the open rooms picked back in the ones it was in when Ember AI was turned off, of those still open. */
+const RESTORE_AGENTS_ROOMS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
+  SELECT rooms.id, agents.user_id, ?1, ?1 FROM agents, json_each(agents.kept_rooms) AS kept JOIN rooms ON rooms.id = kept.value
+  WHERE agents.every_open_room = 0 AND rooms.kind = 'open' ON CONFLICT DO NOTHING`;
+
+/** Puts each agent that's in every open room in all of them, keeping the memberships it has. */
+const GRANT_OPEN_ROOMS_TO_AGENTS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
+  SELECT rooms.id, agents.user_id, ?1, ?1 FROM agents, rooms WHERE agents.every_open_room = 1 AND rooms.kind = 'open' ON CONFLICT DO NOTHING`;
 
 /**
  * Adds @ember, the bot Ember AI answers as, without a token, so its key opens nothing, or lets it back,
@@ -1888,10 +2100,12 @@ const GRANT_OPEN_ROOMS_TO_USER = `INSERT INTO memberships (room_id, user_id, cre
 
 /**
  * Puts every active person in an open room, keeping the memberships they already have, and answers whom
- * it put in.
+ * it put in. Agents kept to the open rooms an administrator picked stay out.
  */
 const GRANT_ROOM_TO_ACTIVE_USERS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
-  SELECT ?, id, ?, ? FROM users WHERE status = ${ACTIVE} ON CONFLICT DO NOTHING RETURNING user_id`;
+  SELECT ?, id, ?, ? FROM users WHERE status = ${ACTIVE}
+    AND NOT EXISTS (SELECT 1 FROM agents WHERE agents.user_id = users.id AND agents.every_open_room = 0)
+  ON CONFLICT DO NOTHING RETURNING user_id`;
 
 /**
  * Adds one of first run's open rooms, made by ?3, unless the workspace has an open room of its name
@@ -1979,6 +2193,7 @@ export class WorkspaceStore {
       turnstileKeys: turnstileKeysIn(settings),
       assistant: assistantIn(settings),
       assistantMost: assistantMostIn(settings),
+      assistantInstructions: assistantInstructionsIn(settings),
       huddles: huddlesIn(settings),
       deployedAddress: deployedAddressIn(settings),
       otherAddresses: otherAddressesIn(settings),
@@ -3141,29 +3356,109 @@ export class WorkspaceStore {
     await this.db.run(CHANGE_BOT_TOKEN, token, now, botId);
   }
 
+  /** The active agents, by name, each with the open rooms it's in, if it's kept to the ones picked, read together. */
+  async activeAgents(): Promise<StoredAgent[]> {
+    const [agents, rooms] = (await this.db.batch([statement(ACTIVE_AGENTS), statement(KEPT_AGENTS_ROOMS)])) as [AgentRow[], Array<AgentRoom & { user_id: UserId }>];
+    const roomsOf = Map.groupBy(rooms, (room) => room.user_id);
+    return agents.map((row) => storedAgent(row, (roomsOf.get(row.id) ?? []).map(({ id, name }) => ({ id, name }))));
+  }
+
+  /** The active agent `agentId` as its page shows it, with the open rooms it's in, or null unless it's one. */
+  async activeAgent(agentId: UserId): Promise<StoredAgentSettings | null> {
+    const [[row], rooms] = (await this.db.batch([statement(ACTIVE_AGENT, agentId), statement(OPEN_ROOMS_OF, agentId)])) as [AgentSettingsRow[], AgentRoom[]];
+    return row ? storedAgentSettings(row, rooms) : null;
+  }
+
+  /** Every agent, whether Ember AI is on or off, as the people directory lists it. */
+  async agentEntries(): Promise<DirectoryEntry[]> {
+    return (await this.db.all<DirectoryRow>(AGENTS_LISTED)).map(directoryEntry);
+  }
+
+  /** Whether `userId` is an agent's, whether Ember AI is on or off. */
+  async isAgent(userId: UserId): Promise<boolean> {
+    return (await this.db.all(`SELECT 1 FROM agents WHERE user_id = ?`, userId)).length > 0;
+  }
+
+  /** The names of everyone active but `userId`: people, bots and agents. */
+  async activeNames(userId: UserId | null): Promise<string[]> {
+    const rows = await this.db.all<{ name: string }>(`SELECT name FROM users WHERE status = ${ACTIVE} AND id IS NOT ?`, userId);
+    return rows.map((row) => row.name);
+  }
+
+  /**
+   * Adds an agent as `agent` has it, in one batch: a bot without a token, so that no key opens anything as
+   * it, with its avatar if it has one, what makes it an agent, and its memberships of every open room, or
+   * of the open rooms picked, of those there are.
+   */
+  async createAgent({ id, name, avatar, rooms, createdBy, ...setup }: NewStoredAgent, now: string): Promise<void> {
+    await this.db.batch([
+      statement(INSERT_BOT, id, name, null, avatar?.key ?? null, avatar?.variant ?? null, now, now),
+      ...keeping(avatar),
+      statement(INSERT_AGENT, id, ...agentColumns(setup), rooms === null ? 1 : 0, createdBy, now),
+      rooms === null ? statement(GRANT_OPEN_ROOMS_TO_USER, id, now, now) : statement(GRANT_PICKED_ROOMS, id, JSON.stringify(rooms), now),
+    ]);
+  }
+
+  /**
+   * Changes agent `agentId` as `change` has it, in one batch: its name, its avatar, as `changeAvatar` gives
+   * someone theirs, its setup, recording who changed it, and when, and the open rooms it's in: every one,
+   * or just the ones picked, keeping the rooms it's in that aren't open.
+   */
+  async changeAgent(agentId: UserId, { name, setup, rooms, avatar, changedBy }: StoredAgentChange, now: string): Promise<void> {
+    await this.db.batch([
+      ...(name === undefined ? [] : [statement(RENAME_BOT, name, now, agentId)]),
+      ...(avatar ? avatarChange(agentId, avatar.avatar, avatar.previous, now, avatar.dueAt) : []),
+      statement(CHANGE_AGENT, agentId, ...agentColumns(setup), changedBy, now),
+      ...(rooms === undefined ? [] : roomsChange(agentId, rooms, now)),
+    ]);
+  }
+
+  /**
+   * Deletes agent `agentId`, in one batch: forgets what made it an agent, takes it out of every room but
+   * its DMs, and deactivates it, recording when, as deleting a bot does. Its messages and avatar stay.
+   */
+  async deleteAgent(agentId: UserId, now: string): Promise<void> {
+    await this.db.batch([
+      statement(`DELETE FROM agents WHERE user_id = ?`, agentId),
+      statement(LEAVE_SHARED_ROOMS, agentId),
+      statement(`UPDATE users SET status = ${DEACTIVATED}, updated_at = ? WHERE id = ? AND status = ${ACTIVE}`, now, agentId),
+    ]);
+  }
+
   /**
    * Turns Ember AI on as `assistant` has it, or changes it while it's on, in one batch: saves it in the
    * account's settings, recording when, adds @ember, or lets it back as it was, and puts it in every open
-   * room, as someone who joins is.
+   * room, as someone who joins is, and lets every agent back, in every open room, or the ones picked it
+   * was in when Ember AI was turned off, of those still open.
    */
   async turnOnAssistant(assistant: SavedAssistant, now: string): Promise<void> {
     await this.db.batch([
       statement(SET_ASSISTANT, assistantSetting(assistant), now),
       statement(ACTIVATE_ASSISTANT, ASSISTANT_ID, ASSISTANT_NAME, now),
       statement(GRANT_OPEN_ROOMS_TO_USER, ASSISTANT_ID, now, now),
+      // The agents come back as they were when it was turned off, and while it's on, these change nothing.
+      statement(ACTIVATE_AGENTS, now),
+      statement(RESTORE_AGENTS_ROOMS, now),
+      statement(GRANT_OPEN_ROOMS_TO_AGENTS, now),
+      statement(`UPDATE agents SET kept_rooms = NULL WHERE kept_rooms IS NOT NULL`),
     ]);
   }
 
   /**
    * Turns Ember AI off, in one batch: forgets how it asked AI Gateway, recording when, and deactivates
    * @ember as removing someone does, taking it out of every room but its DMs. It has no sessions to end,
-   * nor an email address to free. Its messages stay.
+   * nor an email address to free. Its messages stay. Every agent goes the same way, its setup kept, and
+   * with it the open rooms it's in, if it's kept to the ones picked.
    */
   async turnOffAssistant(now: string): Promise<void> {
     await this.db.batch([
       statement(SET_ASSISTANT, assistantSetting(null), now),
       statement(LEAVE_SHARED_ROOMS, ASSISTANT_ID),
       statement(`UPDATE users SET status = ${DEACTIVATED}, updated_at = ? WHERE id = ? AND status = ${ACTIVE}`, now, ASSISTANT_ID),
+      // Before they leave the rooms it keeps.
+      statement(KEEP_AGENTS_ROOMS),
+      statement(AGENTS_LEAVE_SHARED_ROOMS),
+      statement(DEACTIVATE_AGENTS, now),
     ]);
   }
 
@@ -3243,11 +3538,16 @@ export class WorkspaceStore {
   }
 
   /**
-   * Changes Ember AI while it's on to `assistant`, and the most each of @ember's dials goes to for anyone's
-   * questions to `most`, in one batch, without recording when, as no page's address goes by either.
+   * Changes Ember AI while it's on to `assistant`, the most each of @ember's dials goes to for anyone's
+   * questions to `most`, and what Ember adds to @ember's instructions to `instructions`, in one batch,
+   * without recording when, as no page's address goes by any of them.
    */
-  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels): Promise<void> {
-    await this.db.batch([statement(REMEMBER_ASSISTANT, assistantSetting(assistant)), statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most))]);
+  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels, instructions: string): Promise<void> {
+    await this.db.batch([
+      statement(REMEMBER_ASSISTANT, assistantSetting(assistant)),
+      statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most)),
+      statement(REMEMBER_ASSISTANT_INSTRUCTIONS, JSON.stringify(instructions)),
+    ]);
   }
 
   /**

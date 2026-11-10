@@ -47,6 +47,7 @@ import assistantModels from "../migrations/0046_assistant_models.sql";
 import searchFiltersReindex from "../migrations/0047_search_filters.sql";
 import recentSearchesWithFilters from "../migrations/0048_recent_searches.sql";
 import identityAccounts from "../migrations/0049_identity_accounts.sql";
+import agents from "../migrations/0050_agents.sql";
 import searchIndex from "../search-migrations/0001_search_index.sql";
 import searchResults from "../search-migrations/0002_search_results.sql";
 import searchFilters from "../search-migrations/0003_search_filters.sql";
@@ -120,6 +121,7 @@ export const MIGRATIONS: Migration[] = [
   { name: "0047_search_filters.sql", scope: "workspace", sql: searchFiltersReindex },
   { name: "0048_recent_searches.sql", scope: "workspace", sql: recentSearchesWithFilters },
   { name: "0049_identity_accounts.sql", scope: "workspace", sql: identityAccounts },
+  { name: "0050_agents.sql", scope: "workspace", sql: agents },
 ];
 
 /**
