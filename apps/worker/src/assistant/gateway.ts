@@ -60,9 +60,9 @@ export interface Turn {
 /**
  * What to ask a model: how it should answer, the conversation, oldest first, ending with what it's asked,
  * the most tokens its answer may take, its thinking among them, how much to think first, if it's told,
- * who asked, if someone did, whom AI Gateway's logs and spend limits then know each request by (custom
- * metadata's `user_id`), and what it may do on the web, of what its format has tools for: nothing,
- * unless it's told.
+ * who asked, if someone did, and who answers, @ember or an agent, if either does, whom AI Gateway's logs
+ * and spend limits then know each request by (custom metadata's `user_id` and `agent_id`), and what it
+ * may do on the web, of what its format has tools for: nothing, unless it's told.
  */
 export interface Question {
   instructions: string;
@@ -72,6 +72,7 @@ export interface Question {
   maxTokens: number;
   thinking?: ThinkingLevel;
   askerId?: string;
+  agentId?: string;
   webTools?: readonly WebTool[];
 }
 
@@ -154,6 +155,29 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
 }
 
 /**
+ * What the model `gateway` names answers in the first of `formats` it takes the question in, as
+ * `questionIn` asks it in each, waiting at most `timeoutMs` in each (`ask`), with the format it took it
+ * in, or why it didn't answer: the first format's refusal, unless another's says more, as one that isn't
+ * about the format does.
+ */
+export async function askInTurn(
+  env: Env,
+  gateway: Omit<Gateway, "format">,
+  formats: readonly ModelFormat[],
+  questionIn: (format: ModelFormat) => Question,
+  timeoutMs: number,
+): Promise<(Answered & { format: ModelFormat }) | GatewayRefusal> {
+  let first: GatewayRefusal | null = null;
+  for (const format of formats) {
+    const answered = await ask(env, { ...gateway, format }, questionIn(format), timeoutMs);
+    if (!("refusal" in answered)) return { ...answered, format };
+    if (!answered.wrongFormat) return answered;
+    first ??= answered;
+  }
+  return first!;
+}
+
+/**
  * What the model `gateway` names answers `question`, asked as it is, until `signal` says it's waited long
  * enough: once, but for a turn Anthropic's model paused while it searched, which it carries on while the
  * turn has tokens left. One that paused with none left took every token it could.
@@ -210,7 +234,7 @@ async function send(env: Env, gateway: Gateway, question: Question, request: Rec
         Authorization: `Bearer ${gateway.apiToken}`,
         "Content-Type": "application/json",
         "cf-aig-gateway-id": GATEWAY_ID,
-        ...(question.askerId !== undefined && { "cf-aig-metadata": JSON.stringify({ user_id: question.askerId }) }),
+        ...metadataOf(question),
       },
       body: JSON.stringify(request),
       signal,
@@ -221,6 +245,12 @@ async function send(env: Env, gateway: Gateway, question: Question, request: Rec
   }
   const body: unknown = await response.json().catch(() => null);
   return response.ok ? { body } : refusalOf(response.status, body);
+}
+
+/** The custom metadata AI Gateway keeps of a request asking `question`: who asked and who answers, of those it names, if it names either. */
+function metadataOf({ askerId, agentId }: Question): Record<string, string> {
+  const metadata = { ...(askerId !== undefined && { user_id: askerId }), ...(agentId !== undefined && { agent_id: agentId }) };
+  return Object.keys(metadata).length > 0 ? { "cf-aig-metadata": JSON.stringify(metadata) } : {};
 }
 
 /** The answer `body` gives in `format`, or why it's none: the model said nothing, or took every token it could first. */

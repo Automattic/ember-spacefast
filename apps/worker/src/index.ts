@@ -96,7 +96,7 @@ import {
   tokenDigest,
 } from "./auth";
 import { directoryOf } from "./avatar-tokens";
-import { changeAgent, createAgent, deleteAgent, listAgents, removeAgentAvatar, showAgent } from "./assistant/agents";
+import { changeAgent, createAgent, deleteAgent, listAgents, removeAgentAvatar, showAgent, tryAgent } from "./assistant/agents";
 import {
   addAssistantModel,
   changeAssistantAvatar,
@@ -1083,6 +1083,7 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/assistant/avatar" && request.method === "DELETE") return () => removeAssistantAvatar(request, env);
   if (pathname === "/api/account/agents" && request.method === "GET") return () => listAgents(request, env);
   if (pathname === "/api/account/agents" && request.method === "POST") return () => createAgent(request, env);
+  if (pathname === "/api/account/agents/trials" && request.method === "POST") return () => tryAgent(request, env, null);
   // As with people and bots, agents' ids never need percent-encoding, so an encoded segment names none.
   const agent = pathname.match(/^\/api\/account\/agents\/([^/]+)$/);
   if (agent && request.method === "GET") return () => showAgent(request, env, agent[1]!);
@@ -1090,6 +1091,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (agent && request.method === "DELETE") return () => deleteAgent(request, env, agent[1]!);
   const agentAvatar = pathname.match(/^\/api\/account\/agents\/([^/]+)\/avatar$/);
   if (agentAvatar && request.method === "DELETE") return () => removeAgentAvatar(request, env, agentAvatar[1]!);
+  const agentTrials = pathname.match(/^\/api\/account\/agents\/([^/]+)\/trials$/);
+  if (agentTrials && request.method === "POST") return () => tryAgent(request, env, agentTrials[1]!);
   if (pathname === "/api/account/huddles" && request.method === "PUT") return () => saveHuddles(request, env);
   if (pathname === "/api/account/huddles" && request.method === "DELETE") return () => forgetHuddles(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);

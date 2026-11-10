@@ -539,7 +539,8 @@ message holds is cut to as much as fits, ending with an ellipsis. It reads bots'
 answers one, so that bots can't keep each other talking. When the model can't answer, as when the
 token is refused or the credits run out, @ember says why in a short note, and the Worker's log has
 Cloudflare's own words. AI Gateway's logs keep each request with the id of whoever asked, as custom
-metadata's `user_id`, which a spend limit can be split by. An administrator can also turn on the
+metadata's `user_id`, and of whoever answers, `ember` for @ember or an AI agent's, as `agent_id`, which
+a spend limit can be split by. An administrator can also turn on the
 gateway's [Guardrails](https://developers.cloudflare.com/ai-gateway/features/guardrails/) or
 [Data Loss Prevention](https://developers.cloudflare.com/ai-gateway/features/dlp/) in the Cloudflare
 dashboard, to check the questions, with the messages @ember reads, or the answers. When either blocks

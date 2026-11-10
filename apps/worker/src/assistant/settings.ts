@@ -36,7 +36,7 @@ import { NO_STORAGE } from "../files/uploads";
 import { formAnswer } from "../pages";
 import { workspace, type Credentials } from "../workspace";
 import { catalogOf } from "./catalog";
-import { ask, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefusal, type Question } from "./gateway";
+import { askInTurn, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefusal, type Question } from "./gateway";
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
 // workspace settings, the models people can pick, which administrators add there from Cloudflare's
@@ -343,14 +343,8 @@ const refused = ({ refusal, field, status }: GatewayRefusal) => formAnswer({ err
  * or why it didn't answer: the first format's refusal, unless another's says more.
  */
 export async function greetingFrom(env: Env, gateway: Omit<Gateway, "format">, question = TEST_QUESTION): Promise<{ format: ModelFormat; greeting: string } | GatewayRefusal> {
-  let first: GatewayRefusal | null = null;
-  for (const format of formatsFor(gateway.model)) {
-    const answer = await ask(env, { ...gateway, format }, question, TEST_TIMEOUT_MS);
-    if (!("refusal" in answer)) return { format, greeting: shownOf(answer.text) };
-    if (!answer.wrongFormat) return answer;
-    first ??= answer;
-  }
-  return first!;
+  const answered = await askInTurn(env, gateway, formatsFor(gateway.model), () => question, TEST_TIMEOUT_MS);
+  return "refusal" in answered ? answered : { format: answered.format, greeting: shownOf(answered.text) };
 }
 
 /** `text` cut to what the dialog, or the card, shows. */

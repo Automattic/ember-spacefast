@@ -7,18 +7,25 @@ import {
   AGENTS_FULL,
   NAME_TAKEN,
   parseAgentChanges,
+  parseAgentTrial,
   parseNewAgent,
   type AgentAnswer,
   type Agents,
   type AgentSettings,
+  type AgentTrial,
+  type AgentTrialAnswer,
 } from "@ember/protocol/agents";
 import { ASSISTANT_OFF, modelName, type ModelFormat } from "@ember/protocol/assistant";
+import { prepareBody } from "@ember/richtext";
 import { credentialsOf } from "../auth";
 import { userFormOf, userFormPhoto } from "../avatars";
+import { jsonBodyOf } from "../bodies";
+import { keptCards } from "../cards";
 import type { Env } from "../env";
 import { formAnswer } from "../pages";
-import { asksModel, workspace, type AskedModel } from "../workspace";
-import { WEB_TOOLS_IN, type Gateway, type GatewayRefusal } from "./gateway";
+import { asksModel, workspace, type AgentTrialAccess, type AskedModel } from "../workspace";
+import { answerOf, questionFor, waitFor } from "./answers";
+import { askInTurn, formatsFor, WEB_TOOLS_IN, type Answered, type Gateway, type GatewayRefusal } from "./gateway";
 import { administratorOf, greetingFrom, searchedBy, TEST_QUESTION, WEB_TEST_QUESTION } from "./settings";
 
 // AI agents, as administrators make, change and delete them beside @ember on the AI assistant tab of
@@ -123,6 +130,55 @@ export async function changeAgent(request: Request, env: Env, agentId: UserId): 
   const avatar = await userFormPhoto(env, sent.photo);
   if (avatar && "error" in avatar) return formAnswer({ error: avatar.error, field: "avatar" }, avatar.status);
   return agentAnswer(await ember.changeAgent(credentials, agentId, changes, asked && { ...asked, changedAt: found.changedAt }, avatar && { picture: avatar }));
+}
+
+/**
+ * `POST /api/account/agents/trials`, `{ name, instructions, model, modelName?, thinking, length,
+ * webSearch, question }`, and `POST /api/account/agents/:id/trials` for agent `id`: Try it, which asks
+ * the agent, as its page sets it up, saved or not, the administrator's question, as if they'd written it
+ * to the agent directly, through Ember AI's account, answering what it said, as a message of its would
+ * show it, but for a preview of its first link, and how long its model took. Nobody else sees either,
+ * and nothing is saved. A saved agent with the same model answers in the format, and with the web
+ * tools, its tests found, and any other is asked in each format in turn (`formatsFor`). As with changing
+ * an agent, someone who isn't an administrator hears so first, then that Ember AI is off, then that the
+ * agent isn't there, before anything that was sent is read, and a field that can't be what it's for, or
+ * that AI Gateway refuses, is refused on that field, as Search the web is for a model that can't search.
+ */
+export async function tryAgent(request: Request, env: Env, agentId: UserId | null): Promise<Response> {
+  const credentials = await administratorOf(request, env, AGENTS_FORBIDDEN);
+  if (credentials instanceof Response) return credentials;
+  const access = await workspace(env).agentTrial(credentials, agentId);
+  if (!access || typeof access === "string") return agentAnswer(access);
+  const trial = parseAgentTrial(await jsonBodyOf(request));
+  if ("error" in trial) return formAnswer(trial, 422);
+  const startedAt = Date.now();
+  const answered = await triedAnswer(env, access, trial);
+  if ("refusal" in answered) return refused(answered, "model");
+  const ms = Date.now() - startedAt;
+  if (trial.webSearch && WEB_TOOLS_IN[answered.format].length === 0) {
+    const name = trial.modelName ?? (access.saved?.model === trial.model ? access.saved.modelName : modelName(trial.model));
+    return formAnswer({ error: agentCannotSearchWith(name), field: "webSearch" }, 422);
+  }
+  const text = answered.cut ? `${answered.text}\n\n…` : answered.text;
+  const { markup, cards } = answerOf(text, answered.sources, [trial.question], access.addresses, trial.name);
+  const answer: AgentTrialAnswer = { body: prepareBody(markup, () => undefined)?.html ?? "", cards: keptCards(cards).cards, ms };
+  return Response.json(answer, { headers: PRIVATE });
+}
+
+/**
+ * What the agent `trial` sets up answers its question, asked through `access` as a direct message from
+ * the administrator who tries it, in the format of the agent as it's saved, while it has the same model,
+ * or else in each in turn, and the format it took it in, or why it didn't answer.
+ */
+async function triedAnswer(env: Env, { asker, through, community, saved }: AgentTrialAccess, trial: AgentTrial): Promise<(Answered & { format: ModelFormat }) | GatewayRefusal> {
+  const known = saved?.model === trial.model ? saved : null;
+  const answerer = { id: saved?.id ?? null, name: trial.name, instructions: trial.instructions };
+  const where = { community, roomName: null, inThread: false };
+  const levels = { thinking: trial.thinking, length: trial.length };
+  const webToolsIn = (format: ModelFormat) => (!trial.webSearch ? [] : known && known.webTools.length > 0 ? known.webTools : WEB_TOOLS_IN[format]);
+  const questionIn = (format: ModelFormat) => questionFor(answerer, [{ creator: asker, plainText: trial.question }], asker, where, levels, new Date(), webToolsIn(format));
+  const formats = known ? [known.format] : formatsFor(trial.model);
+  return askInTurn(env, { ...through, model: trial.model }, formats, questionIn, waitFor(questionIn(formats[0]!)));
 }
 
 /** `DELETE /api/account/agents/:id/avatar`: takes away the avatar agent `id` was given, answering it as its page then shows it. */

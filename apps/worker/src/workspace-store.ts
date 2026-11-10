@@ -395,6 +395,11 @@ export interface AgentSetup {
   webTools: WebTool[];
 }
 
+/** An agent as a question for it finds it: its name, its instructions, its model and that model's format, its levels and what it may do on the web. */
+export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "model" | "format" | "levels" | "webTools"> {
+  name: string;
+}
+
 /**
  * An agent as the AI assistant tab lists it: as the people directory lists it, with what it does and
  * its model, and the open rooms it's kept to, by name, or null while it's in every one.
@@ -485,7 +490,7 @@ export interface AppliedEvents {
   pushes: MessagePush[];
   /** The new messages' deliveries to bots' webhooks, oldest message first. */
   webhooks: MessageWebhook[];
-  /** The new messages @ember is to answer, oldest first. */
+  /** The new messages @ember and the agents are to answer, oldest first, each agent mentioned once. */
   asks: AssistantAsk[];
 }
 
@@ -531,10 +536,10 @@ export interface MessageWebhook {
 }
 
 /**
- * A new message @ember is to answer, as `MESSAGE_BOTS` finds it: the message, its author and the room's
- * name, or null for a DM.
+ * A new message @ember or an agent, `botId`, is to answer, as `MESSAGE_BOTS` finds it: the message, its
+ * author and the room's name, or null for a DM.
  */
-export type AssistantAsk = Omit<MessageWebhook, "botId">;
+export type AssistantAsk = MessageWebhook;
 
 /** A bot's webhook as a delivery to it finds it: the bot, by its name now, with its token, which the address it can answer at is made from. */
 export interface BotWebhook {
@@ -918,16 +923,21 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
   rooms: row.every_open_room === 1 ? null : rooms,
 });
 
-/**
- * An agent as `AgentSettingsRow` has it, kept to `rooms` unless it's in every open room. What can't be a
- * format or a level, as nothing Ember writes is, reads as where @ember's start.
- */
-const storedAgentSettings = (row: AgentSettingsRow, rooms: AgentRoom[]): StoredAgentSettings => ({
-  ...storedAgent(row, rooms),
+/** How an agent answers, as the agents table keeps it: its instructions, its model's format, its levels and what it may do on the web. */
+type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "format" | "thinking" | "answer_length" | "web_tools">;
+
+/** How an agent answers, as `row` keeps it. What can't be a format or a level, as nothing Ember writes is, reads as where @ember's start. */
+const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "format" | "levels" | "webTools"> => ({
   instructions: row.instructions,
   format: isModelFormat(row.format) ? row.format : "chat",
   levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
   webTools: webToolsIn(row.web_tools),
+});
+
+/** An agent as `AgentSettingsRow` has it, kept to `rooms` unless it's in every open room. */
+const storedAgentSettings = (row: AgentSettingsRow, rooms: AgentRoom[]): StoredAgentSettings => ({
+  ...storedAgent(row, rooms),
+  ...answeringOf(row),
   avatar: avatarOf(row),
   changedBy: { id: row.changed_by, name: row.changed_by_name },
   changedAt: row.changed_at,
@@ -1510,32 +1520,35 @@ const deliveryOf = (row: DeliveryRow): PushDelivery => ({
 /**
  * The bots a new message, numbered ?4, by ?2 in room ?1 goes to: in a DM, the active bots in it, and in
  * any other room, the active bots in it whom the message mentions, a JSON list ?3; never its author.
- * They're the bots with webhooks, which it's delivered to, and @ember, which answers it unless a bot wrote
- * it, so that bots can't keep each other talking. Each comes with the room's name, but a DM's, and the
- * author's, and its id: a bot's webhook `BOT_WEBHOOK` reads once the delivery's turn comes. Nothing once
- * the Workspace has applied the message's event. Webhooks are few, so they're read first, with @ember,
- * and each one's bot and membership found by their keys.
+ * They're the bots with webhooks, which it's delivered to, and @ember and the agents, which answer it
+ * (`answers` 1) unless a bot wrote it, @ember or an agent among them, so that bots can't keep each other
+ * talking. Each comes with the room's name, but a DM's, and the author's, and its id: a bot's webhook
+ * `BOT_WEBHOOK` reads once the delivery's turn comes. Nothing once the Workspace has applied the
+ * message's event. Webhooks and agents are few, so they're read first, with @ember, and each one's bot
+ * and membership found by their keys.
  */
-export const MESSAGE_BOTS = `SELECT users.id,
+export const MESSAGE_BOTS = `SELECT users.id, bots.answers,
     (SELECT name FROM rooms WHERE id = ?1 AND kind <> 'direct') AS room_name, (SELECT name FROM users AS authors WHERE authors.id = ?2) AS author_name
-  FROM (SELECT user_id FROM webhooks UNION ALL SELECT '${ASSISTANT_ID}') AS bots CROSS JOIN users ON users.id = bots.user_id
+  FROM (SELECT user_id, 0 AS answers FROM webhooks UNION ALL SELECT '${ASSISTANT_ID}', 1 UNION ALL SELECT user_id, 1 FROM agents) AS bots
+    CROSS JOIN users ON users.id = bots.user_id
   WHERE users.role = ${BOT} AND users.status = ${ACTIVE} AND users.id <> ?2
-    AND (users.id <> '${ASSISTANT_ID}' OR NOT EXISTS (SELECT 1 FROM users AS authors WHERE authors.id = ?2 AND authors.role = ${BOT}))
+    AND (bots.answers = 0 OR NOT EXISTS (SELECT 1 FROM users AS authors WHERE authors.id = ?2 AND authors.role = ${BOT}))
     AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = users.id)
     AND (users.id IN (SELECT value FROM json_each(?3)) OR EXISTS (SELECT 1 FROM rooms WHERE id = ?1 AND kind = 'direct'))
     AND ?4 > (SELECT applied_seq FROM rooms WHERE id = ?1)
   ORDER BY lower(users.name), users.id`;
 
-/** A bot a new message goes to, as `MESSAGE_BOTS` finds it. */
+/** A bot a new message goes to, as `MESSAGE_BOTS` finds it, and whether it answers it, as @ember and the agents do. */
 interface MessageBotRow {
   id: UserId;
+  answers: number;
   room_name: string | null;
   author_name: string;
 }
 
-/** Where a new message goes, from the rows `MESSAGE_BOTS` found for it: to bots' webhooks, and to @ember to answer. */
-function messageDeliveries({ userId, message }: RoomEvent, rows: MessageBotRow[]): MessageWebhook[] {
-  return rows.map((row) => ({ messageId: message!.id, author: { id: userId, name: row.author_name }, roomName: row.room_name, botId: row.id }));
+/** Where a new message goes, from the rows `MESSAGE_BOTS` found for it: to bots' webhooks, and to @ember and the agents to answer. */
+function messageDeliveries({ userId, message }: RoomEvent, rows: MessageBotRow[]): Array<MessageWebhook & { answers: boolean }> {
+  return rows.map((row) => ({ messageId: message!.id, author: { id: userId, name: row.author_name }, roomName: row.room_name, botId: row.id, answers: row.answers === 1 }));
 }
 
 /**
@@ -1819,6 +1832,15 @@ const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_va
     agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
   FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
   WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;
+
+/**
+ * Agent ?2 as a question for it in room ?1 finds it, when its turn comes and again before its answer is
+ * posted: its name, its model, and how it answers. Nothing unless it's an active agent in the room, so
+ * that turning Ember AI off, deleting the agent or taking it out of the room stops what's on its way.
+ */
+const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.format, agents.thinking, agents.answer_length, agents.web_tools
+  FROM agents JOIN users ON users.id = agents.user_id
+  WHERE agents.user_id = ?2 AND users.status = ${ACTIVE} AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = ?2)`;
 
 /** The open rooms someone is in, by name. */
 const OPEN_ROOMS_OF = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON rooms.id = memberships.room_id
@@ -3219,8 +3241,8 @@ export class WorkspaceStore {
     }
     const pushes = applied.flatMap(({ event, pushes: at }) => (at === null ? [] : messagePushes(roomId, event, results[at] as PushRow[])));
     const deliveries = applied.flatMap(({ event, bots: at }) => (at === null ? [] : messageDeliveries(event, results[at] as MessageBotRow[])));
-    const webhooks = deliveries.filter(({ botId }) => botId !== ASSISTANT_ID);
-    const asks = deliveries.flatMap(({ botId, ...ask }) => (botId === ASSISTANT_ID ? [ask] : []));
+    const webhooks = deliveries.flatMap(({ answers, ...delivery }) => (answers ? [] : [delivery]));
+    const asks = deliveries.flatMap(({ answers, ...ask }) => (answers ? [ask] : []));
     const toldIds = message ? userIdsOf(results[told] as UserIdRow[]) : [];
     return { marks, active: toldIds.length > 0 ? { at: messageAt!, userIds: toldIds } : null, pushes, webhooks, asks };
   }
@@ -3367,6 +3389,12 @@ export class WorkspaceStore {
   async activeAgent(agentId: UserId): Promise<StoredAgentSettings | null> {
     const [[row], rooms] = (await this.db.batch([statement(ACTIVE_AGENT, agentId), statement(OPEN_ROOMS_OF, agentId)])) as [AgentSettingsRow[], AgentRoom[]];
     return row ? storedAgentSettings(row, rooms) : null;
+  }
+
+  /** Agent `agentId` as a question for it in room `roomId` finds it (`ANSWERING_AGENT`), or null unless it's an active agent there. */
+  async answeringAgent(roomId: RoomId, agentId: UserId): Promise<AnsweringAgent | null> {
+    const [row] = await this.db.all<AnsweringColumns & { name: string; model: string }>(ANSWERING_AGENT, roomId, agentId);
+    return row ? { name: row.name, model: row.model, ...answeringOf(row) } : null;
   }
 
   /** Every agent, whether Ember AI is on or off, as the people directory lists it. */

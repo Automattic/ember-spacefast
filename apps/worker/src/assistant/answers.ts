@@ -8,14 +8,14 @@ import { anchor, escapeText, linkHref } from "../bots/mrkdwn";
 import { isOnHost } from "../unfurl";
 import { MAX_SOURCES, type Question, type RefusalReason, type Source, type Turn } from "./gateway";
 
-// What @ember asks its model when someone asks it something, and what it answers with. It reads the
-// conversation it's asked in, each message after its writer's name, and answers in Markdown, thinking
-// and writing as much as the asker's levels allow, and searching the web and reading pages while Search
-// the web lets it, which it posts as the rich text people write (`markdownHtml`), the pictures it shows
-// in a card under it, as bots' image cards are, the pages it came from after it, and a preview of its
-// first link, as the composer adds one below a link, the pictures and the link only at addresses people
-// wrote there, or the pages it came from (`fetchableIn`). When it can't answer, it says why, in words
-// that say who can do something about it.
+// What @ember and the AI agents ask their models when someone asks them something, and what they answer
+// with. Each reads the conversation it's asked in, each message after its writer's name, and answers in
+// Markdown, as its instructions say, thinking and writing as much as its levels allow, @ember's the
+// asker's, and searching the web and reading pages while Search the web lets it, which it posts as the
+// rich text people write (`markdownHtml`), the pictures it shows in a card under it, as bots' image cards
+// are, the pages it came from after it, and a preview of its first link, as the composer adds one below
+// a link, the pictures and the link only at addresses people wrote there, or the pages it came from
+// (`fetchableIn`). When it can't answer, it says why, in words that say who can do something about it.
 
 /** How many of the room's latest messages @ember reads when it's asked in the room, the question among them. */
 export const ROOM_MESSAGES_READ = 20;
@@ -54,6 +54,20 @@ const WAIT_PER_TOKEN_MS = 20;
  */
 export const waitFor = ({ maxTokens }: Question) => Math.max(LEAST_WAIT_MS, maxTokens * WAIT_PER_TOKEN_MS);
 
+/**
+ * Who answers a question: @ember, or an AI agent, by its id, or null for one not saved yet, which an
+ * administrator tries, its name and its instructions, an agent's own, or what administrators added to
+ * @ember's, if anything.
+ */
+export interface Answerer {
+  id: UserId | null;
+  name: string;
+  instructions: string;
+}
+
+/** What's read of a message in a conversation: who wrote it, its plain text, whether it shares a file, and whether it was deleted. */
+export type ReadMessage = Pick<Message, "creator" | "plainText" | "attachment" | "deleted">;
+
 /** Where @ember is asked something: the community's name, the room's, or null for a DM, and whether it's in a thread. */
 export interface AskedIn {
   community: string;
@@ -65,15 +79,17 @@ export interface AskedIn {
 export class AnswerError extends Error {}
 
 /**
- * What @ember asks its model about the question `conversation` ends with, which `asker` asked `where`,
- * at `now`: the conversation it can read, its writers named, how to answer, how much to think and
- * write, at the asker's `levels`, and what it may do on the web, `webTools`, labeled with who asked.
- * With no tools for searching while Search the web is on, `webSearchOn`, it's told the model the asker
- * picked can't search, rather than that an administrator could let it, and with tools, how to answer
- * without them too, as it's asked again without them when AI Gateway doesn't take them (`ask`).
+ * What `answerer` asks its model about the question `conversation` ends with, which `asker` asked
+ * `where`, at `now`: the conversation it can read, its writers named, how to answer, as its
+ * instructions say, how much to think and write, at `levels`, and what it may do on the web,
+ * `webTools`, labeled with who asked and who answers. With no tools for searching while Search the web
+ * is on, `webSearchOn`, @ember is told the model the asker picked can't search, rather than that an
+ * administrator could let it, and with tools, how to answer without them too, as it's asked again
+ * without them when AI Gateway doesn't take them (`ask`).
  */
 export function questionFor(
-  conversation: Message[],
+  answerer: Answerer,
+  conversation: ReadMessage[],
   asker: User,
   where: AskedIn,
   levels: AnswerLevels,
@@ -81,25 +97,35 @@ export function questionFor(
   webTools: readonly WebTool[] = [],
   webSearchOn = webTools.includes("search"),
 ): Question {
-  const told = (web: string) => instructionsFor(asker, where, ANSWER_WORDS[levels.length], now, web);
+  const told = (web: string) => instructionsFor(answerer, asker, where, ANSWER_WORDS[levels.length], now, web);
   return {
     instructions: told(webInstructionsFor(asker, webTools, webSearchOn)),
     ...(webTools.length > 0 && { instructionsWithoutWeb: told(WEB_TOOLS_REFUSED) }),
-    turns: turnsOf(readable(conversation, where.inThread)),
+    turns: turnsOf(answerer.id, readable(conversation, where.inThread)),
     maxTokens: maxTokensAt(levels),
     thinking: levels.thinking,
     askerId: asker.id,
+    ...(answerer.id !== null && { agentId: answerer.id }),
     webTools,
   };
 }
 
-/** What @ember is told before the conversation, asked to answer in about `words` words at most, and what it's told of the web, `web`. */
-function instructionsFor(asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, web: string): string {
+/**
+ * What `answerer` is told before the conversation: who it is, its instructions, where it's asked, to
+ * answer in about `words` words at most, and what it's told of the web, `web`. An agent answers as its
+ * instructions say, where @ember answers as a helpful teammate would, and then as administrators added.
+ */
+function instructionsFor({ id, name, instructions }: Answerer, asker: User, { community, roomName, inThread }: AskedIn, words: number, now: Date, web: string): string {
+  const ember = id === ASSISTANT_ID;
   const room = roomName === null ? "a direct message" : `the room "${roomName}"`;
   const today = new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeZone: "UTC" }).format(now);
+  const manner = ember ? "as a helpful teammate would: plainly, and " : "";
   return [
-    `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`,
-    `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, as a helpful teammate would: plainly, and in at most about ${words.toLocaleString("en-US")} words.`,
+    ember
+      ? `You are ${ASSISTANT_NAME}, the AI assistant in the team chat "${community}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.`
+      : `You are ${name}, an AI agent in the team chat "${community}". People ask you things by mentioning @${name} in a room or a thread, or by writing to you directly.`,
+    ...(instructions === "" ? [] : [instructions]),
+    `You're asked in ${inThread ? `a thread in ${room}` : room}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which ${asker.name} wrote, ${manner}in at most about ${words.toLocaleString("en-US")} words.`,
     "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.",
     web,
     `Today is ${today}, in UTC.`,
@@ -133,12 +159,12 @@ function webInstructionsFor(asker: User, webTools: readonly WebTool[], webSearch
  * as fit in `MAX_CONVERSATION_LENGTH` characters, the newest first, but for a thread's first message, which
  * comes before them all.
  */
-function readable(conversation: Message[], inThread: boolean): Message[] {
+function readable<T extends ReadMessage>(conversation: T[], inThread: boolean): T[] {
   const question = conversation.at(-1)!;
   const before = conversation.slice(0, -1);
   const [first, ...replies] = before;
   const candidates = inThread && first ? [first, ...replies.reverse()] : before.reverse();
-  const kept = new Set<Message>([question]);
+  const kept = new Set<T>([question]);
   let length = question.plainText.length;
   for (const message of candidates) {
     length += message.plainText.length;
@@ -149,14 +175,16 @@ function readable(conversation: Message[], inThread: boolean): Message[] {
 }
 
 /**
- * The conversation as the model reads it: each message after its writer's name, a file as its name, and
- * @ember's own answers as the model's turns, leaving out what was deleted and what has nothing to read.
+ * The conversation as the model of the answerer `answererId` reads it: each message after its writer's
+ * name, a file as its name, and the answerer's own answers as the model's turns, leaving out what was
+ * deleted and what has nothing to read. Other bots' messages, @ember's and agents' among them, are read
+ * as anyone's.
  */
-function turnsOf(messages: Message[]): Turn[] {
+function turnsOf(answererId: UserId | null, messages: ReadMessage[]): Turn[] {
   return messages.flatMap((message): Turn[] => {
     const text = message.attachment ? `(shares a file, ${message.plainText})` : message.plainText.trim();
     if (message.deleted || text === "") return [];
-    return [message.creator.id === ASSISTANT_ID ? { role: "assistant", text } : { role: "user", text: `${message.creator.name}: ${text}` }];
+    return [message.creator.id === answererId ? { role: "assistant", text } : { role: "user", text: `${message.creator.name}: ${text}` }];
   });
 }
 
@@ -200,18 +228,22 @@ const MAX_SOURCE_TITLE_LENGTH = 80;
 const MAX_SOURCE_LINK_LENGTH = MAX_MESSAGE_HTML_LENGTH / (2 * MAX_SOURCES);
 
 /**
- * `text`, the model's answer in Markdown, as @ember posts it, without its name in front, where the
- * conversation's form leads some models to write it, then the `sources` it came from, all cut to what
- * one message holds, which cuts the answer, as its sources are what it says it came from. Only the
- * addresses people wrote in the conversation it read, `written`, and its sources' are fetched for it,
- * and none on Ember's own `ownHosts` for its preview.
+ * `text`, the model's answer in Markdown, as the answerer called `name`, @ember unless it's an agent,
+ * posts it, without its name in front, where the conversation's form leads some models to write it,
+ * then the `sources` it came from, all cut to what one message holds, which cuts the answer, as its
+ * sources are what it says it came from. Only the addresses people wrote in the conversation it read,
+ * `written`, and its sources' are fetched for it, and none on Ember's own `ownHosts` for its preview.
  */
-export function answerOf(text: string, sources: readonly Source[] = [], written: readonly string[] = [], ownHosts: readonly string[] = []): Answer {
-  const answer = text.replace(/^\s*(?:ember:|\*\*ember:\*\*|\*\*ember\*\*:)\s*(?=\S)/i, "");
+export function answerOf(text: string, sources: readonly Source[] = [], written: readonly string[] = [], ownHosts: readonly string[] = [], name = ASSISTANT_NAME): Answer {
+  const named = literally(name);
+  const answer = text.replace(new RegExp(`^\\s*(?:${named}:|\\*\\*${named}:\\*\\*|\\*\\*${named}\\*\\*:)\\s*(?=\\S)`, "i"), "");
   const fetchable = fetchableIn(written, sources, ownHosts);
   const whole = answerIn(answer, sources, fetchable);
   return fits(whole) ? whole : cutToFit(answer, sources, fetchable);
 }
+
+/** A regular expression's source that matches `text` as it's written. */
+const literally = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Which web addresses an answer may have fetched: where the links in what people wrote in the
@@ -356,6 +388,11 @@ export const NOTES: Record<RefusalReason | "unopened token", string> = {
   dlp: "I can't answer that: AI Gateway's Data Loss Prevention blocked the question, or the messages I read with it. An administrator can change its policies in AI Gateway.",
   "dlp answer": "I can't answer that: AI Gateway's Data Loss Prevention blocked my answer. An administrator can change its policies in AI Gateway.",
   "unopened token": `I can't answer right now: Ember AI's API token no longer opens here. An administrator can set it up again under ${SETTINGS}.`,
+};
+
+/** What an agent says instead, for the reasons only administrators, who set it up, can do something about. */
+export const AGENT_NOTES: Partial<Record<RefusalReason, string>> = {
+  "out of room": `I couldn't answer: my model thought for as long as it may before it wrote anything. Try asking again, or an administrator can choose less Thinking for me under ${SETTINGS}.`,
 };
 
 /** What @ember says instead, when it can't answer with the model whoever asked picked, for the reasons they can do something about. */
