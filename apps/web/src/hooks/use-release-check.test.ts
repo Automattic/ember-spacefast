@@ -12,6 +12,7 @@ const newestIs = (newest: string): ReleaseCheck => ({
   release: "0.1",
   beta: false,
   newest: { release: newest, notes: `https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v${newest}.0`, newer: true },
+  newestBeta: null,
   copy: null,
 });
 

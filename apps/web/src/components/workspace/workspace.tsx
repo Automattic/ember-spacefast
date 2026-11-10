@@ -19,6 +19,7 @@ import { opensFind, togglesHuddle, togglesMute } from "@/lib/keyboard";
 import { lastRoomVisited } from "@/lib/last-room";
 import { takeMemberfulFlash } from "@/lib/memberful";
 import { loadPage } from "@/lib/page";
+import { updateOf } from "@/lib/release-check";
 import { markedUnread } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
 import { afterNavigating, messagePath, navigate, pageMark, roomPath, routeOf, useHash, useRoute, type Route } from "@/hooks/use-route";
@@ -313,10 +314,10 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   // doesn't wait for them. If they fail to, the first page that needs them tries again.
   const listed = rooms !== null;
   useEffect(() => (listed ? whenIdle(() => void loadRarePages().catch(() => {})) : undefined), [listed]);
-  // And for an administrator, whether a newer release of Ember is out, which the rail's Admin marks, asked
-  // afresh each time Admin opens.
+  // And for an administrator, whether a newer release of Ember is out, or for a beta the beta after it,
+  // which the rail's Admin marks, asked afresh each time Admin opens.
   const release = useReleaseCheck(administrator, listed, settings !== null);
-  const newRelease = release?.newest?.newer ? release.newest.release : null;
+  const newRelease = (release && updateOf(release)?.release) ?? null;
 
   // On a phone, the drawer closes as New direct message opens.
   const openNewDirect = (opener: HTMLElement | null) => {
