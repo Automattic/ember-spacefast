@@ -351,6 +351,10 @@ export const NOTES: Record<RefusalReason | "unopened token", string> = {
   unanswered: "I couldn't answer: AI Gateway didn't answer in time. Try again in a moment.",
   nothing: "I couldn't answer: my model answered with nothing. Try asking again.",
   "out of room": `I couldn't answer: my model thought for as long as it may before it wrote anything. Try asking again, or choose less Thinking under ${YOUR_LEVELS}.`,
+  guardrails: "I can't answer that: AI Gateway's Guardrails blocked the question, or the messages I read with it. An administrator can change what they block in AI Gateway.",
+  "guardrails answer": "I can't answer that: AI Gateway's Guardrails blocked my answer. An administrator can change what they block in AI Gateway.",
+  dlp: "I can't answer that: AI Gateway's Data Loss Prevention blocked the question, or the messages I read with it. An administrator can change its policies in AI Gateway.",
+  "dlp answer": "I can't answer that: AI Gateway's Data Loss Prevention blocked my answer. An administrator can change its policies in AI Gateway.",
   "unopened token": `I can't answer right now: Ember AI's API token no longer opens here. An administrator can set it up again under ${SETTINGS}.`,
 };
 
