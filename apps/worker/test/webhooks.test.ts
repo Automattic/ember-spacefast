@@ -140,7 +140,11 @@ const noFile: Keep<never> = () => expect.unreachable("The answer brings no file"
 
 /** What the request `delivery` sent, read as JSON. */
 const payloadOf = (delivery: Delivery) =>
-  JSON.parse(delivery.init.body as string) as { user: User; room: { id: RoomId; name: string | null; path: string }; message: { id: string; body: { html: string | null; plain: string }; path: string } };
+  JSON.parse(delivery.init.body as string) as {
+    user: User;
+    room: { id: RoomId; name: string | null; path: string };
+    message: { id: string; body: { html: string | null; plain: string }; attachment?: { filename: string; content_type: string; byte_size: number; path: string }; path: string };
+  };
 
 /** `text` as ActiveSupport::JSON escapes it: `<`, `>` and `&` as JSON's escapes for them. */
 const escaped = (text: string) => text.replace(/[<>&]/g, (c) => `${"\\"}u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
@@ -225,7 +229,7 @@ describe("Webhooks", () => {
     expect(`${webhook!.bot.id}-${webhook!.token}`).toBe(builder.key);
   });
 
-  it("delivers a file message with no HTML and its file's name as its plain text, as Campfire delivers a message without rich text", async () => {
+  it("delivers a file message with no HTML and its file's name as its plain text, as Campfire delivers a message without rich text, and its file", async () => {
     const { ada } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
     const room = await direct(ada, asSession(bot));
@@ -233,7 +237,19 @@ describe("Webhooks", () => {
 
     const message = await upload(ada, room.id, "moon.jpg", recordedImage("moon-thumb.jpg"));
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
-    expect(payloadOf(delivered[0]!).message).toEqual({ id: message.id, body: { html: null, plain: "moon.jpg" }, path: `/rooms/${room.id}/@${message.id}` });
+    const body = delivered[0]!.init.body as string;
+    expect(payloadOf(delivered[0]!).message).toEqual({
+      id: message.id,
+      body: { html: null, plain: "moon.jpg" },
+      attachment: { filename: "moon.jpg", content_type: "image/jpeg", byte_size: message.attachment.byteSize, path: message.attachment.url },
+      path: `/rooms/${room.id}/@${message.id}`,
+    });
+    expect(body.indexOf('"attachment"')).toBeGreaterThan(body.indexOf('"body"'));
+
+    // Its path opens the file for the bot, which has no session, and needs no key.
+    const file = await api(payloadOf(delivered[0]!).message.attachment!.path);
+    expect(file.status).toBe(200);
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(recordedImage("moon-thumb.jpg"));
   });
 
   it("delivers to none but the active bots with webhooks that a message mentions in its room: never a person, a bot without one, a deleted bot or one outside the room", async () => {

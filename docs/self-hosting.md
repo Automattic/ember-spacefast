@@ -759,7 +759,8 @@ What a self-hoster should know, beyond keeping the setup password and link to th
   password reset, or a new password saved in another session ends it. Its id travels in the
   address's fragment, which no log sees.
 - A file's address is signed and never expires: whoever has it can open the file until its message
-  is deleted, as with Active Storage's links.
+  is deleted, as with Active Storage's links. A bot is given the addresses of the files in its rooms,
+  with the messages its webhook is sent and those the bot API answers, so it can read them.
 - A bot's webhook payload carries the bot's key, so point bots only at servers you trust. Webhooks
   go only to https, or to http on localhost, so nobody on the way reads the key; a bot saved with an
   http URL elsewhere before gets no deliveries until its URL is changed, and the Worker's log says
