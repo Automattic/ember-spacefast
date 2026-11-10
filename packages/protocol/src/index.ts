@@ -5,7 +5,7 @@
 import type { AssistantSettings, YourAssistant } from "./assistant.ts";
 import type { Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
-import type { HuddlesSettings } from "./huddles.ts";
+import type { HuddlesSettings, LiveHuddle } from "./huddles.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
 import { MAX_PUSH_ENDPOINT_LENGTH } from "./push.ts";
 import { ROOM_ICON_NAMES } from "./room-icons.ts";
@@ -70,7 +70,7 @@ export type {
   YourAssistantChanges,
 } from "./assistant.ts";
 // And the rest of huddles.ts, from "@ember/protocol/huddles", which only the Huddles card, its setup and the Worker's huddles use.
-export type { HuddlesField, HuddlesForgotten, HuddlesSaved, HuddlesSettings, HuddlesSetup } from "./huddles.ts";
+export type { HuddlesField, HuddlesForgotten, HuddlesSaved, HuddlesSettings, HuddlesSetup, LiveHuddle } from "./huddles.ts";
 export {
   FILE_NAME_NOT_KEPT,
   FILE_TOO_LARGE,
@@ -274,8 +274,8 @@ export interface Favorites {
 /**
  * What `GET /api/sidebar` answers: the rooms someone is in, in the order they were made, the ones
  * they've starred, the invitation, when they're an administrator in its room who hasn't dismissed the
- * card, and the people suggested for DMs. It comes with an ETag, and a request whose If-None-Match
- * names it gets 304 Not Modified instead.
+ * card, the people suggested for DMs, and the huddles going on in their rooms. It comes with an ETag,
+ * and a request whose If-None-Match names it gets 304 Not Modified instead.
  */
 export interface Sidebar {
   rooms: SidebarRoom[];
@@ -292,6 +292,8 @@ export interface Sidebar {
    * person, never them, as many as `suggestedCount` says.
    */
   suggestions: User[];
+  /** The huddle going on in each of `rooms` that has one, by the room's id. `room.huddle` frames keep it current. */
+  huddles: Record<RoomId, LiveHuddle>;
 }
 
 /** How many people the sidebar's suggestions start from, Campfire's `DIRECT_PLACEHOLDERS`. */
@@ -1619,6 +1621,11 @@ export type WorkspaceServerFrame =
    * of a later one. Sent to everyone in the DM, its author included, as the Workspace applies the message.
    */
   | { type: "room.active"; roomId: RoomId; at: string }
+  /**
+   * Who's in the huddle of a room of theirs now, or null once nobody is. Sent to everyone in the room, in
+   * the huddle or not, as people join it and leave, and to whoever a change puts in a room with one going on.
+   */
+  | { type: "room.huddle"; roomId: RoomId; huddle: LiveHuddle | null }
   /** They've starred or unstarred a room, in this tab or another: their stars as they are now. */
   | { type: "favorites.changed"; favorites: Favorites }
   /** They've given a room of theirs another notification level, in this tab or another. */

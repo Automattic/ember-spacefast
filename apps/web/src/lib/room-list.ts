@@ -3,6 +3,7 @@ import {
   suggestedCount,
   type Favorites,
   type Involvement,
+  type LiveHuddle,
   type Room,
   type RoomId,
   type SharedRoom,
@@ -116,18 +117,26 @@ const laterActivity = (listed: SidebarRoom, room: Room) =>
 const withActivity = (rooms: SidebarRoom[], roomId: RoomId, at: string): SidebarRoom[] =>
   rooms.map((room) => (room.id === roomId && room.kind === "direct" && room.activeAt < at ? { ...room, activeAt: at } : room));
 
+/** `huddles` with room `roomId`'s as `huddle` has it, or without one once it's null: the huddle is over, or the room gone. */
+function withHuddle(huddles: Sidebar["huddles"], roomId: RoomId, huddle: LiveHuddle | null): Sidebar["huddles"] {
+  const { [roomId]: _, ...others } = huddles;
+  return huddle ? { ...others, [roomId]: huddle } : others;
+}
+
 /**
  * A change to someone's rooms, which the server's list shows the next time it's asked: a room as it was
  * saved, here or anywhere else, one that's gone for this person, deleted or no longer theirs, a room the
- * workspace socket says has been marked unread or read, a DM it says a message has come in, a room's
- * level, as one saved in any of their tabs leaves it, their stars, as a star saved in any of their tabs
- * leaves them, or the shared order, as saving it here leaves their rooms in it.
+ * workspace socket says has been marked unread or read, a DM it says a message has come in, a room
+ * whose huddle it says someone joined or left, a room's level, as one saved in any of their tabs leaves
+ * it, their stars, as a star saved in any of their tabs leaves them, or the shared order, as saving it
+ * here leaves their rooms in it.
  */
 export type RoomChange =
   | { type: "saved"; room: Room }
   | { type: "gone"; roomId: RoomId }
   | { type: "marked"; roomId: RoomId; unread: boolean }
   | { type: "active"; roomId: RoomId; at: string }
+  | { type: "huddle"; roomId: RoomId; huddle: LiveHuddle | null }
   | { type: "involved"; roomId: RoomId; involvement: Involvement }
   | { type: "starred"; favorites: Favorites }
   | { type: "reordered"; sharedOrder: RoomId[] };
@@ -166,12 +175,14 @@ function changed(list: Sidebar, change: SidebarChange): Sidebar {
     case "gone": {
       const stars = list.favorites.rooms;
       const favorites = stars.includes(change.roomId) ? { ...list.favorites, rooms: stars.filter((id) => id !== change.roomId) } : list.favorites;
-      return { ...list, rooms: list.rooms.filter((room) => room.id !== change.roomId), favorites };
+      return { ...list, rooms: list.rooms.filter((room) => room.id !== change.roomId), favorites, huddles: withHuddle(list.huddles, change.roomId, null) };
     }
     case "marked":
       return { ...list, rooms: list.rooms.map((room) => (room.id === change.roomId ? { ...room, unread: change.unread } : room)) };
     case "active":
       return { ...list, rooms: withActivity(list.rooms, change.roomId, change.at) };
+    case "huddle":
+      return { ...list, huddles: withHuddle(list.huddles, change.roomId, change.huddle) };
     case "involved":
       return { ...list, rooms: list.rooms.map((room) => (room.id === change.roomId ? { ...room, involvement: change.involvement } : room)) };
     case "join code":
@@ -195,7 +206,7 @@ export function roomListReducer(state: RoomListState, action: RoomListAction): R
       return { list: (state.pending ?? []).reduce(changed, action.list), pending: null };
     // When the first list fails to arrive, there are no rooms to show, rather than a list loading for good.
     case "unanswered":
-      return { list: state.list ?? { rooms: [], favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation: null, suggestions: [] }, pending: null };
+      return { list: state.list ?? { rooms: [], favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation: null, suggestions: [], huddles: {} }, pending: null };
     default:
       return { list: state.list && changed(state.list, action), pending: state.pending && [...state.pending, action] };
   }

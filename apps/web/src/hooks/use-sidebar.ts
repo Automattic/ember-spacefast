@@ -188,6 +188,8 @@ export function useSidebar(
           return change({ type: "marked", roomId: frame.roomId, unread: frame.type === "room.unread" });
         case "room.active":
           return change({ type: "active", roomId: frame.roomId, at: frame.at });
+        case "room.huddle":
+          return change({ type: "huddle", roomId: frame.roomId, huddle: frame.huddle });
         case "user.updated":
           if (!isSomeoneElse(frame.user)) {
             toldOf.you = true;

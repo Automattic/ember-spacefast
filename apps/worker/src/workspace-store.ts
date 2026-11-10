@@ -60,6 +60,7 @@ import {
   type WebTool,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
+import type { LiveHuddle } from "@ember/protocol/huddles";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
 import { messagePayload, type PushPayload } from "./push/payload";
@@ -398,6 +399,25 @@ export interface AvatarOwner {
 /** Someone as the people directory lists them, with the avatar they've uploaded, or a bot was given. */
 export interface PicturedEntry extends DirectoryEntry {
   avatar: StoredPicture | null;
+}
+
+/** What `roomsFor` reads for someone's sidebar. */
+export interface SidebarRooms {
+  rooms: SidebarRoom[];
+  favorites: Favorites;
+  sharedOrder: RoomId[];
+  suggestions: User[];
+  huddles: Record<RoomId, LiveHuddle>;
+  /** The workspace's first room, if they're given the welcome card. */
+  invitationRoomId: RoomId | null;
+}
+
+/** What became of a room's report of its huddle. */
+export interface ReportedHuddle {
+  /** Who's in the room, to hear of the huddle, when the report changed the huddle kept, or else null. */
+  memberIds: UserId[] | null;
+  /** When the report kept instead was made, if that's no earlier than this one, which then counted for nothing. */
+  outdatedBy: number | null;
 }
 
 /** What changing a room changed, and who's in it then. */
@@ -1024,8 +1044,14 @@ interface RoomToChangeRow extends SharedRoom {
   can_administer: number;
 }
 
+/** A room's huddle as the room last reported it: when it started, and who's in it, a JSON list of their ids in the order they joined. */
+interface HuddleRow {
+  huddle_started_at: string;
+  huddle_user_ids: string;
+}
+
 /** A room someone is in, as `ROOMS_FOR_USER` reads it: a DM's name and icon are null. */
-interface SidebarRow {
+interface SidebarRow extends HuddleRow {
   id: RoomId;
   kind: SidebarRoom["kind"];
   name: string | null;
@@ -1104,7 +1130,7 @@ const ACTIVE_AT = `coalesce(rooms.last_message_at, rooms.created_at) AS active_a
  * they were listed.
  */
 export const ROOMS_FOR_USER = `SELECT rooms.id, rooms.kind, rooms.name, rooms.icon, ${ACTIVE_AT}, memberships.unread_at IS NOT NULL AS unread,
-    memberships.involvement, rooms.shared_position
+    memberships.involvement, rooms.shared_position, rooms.huddle_started_at, rooms.huddle_user_ids
   FROM memberships JOIN rooms ON rooms.id = memberships.room_id
   WHERE memberships.user_id = ? ORDER BY rooms.created_at, rooms.id`;
 
@@ -1135,6 +1161,52 @@ export const DIRECT_MEMBERS_FOR_USER = `SELECT members.room_id, users.id, users.
   FROM memberships AS mine JOIN rooms ON rooms.id = mine.room_id
     JOIN memberships AS members ON members.room_id = mine.room_id JOIN users ON users.id = members.user_id
   WHERE mine.user_id = ? AND rooms.kind = 'direct' ORDER BY members.room_id, members.user_id`;
+
+/** Who's in a room's huddle while it has none going on: nobody. */
+const NOBODY = "[]";
+
+/** The huddle going on in a room, as its row keeps it, or null when none is. */
+const liveHuddleOf = (row: HuddleRow): LiveHuddle | null =>
+  row.huddle_user_ids === NOBODY ? null : { startedAt: row.huddle_started_at, userIds: JSON.parse(row.huddle_user_ids) as UserId[] };
+
+/** The huddles going on in the rooms `rows` lists, by room. */
+function liveHuddlesIn(rows: SidebarRow[]): Record<RoomId, LiveHuddle> {
+  const huddles: Record<RoomId, LiveHuddle> = {};
+  for (const row of rows) {
+    const huddle = liveHuddleOf(row);
+    if (huddle) huddles[row.id] = huddle;
+  }
+  return huddles;
+}
+
+/**
+ * Keeps room ?1's huddle as the room reported it at ?2: started at ?3, with the people ?4 lists in it,
+ * or nobody once it's over. A report no later than the one kept changes nothing, nor does one that says
+ * what's kept already. Answers the room if it changed what's kept.
+ */
+const REPORT_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2, huddle_started_at = ?3, huddle_user_ids = ?4
+  WHERE id = ?1 AND huddle_reported_at < ?2 AND (huddle_user_ids <> ?4 OR huddle_started_at <> ?3) RETURNING id`;
+
+/**
+ * Who's in room ?1, to hear of its huddle, if the report kept of it is the one made at ?2. A room says
+ * who's in its huddle again every half a minute, and a report that changes nothing reads no memberships.
+ */
+export const MEMBERS_TO_TELL_OF_HUDDLE = `SELECT user_id FROM memberships
+  WHERE room_id = ?1 AND EXISTS (SELECT 1 FROM rooms WHERE id = ?1 AND huddle_reported_at = ?2)`;
+
+/**
+ * Keeps ?2 as when room ?1, which has no huddle going on, last reported that. After `REPORT_HUDDLE` a
+ * room with none still has an earlier time only when the report said so too, as one does when the
+ * Workspace never heard of the huddle that's over. A report from while it went on can still arrive, and
+ * the later time is what has it change nothing.
+ */
+const REPORT_NO_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2 WHERE id = ?1 AND huddle_reported_at < ?2 AND huddle_user_ids = '[]'`;
+
+/** When the report kept of a room's huddle was made. */
+const HUDDLE_REPORTED_AT = `SELECT huddle_reported_at FROM rooms WHERE id = ?`;
+
+/** A room's huddle, as its row keeps it. */
+const HUDDLE = `SELECT huddle_started_at, huddle_user_ids FROM rooms WHERE id = ?`;
 
 /**
  * A DM's key: its people's ids, each once, sorted, as a JSON array, so each group of people has one key
@@ -2843,10 +2915,11 @@ export class WorkspaceStore {
 
   /**
    * The rooms someone is in, with their unread marks and the people in their DMs, the ones they've
-   * starred, the people their sidebar suggests for DMs, and the workspace's first room, if there is one
-   * yet and they're given the welcome card: an active administrator who hasn't dismissed it.
+   * starred, the people their sidebar suggests for DMs, the huddles going on in their rooms, and the
+   * workspace's first room, if there is one yet and they're given the welcome card: an active
+   * administrator who hasn't dismissed it.
    */
-  async roomsFor(userId: UserId): Promise<{ rooms: SidebarRoom[]; favorites: Favorites; sharedOrder: RoomId[]; suggestions: User[]; invitationRoomId: RoomId | null }> {
+  async roomsFor(userId: UserId): Promise<SidebarRooms> {
     const [rows, [original], starred, [user], members, suggested] = (await this.db.batch([
       statement(ROOMS_FOR_USER, userId),
       statement(ORIGINAL_ROOM),
@@ -2862,8 +2935,32 @@ export class WorkspaceStore {
       favorites: { rooms: starred.map((row) => row.room_id), version: user?.version ?? 0 },
       sharedOrder: sharedOrderOf(rows),
       suggestions: suggested.slice(0, suggestedCount(peopleInDirects)),
+      huddles: liveHuddlesIn(rows),
       invitationRoomId: user?.invited === 1 ? (original?.id ?? null) : null,
     };
+  }
+
+  /**
+   * Keeps room `roomId`'s huddle as the room reported it at `at`, by its own clock: `huddle`, or nobody
+   * in it once it's null. Answers who's in the room, to hear of it, when the report changed the huddle
+   * kept, and the time of the report kept instead, when that's no earlier than this one. A room that's
+   * gone keeps nothing.
+   */
+  async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<ReportedHuddle> {
+    const [[before], changed, members] = (await this.db.batch([
+      statement(HUDDLE_REPORTED_AT, roomId),
+      statement(REPORT_HUDDLE, roomId, at, huddle?.startedAt ?? "", huddle ? JSON.stringify(huddle.userIds) : NOBODY),
+      statement(MEMBERS_TO_TELL_OF_HUDDLE, roomId, at),
+      statement(REPORT_NO_HUDDLE, roomId, at),
+    ])) as [Array<{ huddle_reported_at: number }>, unknown[], UserIdRow[], unknown[]];
+    if (before && before.huddle_reported_at >= at) return { memberIds: null, outdatedBy: before.huddle_reported_at };
+    return { memberIds: changed.length > 0 ? userIdsOf(members) : null, outdatedBy: null };
+  }
+
+  /** The huddle going on in a room, or null when none is. */
+  async liveHuddle(roomId: RoomId): Promise<LiveHuddle | null> {
+    const [row] = await this.db.all<HuddleRow>(HUDDLE, roomId);
+    return row ? liveHuddleOf(row) : null;
   }
 
   /** Records that someone has dismissed the welcome card, at `now`, unless they had already. */

@@ -13,6 +13,7 @@ const ANSWERS: Record<string, () => Response> = {
       sharedOrder: [],
       invitation: null,
       suggestions: [],
+      huddles: {},
     }),
   "GET /api/users": () => Response.json({ users: [] }),
   "GET /api/searches?q=": () => Response.json({ search: null, matches: [], next: null, rooms: [], recent: [] }),

@@ -40,6 +40,7 @@ import {
   type EmailSettings,
   type Favorites,
   type HuddlesSettings,
+  type LiveHuddle,
   type Mailbox,
   type Invited,
   type Involvement,
@@ -1058,11 +1059,40 @@ export class Workspace extends DurableObject<Env> {
    * its keys, or null while it keeps none, or while the app's secret doesn't open under SESSION_SECRET,
    * as once that's changed, when it's as if huddles were off until an administrator sets them up again.
    */
-  private async huddlesSettings({ huddles: saved }: Pick<JoinableAccount, "huddles">): Promise<HuddlesSettings | null> {
+  private async huddlesSettings(account: Pick<JoinableAccount, "huddles">): Promise<HuddlesSettings | null> {
+    const app = await this.openedHuddleApp(account);
+    return app && { appId: app.appId };
+  }
+
+  /**
+   * The Realtime SFU app huddles run through, with its secret opened, for a room to ask the SFU as, or
+   * null while huddles are off. Rooms ask as a huddle goes on, so turning huddles off, or changing the
+   * app, ends the ones under way. The secret goes no further than the room's memory.
+   */
+  async huddleApp(): Promise<SfuApp | null> {
+    const account = await this.joinableAccount();
+    return account && this.openedHuddleApp(account);
+  }
+
+  /** The SFU app `account` keeps the keys of, with its secret opened, or null while it keeps none or the secret doesn't open. */
+  private async openedHuddleApp({ huddles: saved }: Pick<JoinableAccount, "huddles">): Promise<SfuApp | null> {
     if (!saved) return null;
     const appSecret = await unseal(this.env.SESSION_SECRET, "sfu-app-secret", saved.sealedAppSecret);
     if (appSecret === null) console.error("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so huddles are off.");
-    return appSecret === null ? null : { appId: saved.appId };
+    return appSecret === null ? null : { appId: saved.appId, appSecret };
+  }
+
+  /**
+   * Takes room `roomId`'s word for who's in its huddle, as the room reported it at `at` by its own clock:
+   * `huddle`, or null once nobody is. Everyone in the room hears of a report that changes what the
+   * Workspace keeps, in the huddle or not. A room's reports can arrive out of order, and one made no
+   * later than the one kept counts for nothing: this answers when the one kept was made, for the room
+   * to report again after it, and null otherwise.
+   */
+  async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<number | null> {
+    const { memberIds, outdatedBy } = await this.store.reportHuddle(roomId, at, huddle);
+    if (memberIds) this.tell(memberIds, { type: "room.huddle", roomId, huddle });
+    return outdatedBy;
   }
 
   /**
@@ -2218,16 +2248,16 @@ export class Workspace extends DurableObject<Env> {
   /**
    * The sidebar of the person `credentials` signs in: the rooms they're in, the ones they've starred and
    * the shared order of the rest, with the welcome card's invitation if they're an administrator in the
-   * workspace's first room who hasn't dismissed the card, and the people it suggests for DMs. Null
-   * without a valid session.
+   * workspace's first room who hasn't dismissed the card, the people it suggests for DMs, and the huddles
+   * going on in their rooms. Null without a valid session.
    */
   async sidebar(credentials: Credentials): Promise<Sidebar | null> {
     const user = await this.authenticate(credentials);
     if (!user) return null;
-    const [{ rooms, favorites, sharedOrder, suggestions, invitationRoomId }, account] = await Promise.all([this.store.roomsFor(user.id), this.joinableAccount()]);
+    const [{ rooms, favorites, sharedOrder, suggestions, huddles, invitationRoomId }, account] = await Promise.all([this.store.roomsFor(user.id), this.joinableAccount()]);
     const invited = invitationRoomId !== null && rooms.some((room) => room.id === invitationRoomId);
     const invitation = account && invited ? { roomId: invitationRoomId, joinCode: account.joinCode } : null;
-    return { rooms, favorites, sharedOrder, invitation, suggestions };
+    return { rooms, favorites, sharedOrder, invitation, suggestions, huddles };
   }
 
   /**
@@ -2941,6 +2971,9 @@ export class Workspace extends DurableObject<Env> {
       }
       this.tell(saved.removedIds, { type: "room.gone", roomId });
       this.tell(saved.roomChanged ? saved.memberIds : saved.addedIds, { type: "room.saved", room: changed });
+      // Whoever it puts in has heard nothing of a huddle going on there.
+      const huddle = saved.addedIds.length > 0 ? await this.store.liveHuddle(roomId) : null;
+      if (huddle) this.tell(saved.addedIds, { type: "room.huddle", roomId, huddle });
       // The shared order their sidebars have leaves out the rooms they weren't in, so they load it
       // again.
       if (saved.ranked) this.tell(saved.addedIds, { type: "rooms.reordered" });

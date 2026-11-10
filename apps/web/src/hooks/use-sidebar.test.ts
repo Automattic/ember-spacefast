@@ -8,7 +8,7 @@ const grace: Me = { id: "u2", name: "Grace", administrator: true };
 const design = { id: "r1", name: "Design", kind: "open", icon: null, unread: false, involvement: "mentions" } satisfies SidebarRoom;
 const general = { id: "r2", name: "general", kind: "open", icon: null, unread: false, involvement: "mentions" } satisfies SidebarRoom;
 /** Ada's sidebar with `rooms`, none of them starred. */
-const unstarred = (rooms: SidebarRoom[]): Sidebar => ({ rooms, favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation: null, suggestions: [] });
+const unstarred = (rooms: SidebarRoom[]): Sidebar => ({ rooms, favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation: null, suggestions: [], huddles: {} });
 const ember: Account = { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {} };
 /** Someone as the directory lists them. */
 const listed = (me: Me, role: DirectoryUser["role"]): DirectoryUser => ({ id: me.id, name: me.name, bio: null, role, status: "active", avatarUrl: `/users/${me.id}/avatar` });
@@ -376,6 +376,24 @@ describe("DM order", () => {
     await release();
     await settle();
     expect(result.current.list?.rooms).toEqual([design, { ...withGrace, activeAt: "2026-10-15T12:05:00.000Z" }]);
+  });
+});
+
+describe("Huddles in your rooms", () => {
+  const huddle = { startedAt: "2026-10-15T12:00:00.000Z", userIds: [grace.id] };
+
+  it("keeps who's in a room's huddle as the workspace socket says people join and leave it", async () => {
+    server.sidebar = { ...unstarred([design, general]), huddles: { [design.id]: huddle } };
+    const { result } = await showSidebar();
+    socket().connect();
+    await settle();
+    expect(result.current.list?.huddles).toEqual({ [design.id]: huddle });
+
+    socket().receive({ type: "room.huddle", roomId: general.id, huddle: { ...huddle, userIds: [ada.id] } });
+    socket().receive({ type: "room.huddle", roomId: design.id, huddle: { ...huddle, userIds: [grace.id, ada.id] } });
+    expect(result.current.list?.huddles).toEqual({ [design.id]: { ...huddle, userIds: [grace.id, ada.id] }, [general.id]: { ...huddle, userIds: [ada.id] } });
+    socket().receive({ type: "room.huddle", roomId: design.id, huddle: null });
+    expect(result.current.list?.huddles).toEqual({ [general.id]: { ...huddle, userIds: [ada.id] } });
   });
 });
 

@@ -21,6 +21,7 @@ import {
   type User,
   type UserId,
 } from "@ember/protocol";
+import { parseHuddleSocketParams } from "@ember/protocol/huddles";
 import { prepareBody, userIdFromSgid, userIdsIn, type PreparedBody } from "@ember/richtext";
 import { AnswerError, answerOf, NOTES, PICKED_MODEL_NOTES, previewAttachment, questionFor, ROOM_MESSAGES_READ, THREAD_REPLIES_READ, waitFor, writtenBy, type Answer } from "./assistant/answers";
 import { ask, type Answered } from "./assistant/gateway";
@@ -34,6 +35,7 @@ import { attachedFile, Blobs, objectKey, previewKey, type Identified, type RoomB
 import type { ImageSize } from "./files/images";
 import { storeArriving, type ArrivingFile, type StreamedFile } from "./files/streamed";
 import { NO_STORAGE, type Uploader } from "./files/uploads";
+import { Huddle, HUDDLE_CHECK_MS, HUDDLE_TAG } from "./huddles/room";
 import { base36, sortableId } from "./ids";
 import { sendPushes } from "./push/delivery";
 import { urlOf } from "./request-url";
@@ -69,11 +71,18 @@ export const AUTHORIZED_AT_HEADER = "X-Ember-Authorized-At";
 export const ADDRESS_HEADER = "X-Ember-Address";
 /** "true" when a ban blocks the IP address the socket comes from. */
 export const BANNED_HEADER = "X-Ember-Banned";
+/** "true" on a socket for the room's huddle, rather than for the room itself. */
+export const HUDDLE_HEADER = "X-Ember-Huddle";
 
 /** What a deleted room's object keeps in its own storage until its alarm: the room's id, whose records the alarm erases. */
 const DELETED_ROOM = "deletedRoom";
 /** What a room's object keeps in its own storage while its alarm is to send its logs: the room's id. */
 const UNDELIVERED_ROOM = "undeliveredRoom";
+/**
+ * What it keeps beside that: when the logs are to be sent, since while a huddle goes on the alarm rings
+ * sooner than that, to check the huddle.
+ */
+const LOGS_DUE = "logsDue";
 
 /** Why the room keeps nothing of a message: it couldn't show it, or there's nothing in it. `MESSAGE_TOO_LONG` says when there's too much. */
 const UNREADABLE = "That message couldn't be saved.";
@@ -210,11 +219,14 @@ export class ChatRoom extends DurableObject<Env> {
    * isn't logged.
    */
   private readonly readers = new Set<UserId>();
+  /** The room's huddle, whose sockets it keeps beside the room's own. */
+  private readonly huddle: Huddle;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Heartbeats are answered by the runtime without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
+    this.huddle = new Huddle(ctx, env, (time) => this.serially(() => this.checkHuddleBy(time)));
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -228,10 +240,15 @@ export class ChatRoom extends DurableObject<Env> {
     if (!user || !roomId || !sessionId || !Number.isFinite(authorizedAt)) return new Response("Missing user, room, session or time", { status: 400 });
     const address = request.headers.get(ADDRESS_HEADER);
     const banned = request.headers.get(BANNED_HEADER) === "true";
+    const tags = [user.id, sessionTag(sessionId), ...(address ? [addressTag(address)] : [])];
+    if (request.headers.get(HUDDLE_HEADER) === "true") {
+      // A banned address reads the room and changes nothing in it, and the Worker turns it away from the huddle.
+      if (banned) return closedAtOnce(CloseCode.NotFound);
+      return this.joinHuddle(user, roomId, tags, authorizedAt, parseHuddleSocketParams(urlOf(request).searchParams).muted);
+    }
     const { visible, since, around, protocol } = parseRoomSocketParams(urlOf(request).searchParams);
 
     return this.serially(async () => {
-      const tags = [user.id, sessionTag(sessionId), ...(address ? [addressTag(address)] : [])];
       // Read side by side, so a room that has just woken waits on D1 once.
       const [refused, opening] = await Promise.all([this.revocationsFor(roomId).refuse(tags, authorizedAt), this.opening(roomId, since, around)]);
       if (refused) return closedAtOnce(CloseCode.Reconnect);
@@ -254,6 +271,20 @@ export class ChatRoom extends DurableObject<Env> {
       if (!couriers.index.checked) couriers.index.deliver();
       if (!couriers.files.checked) couriers.files.deliver();
       return new Response(null, { status: 101, webSocket: client });
+    });
+  }
+
+  /**
+   * Lets `user` into the room's huddle on a socket of its own, which carries the tags a socket of the
+   * room's does, so whatever ends their access to the room takes them out of its huddle. Like one of the
+   * room's, it's turned away when the Workspace's word for it is too old, or older than a revocation.
+   */
+  private joinHuddle(user: User, roomId: RoomId, tags: string[], authorizedAt: number, muted: boolean): Promise<Response> {
+    return this.serially(async () => {
+      if (await this.revocationsFor(roomId).refuse(tags, authorizedAt)) return closedAtOnce(CloseCode.Reconnect);
+      const response = await this.huddle.join(user, roomId, tags, muted);
+      if (this.huddle.live) await this.checkHuddleBy(Date.now() + HUDDLE_CHECK_MS);
+      return response;
     });
   }
 
@@ -292,6 +323,10 @@ export class ChatRoom extends DurableObject<Env> {
       const leaving = new Map<UserId, User>();
       for (const { tag, code } of revocations) {
         for (const socket of this.ctx.getWebSockets(tag)) {
+          if (this.huddle.has(socket)) {
+            this.huddle.remove(socket, code);
+            continue;
+          }
           const user = this.close(socket, code);
           if (user) leaving.set(user.id, user);
         }
@@ -308,7 +343,8 @@ export class ChatRoom extends DurableObject<Env> {
    * the Workspace ask again, which goes on from the batch that failed.
    */
   private async destroy(roomId: RoomId, code: CloseCode): Promise<void> {
-    for (const socket of this.ctx.getWebSockets()) this.close(socket, code);
+    this.huddle.end(code);
+    for (const socket of this.roomSockets()) this.close(socket, code);
     while (await this.storeFor(roomId).deleteMessages(MESSAGES_DELETED_AT_ONCE));
     await this.logFor(roomId).forget();
     while (await searchIndex(this.env).forget(roomId, MESSAGES_DELETED_AT_ONCE));
@@ -318,25 +354,42 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   /**
-   * Erases what's left of a deleted room, once R2 has deleted its files. Otherwise, sends the room's
-   * logs, which a call that failed left, or which `reindex` filled, and has R2 delete the files the room
-   * has marked deleted, and the uploads a day old that are still unfinished, coming back for the next
-   * of those once it's a day old.
+   * Erases what's left of a deleted room, once R2 has deleted its files. Otherwise, checks the room's
+   * huddle, and comes back to check it while one goes on, and sends the room's logs. While a huddle
+   * goes on, the alarm rings far more often than a log that failed is sent again, so the logs wait
+   * until they're due.
    */
   override async alarm(): Promise<void> {
-    const [deleted, undelivered] = await this.serially(() =>
-      Promise.all([this.ctx.storage.get<RoomId>(DELETED_ROOM), this.ctx.storage.get<RoomId>(UNDELIVERED_ROOM)]),
+    const [deleted, undelivered, logsDue] = await this.serially(() =>
+      Promise.all([this.ctx.storage.get<RoomId>(DELETED_ROOM), this.ctx.storage.get<RoomId>(UNDELIVERED_ROOM), this.ctx.storage.get<number>(LOGS_DUE)]),
     );
     if (deleted !== undefined) return this.erase(deleted);
-    if (undelivered === undefined) return;
-    const couriers = this.couriersFor(undelivered);
+    const nextCheck = await this.huddle.check().catch((error: unknown) => {
+      console.error("Checking the room's huddle failed:", error instanceof Error ? error.name : "unknown error");
+      return Date.now() + HUDDLE_CHECK_MS;
+    });
+    const logsWait = nextCheck !== null && logsDue !== undefined && logsDue > Date.now();
+    if (undelivered !== undefined && !logsWait) await this.sendLogs(undelivered);
+    // Logs that waited are due before the huddle's next check, or after it. Logs just sent have set the alarm for whatever is left of them.
+    if (nextCheck !== null) await this.serially(() => this.checkHuddleBy(logsWait ? Math.min(nextCheck, logsDue) : nextCheck));
+  }
+
+  /**
+   * Sends room `roomId`'s logs, which a call that failed left, or which `reindex` filled, and has R2
+   * delete the files the room has marked deleted, and the uploads a day old that are still unfinished,
+   * coming back for the next of those once it's a day old.
+   */
+  private async sendLogs(roomId: RoomId): Promise<void> {
+    // Whatever is left to send after this says when it's due.
+    await this.serially(() => this.ctx.storage.delete(LOGS_DUE));
+    const couriers = this.couriersFor(roomId);
     await Promise.all([couriers.workspace.retry(), couriers.index.retry(), couriers.files.retry()]);
     // Kept until then, so an alarm cut off as it sends, as a deploy can do, sends the rest when it's
     // retried. A courier whose last call failed has set the alarm again, for its next try.
     if (couriers.workspace.failing || couriers.index.failing || couriers.files.failing) return;
-    const unfinished = await this.serially(() => this.blobsFor(undelivered).oldestUnfinished());
+    const unfinished = await this.serially(() => this.blobsFor(roomId).oldestUnfinished());
     if (unfinished === null) await this.ctx.storage.delete(UNDELIVERED_ROOM);
-    else await this.wakeAt(undelivered, Date.parse(unfinished) + UNFINISHED_UPLOAD_KEPT_MS);
+    else await this.wakeAt(roomId, Date.parse(unfinished) + UNFINISHED_UPLOAD_KEPT_MS);
   }
 
   /**
@@ -665,6 +718,7 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    if (this.huddle.has(ws)) return this.huddle.message(ws, raw);
     if (isTooLarge(raw, MAX_ROOM_FRAME_SIZE)) return closeTooLarge(ws);
     const frame = typeof raw === "string" ? parseClientFrame(raw) : null;
     if (!frame) return this.send(ws, { type: "error", message: "Unrecognized frame" });
@@ -687,10 +741,12 @@ export class ChatRoom extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     ws.close(RESERVED_CLOSE_CODES.has(code) ? 1000 : code, "Closing");
+    if (this.huddle.has(ws)) return this.huddle.left(ws);
     await this.serially(async () => this.leave(ws));
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
+    if (this.huddle.has(ws)) return this.huddle.left(ws);
     await this.serially(async () => this.leave(ws));
   }
 
@@ -1351,10 +1407,23 @@ export class ChatRoom extends DurableObject<Env> {
     return this.serially(async () => {
       if (await this.isDeleted()) return false;
       await this.ctx.storage.put(UNDELIVERED_ROOM, roomId);
+      const due = await this.ctx.storage.get<number>(LOGS_DUE);
+      if (due === undefined || due > time) await this.ctx.storage.put(LOGS_DUE, time);
       const alarm = await this.ctx.storage.getAlarm();
       if (alarm === null || alarm > time) await this.ctx.storage.setAlarm(time);
       return true;
     });
+  }
+
+  /**
+   * Sets the alarm to check the room's huddle by `time`, unless it's set for sooner. A deleted room's
+   * alarm is left as it is, as `wakeAt` leaves it, and like it this runs one event at a time with
+   * deleting the room.
+   */
+  private async checkHuddleBy(time: number): Promise<void> {
+    if (await this.isDeleted()) return;
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > time) await this.ctx.storage.setAlarm(time);
   }
 
   /**
@@ -1365,10 +1434,22 @@ export class ChatRoom extends DurableObject<Env> {
     return this.erased || (await this.ctx.storage.get(DELETED_ROOM)) !== undefined;
   }
 
+  /**
+   * The room's own sockets, all of them or those carrying `tag`: every socket but the huddle's, whose
+   * people hear of the huddle alone, and aren't in the room for being in it.
+   */
+  private roomSockets(tag?: string): WebSocket[] {
+    const sockets = tag === undefined ? this.ctx.getWebSockets() : this.ctx.getWebSockets(tag);
+    const inHuddle = this.ctx.getWebSockets(HUDDLE_TAG);
+    if (inHuddle.length === 0) return sockets;
+    const huddle = new Set(inHuddle);
+    return sockets.filter((socket) => !huddle.has(socket));
+  }
+
   /** Everyone with at least one open socket, once each. */
   private present(): User[] {
     const users = new Map<string, User>();
-    for (const socket of this.ctx.getWebSockets()) {
+    for (const socket of this.roomSockets()) {
       if (socket.readyState !== WebSocket.OPEN) continue;
       const { user } = socket.deserializeAttachment() as Attachment;
       users.set(user.id, user);
@@ -1378,7 +1459,7 @@ export class ChatRoom extends DurableObject<Env> {
 
   /** Whether someone has the room open in a socket other than `except`. */
   private isPresent(userId: UserId, except?: WebSocket): boolean {
-    return this.ctx.getWebSockets(userId).some((socket) => socket !== except && socket.readyState === WebSocket.OPEN);
+    return this.roomSockets(userId).some((socket) => socket !== except && socket.readyState === WebSocket.OPEN);
   }
 
   /** Closes `socket` with `code` for a revocation, if it's open, and answers whose it was. */
@@ -1421,7 +1502,7 @@ export class ChatRoom extends DurableObject<Env> {
 
   private broadcast(frame: ServerFrame, except?: WebSocket): void {
     const data = JSON.stringify(frame);
-    for (const socket of this.ctx.getWebSockets()) {
+    for (const socket of this.roomSockets()) {
       if (socket === except) continue;
       try {
         socket.send(data);
