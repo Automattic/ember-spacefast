@@ -248,25 +248,31 @@ function memberfulChange(account: Pick<Account, "memberfulJoin" | "memberfulSign
   return join === account.memberfulJoin && membersOnly === account.memberfulSignIn ? undefined : { memberfulJoin: join, memberfulSignIn: membersOnly };
 }
 
-/** The account as every page shows it, without its join code, which only the people in it see, nor its email domains while Email domain is off, and with whether huddles are on in place of the app they run through. */
-const accountOf = ({
-  name,
-  tagline,
-  hideTranslationButtons,
-  customStyles,
-  restrictRoomCreation,
-  customDomain,
-  joinLink,
-  openSignUp,
-  memberfulJoin,
-  memberfulSignIn,
-  emailDomainSignUp,
-  emailDomains,
-  navigationIcons,
-  huddles,
-  updatedAt,
-  storedLogo,
-}: JoinableAccount): Account => ({
+/**
+ * The account as every page shows it, without its join code, which only the people in it see, nor its
+ * email domains while Email domain is off, and with whether huddles are on, `huddles`, in place of the
+ * app they run through.
+ */
+const accountOf = (
+  {
+    name,
+    tagline,
+    hideTranslationButtons,
+    customStyles,
+    restrictRoomCreation,
+    customDomain,
+    joinLink,
+    openSignUp,
+    memberfulJoin,
+    memberfulSignIn,
+    emailDomainSignUp,
+    emailDomains,
+    navigationIcons,
+    updatedAt,
+    storedLogo,
+  }: JoinableAccount,
+  huddles: boolean,
+): Account => ({
   name,
   tagline,
   hideTranslationButtons,
@@ -281,7 +287,7 @@ const accountOf = ({
   emailDomainSignUp,
   emailDomains: emailDomainSignUp ? emailDomains : [],
   navigationIcons,
-  huddles: huddles !== null,
+  huddles,
 });
 
 /** The parts of the account that Ember AI's settings are made of. */
@@ -799,7 +805,15 @@ export class Workspace extends DurableObject<Env> {
   /** The workspace's account, or null until first run creates it. Its join code is only for the people in it. */
   async account(): Promise<Account | null> {
     const account = await this.joinableAccount();
-    return account && accountOf(account);
+    return account && this.shownAccount(account);
+  }
+
+  /**
+   * `account` as every page shows it, with huddles on while the app they run through opens, as rooms
+   * and the Huddles card have it (`openedHuddleApp`).
+   */
+  private async shownAccount(account: JoinableAccount): Promise<Account> {
+    return accountOf(account, (await this.openedHuddleApp(account)) !== null);
   }
 
   private async joinableAccount(): Promise<JoinableAccount | null> {
@@ -843,7 +857,7 @@ export class Workspace extends DurableObject<Env> {
     ]);
     const turnstile = account && (await this.openedTurnstileKeys(account));
     return {
-      account: account && accountOf(account),
+      account: account && (await this.shownAccount(account)),
       user,
       signInWithMemberful,
       passwordResetCodes: account !== null && this.sendsEmail(account),
@@ -920,7 +934,7 @@ export class Workspace extends DurableObject<Env> {
     if (!account) return "not set up";
     const invitations = canAdminister ? await this.store.invitations() : [];
     return {
-      account: accountOf(account),
+      account: await this.shownAccount(account),
       joinCode: canAdminister || !session.guest ? account.joinCode : null,
       canAdminister,
       email: await this.emailSettings(account),
@@ -973,7 +987,7 @@ export class Workspace extends DurableObject<Env> {
       const open = change.openSignUp ?? account.openSignUp;
       const membersOnly = memberful?.memberfulSignIn ?? account.memberfulSignIn;
       if (open && membersOnly && (change.openSignUp || !account.memberfulSignIn)) return "conflict";
-      if (Object.keys(change).length === 0) return accountOf(account);
+      if (Object.keys(change).length === 0) return this.shownAccount(account);
       const { memberful: _, ...settled } = change;
       const changed = { ...account, ...settled, ...memberful, navigationIcons: withNavigationIcons(account.navigationIcons, icons ?? {}) };
       // Email domain lets in no one without a domain, and emails the links people join with.
@@ -984,7 +998,7 @@ export class Workspace extends DurableObject<Env> {
       // Pages show neither the From address nor, while Email domain is off, its domains, so a change to
       // them alone, like a new join code, tells no one.
       if (Object.keys(change).every((key) => key === "emailFrom" || (key === "emailDomains" && !changed.emailDomainSignUp))) {
-        return accountOf(await this.saveAccount(changed, save));
+        return this.shownAccount(await this.saveAccount(changed, save));
       }
       return this.publishAccount(changed, save);
     });
@@ -1009,7 +1023,7 @@ export class Workspace extends DurableObject<Env> {
    */
   async changeCustomStyles(credentials: Credentials, customStyles: string | undefined): Promise<Account | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
-      if (customStyles === undefined || customStyles === account.customStyles) return accountOf(account);
+      if (customStyles === undefined || customStyles === account.customStyles) return this.shownAccount(account);
       return this.publishAccount({ ...account, customStyles }, (now) => this.store.changeCustomStyles(customStyles, now));
     });
   }
@@ -1517,7 +1531,7 @@ export class Workspace extends DurableObject<Env> {
   async changeLogo(credentials: Credentials, logo: StoredPicture | null): Promise<Account | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       // Removing a logo that isn't there changes nothing.
-      if (logo === null && account.storedLogo === null) return accountOf(account);
+      if (logo === null && account.storedLogo === null) return this.shownAccount(account);
       const previous = account.storedLogo?.key ?? null;
       const shown = await this.publishAccount({ ...account, storedLogo: logo }, (now) => this.store.changeLogo(logo, previous, now, Date.parse(now)));
       if (previous) await this.wakeAt(Date.now());
@@ -1549,7 +1563,7 @@ export class Workspace extends DurableObject<Env> {
    * workspace socket, so pages show it at once. Answers the account as it is now.
    */
   private async publishAccount(account: JoinableAccount, save: (now: string) => Promise<void>): Promise<Account> {
-    const shown = accountOf(await this.saveAccount(account, save));
+    const shown = await this.shownAccount(await this.saveAccount(account, save));
     this.broadcast({ type: "account.updated", account: shown });
     return shown;
   }

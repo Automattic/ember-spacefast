@@ -264,9 +264,13 @@ describe("Set up huddles", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await withWorkspaceEnv({ SESSION_SECRET: "another secret, after the app's was sealed" }, async () => {
       expect(await huddlesSettings(administrator)).toBeNull();
+      // Nor is any page told they're on, whose rooms would have a huddle button that starts nothing.
+      expect((await settings(administrator)).account.huddles).toBe(false);
+      expect((await openWorkspaceSocket(administrator)).welcome).toMatchObject({ account: { huddles: false } });
     });
     expect(logged).toHaveBeenCalledWith("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so huddles are off.");
     expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
+    expect((await settings(administrator)).account.huddles).toBe(true);
   });
 
   it("asks a stand-in for the Realtime SFU only at a loopback address", async () => {
