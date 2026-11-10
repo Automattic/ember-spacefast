@@ -66,6 +66,8 @@ export interface Turn {
  */
 export interface Question {
   instructions: string;
+  /** How it should answer when it's asked again only searching, as AI Gateway didn't take the tool for reading pages, if that's not as `instructions` says. */
+  instructionsWithoutReading?: string;
   /** How it should answer when it's asked again without the web, whose tools AI Gateway didn't take, if that's not as `instructions` says. */
   instructionsWithoutWeb?: string;
   turns: Turn[];
@@ -136,8 +138,9 @@ export interface Answered {
 /**
  * What the model `gateway` names answers `question` in its format, or why it didn't, waiting at most
  * `timeoutMs` for it all. A model that doesn't take being told how much to think is asked again without
- * that, and then, as Search the web tried the web's tools when it was turned on, without them, told it
- * can't use them.
+ * that, and then, as Search the web tries the web's tools when it's turned on, without the one for
+ * reading pages, which AI Gateway may not have for every model, and then without them, told it can't
+ * use them.
  */
 export async function ask(env: Env, gateway: Gateway, question: Question, timeoutMs: number): Promise<Answered | GatewayRefusal> {
   const signal = AbortSignal.timeout(timeoutMs);
@@ -147,6 +150,12 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
     console.error(`Asking ${gateway.model} again without a thinking level, which it didn't take: ${answered.refusal}`);
     const { thinking: _, ...unthinking } = asked;
     asked = unthinking;
+    answered = await askOnce(env, gateway, asked, signal);
+  }
+  const searching = asked.webTools?.filter((tool) => tool !== "read") ?? [];
+  if (isWrongFormat(answered) && asked.webTools?.includes("read") && toolsFor(gateway.format, searching).length > 0) {
+    console.error(`Asking ${gateway.model} to search again without reading pages, as AI Gateway didn't take that: ${answered.refusal}`);
+    asked = { ...asked, instructions: asked.instructionsWithoutReading ?? asked.instructions, webTools: searching };
     answered = await askOnce(env, gateway, asked, signal);
   }
   if (!isWrongFormat(answered) || toolsFor(gateway.format, asked.webTools).length === 0) return answered;

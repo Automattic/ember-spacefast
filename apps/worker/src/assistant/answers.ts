@@ -84,8 +84,8 @@ export class AnswerError extends Error {}
  * instructions say, how much to think and write, at `levels`, and what it may do on the web,
  * `webTools`, labeled with who asked and who answers. With no tools for searching while Search the web
  * is on, `webSearchOn`, @ember is told the model the asker picked can't search, rather than that an
- * administrator could let it, and with tools, how to answer without them too, as it's asked again
- * without them when AI Gateway doesn't take them (`ask`).
+ * administrator could let it, and with tools, how to answer only searching, and without them, as it's
+ * asked again so when AI Gateway doesn't take the one for reading pages, or them all (`ask`).
  */
 export function questionFor(
   answerer: Answerer,
@@ -100,6 +100,7 @@ export function questionFor(
   const told = (web: string) => instructionsFor(answerer, asker, where, ANSWER_WORDS[levels.length], now, web);
   return {
     instructions: told(webInstructionsFor(asker, webTools, webSearchOn)),
+    ...(webTools.includes("read") && { instructionsWithoutReading: told(webInstructionsFor(asker, webTools.filter((tool) => tool !== "read"), webSearchOn)) }),
     ...(webTools.length > 0 && { instructionsWithoutWeb: told(WEB_TOOLS_REFUSED) }),
     turns: turnsOf(answerer.id, readable(conversation, where.inThread)),
     maxTokens: maxTokensAt(levels),

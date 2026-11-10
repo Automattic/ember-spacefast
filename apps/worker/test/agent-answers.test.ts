@@ -97,16 +97,18 @@ async function setUp(): Promise<{ ada: Session; general: RoomId }> {
   return { ada, general };
 }
 
+/** A model answering as `answerTo` does with `text`, but refused the tool for reading pages, as AI Gateway may refuse it for a model. */
+const refusedReading = (text: string) => (asked: Asked) =>
+  (asked.body.tools ?? []).some(({ name }) => name === "web_fetch")
+    ? Response.json({ type: "error", error: { type: "invalid_request_error", message: "tools.1: unknown tool type" } }, { status: 400 })
+    : answerTo(asked, text);
+
 /**
  * Makes `agent` as `administrator`, its model answering its test question, and searching the web when
- * it's given a tool for it, but refusing the tool for reading pages, as AI Gateway may for a model.
+ * it's given a tool for it, but refused the tool for reading pages (`refusedReading`).
  */
 async function makeAgent(administrator: Session, agent: NewAgent): Promise<AgentSettings> {
-  internet((asked) =>
-    (asked.body.tools ?? []).some(({ name }) => name === "web_fetch")
-      ? Response.json({ type: "error", error: { type: "invalid_request_error", message: "tools.1: unknown tool type" } }, { status: 400 })
-      : answerTo(asked, "Hello, team!"),
-  );
+  internet(refusedReading("Hello, team!"));
   const response = await api("/api/account/agents", { method: "POST", headers: { Cookie: administrator.cookie }, body: JSON.stringify(agent) });
   expect(response.status, await response.clone().text()).toBe(201);
   vi.restoreAllMocks();
@@ -457,6 +459,20 @@ describe("Try it", () => {
     expect(((await unsearched.json()) as AgentTrialAnswer).body).toBe("<p>Nothing found.</p>");
     expect(questions[2]!.body.tools).toBeUndefined();
     expect(questions[2]!.body.system).toContain("You can't search the web or open links.");
+  });
+
+  it("only searches when AI Gateway doesn't take the tool for reading pages, as the agent would once it's saved", async () => {
+    const { ada } = await setUp();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(refusedReading("Nothing found."));
+
+    const response = await tryIt(ada, null, { ...TRIAL, model: SONNET, webSearch: true, question: "What's AI Gateway?" });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const { body } = (await response.json()) as AgentTrialAnswer;
+    expect(body).toBe(`<p>AI Gateway is Cloudflare's proxy for AI models.</p><p>Sources: <a href="${DOCS.url}">${DOCS.title}</a></p>`);
+    // Once without thinking, which it might not have taken, and then only searching, told so.
+    expect(questions.map(({ body }) => body.tools!.map(({ name }) => name))).toEqual([["web_search", "web_fetch"], ["web_search", "web_fetch"], ["web_search"]]);
+    expect(questions[2]!.body.system).toContain("You can search the web when a question needs what's current");
   });
 
   it("asks a model in each format in turn, as setting it up does, until one takes the question", async () => {
