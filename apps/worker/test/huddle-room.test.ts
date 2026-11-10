@@ -682,6 +682,19 @@ describe("Who a huddle is for", () => {
     expect(adas.pending("huddle.joined")).toHaveLength(1);
   });
 
+  it("takes someone who leaves the room out of its huddle too", async () => {
+    const { ada } = await huddlesOn();
+    const grace = await signIn("Grace");
+    const room = (await createRoom("Leads", { closedTo: [ada.user.id, grace.user.id], as: ada })).id;
+    const adas = await welcomed(room, ada);
+    const graces = await welcomed(room, grace);
+
+    expect((await api(`/api/rooms/${room}/membership`, { method: "DELETE", headers: { Cookie: grace.cookie } })).status).toBe(204);
+    expect(await graces.closed).toMatchObject({ code: CloseCode.Reconnect, reason: "Reconnect" });
+    expect(await adas.next("huddle.left")).toEqual({ type: "huddle.left", userId: grace.user.id });
+    expect(await (await joinHuddle(room, grace)).closed).toMatchObject({ code: CloseCode.NotFound });
+  });
+
   it("takes someone out of the huddles they're in when they sign out", async () => {
     const { ada } = await huddlesOn();
     const grace = await signIn("Grace");
