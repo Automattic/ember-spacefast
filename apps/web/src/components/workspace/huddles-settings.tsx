@@ -9,19 +9,16 @@ import { BUTTON } from "./email-settings";
 // through, which is Cloudflare's Realtime SFU, by an SFU app in the Cloudflare account of whoever runs
 // Ember, whose keys an administrator gives it. Its switch says whether it has, as Turnstile's does.
 // Turning it on opens Set up huddles (`HuddlesSetup`), as switches open setup that's missing, as the
-// project's owner asked (2026-10-26), and turning it off forgets the app's keys. Change keys opens the
-// setup with the app's ID as it is. Until rooms have huddles, which the changes after this one bring,
-// the card says that nobody can start one yet.
+// project's owner asked (2026-10-26), and turning it off forgets the app's keys, which ends any huddle
+// going on once its room next checks, within half a minute. Change keys opens the setup with the app's
+// ID as it is.
 
 /** What the card says of huddles while they're off. */
 export const HUDDLES_EXPLAINED =
   "Huddles let people in a room talk to each other. They run through Cloudflare's Realtime SFU, with an app in your Cloudflare account.";
 
-/** What the card says until rooms have huddles: for now it only keeps the app's keys. */
-export const HUDDLES_COMING = "People can't start a huddle yet. That comes in a later update, and the app's keys wait here until then.";
-
 /** What turning huddles off asks first. */
-export const CONFIRM_STOP_HUDDLES = "Are you sure you want to turn off huddles? Ember will forget the SFU app's keys.";
+export const CONFIRM_STOP_HUDDLES = "Are you sure you want to turn off huddles? Any huddle going on will end, and Ember will forget the SFU app's keys.";
 
 const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 
@@ -72,7 +69,6 @@ export function HuddlesSettings({ huddles, onSetUp, onStopped, onFailed }: Props
               </>
             )}
           </p>
-          <p className={NOTE}>{HUDDLES_COMING}</p>
         </div>
         <Switch
           checked={huddles !== null && !stopping}
