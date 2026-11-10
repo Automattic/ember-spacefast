@@ -22,9 +22,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { mentionedPerson, PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { permalinkOf } from "@/hooks/use-route";
+import { copyWithSuccess } from "@/lib/clipboard";
 import { replyQuote } from "@/lib/messages";
 import { canShare } from "@/lib/share";
 import { cn } from "@/lib/utils";
+import { COPY_CODE } from "./code-block";
 import { UNKNOWN_PERSON } from "./message-body";
 
 /** With a mouse, the bar overlaps its message. */
@@ -48,9 +50,6 @@ const PANEL = "rounded-[11px] border border-message-border bg-background shadow-
 /** An item of More actions: its icon, as the bar draws it, then its name, the panel's whole width. */
 const ITEM =
   "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[6px] px-2 text-left text-sm whitespace-nowrap text-message-ink transition-colors duration-150 hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:h-11 [&_svg]:size-4 [&_svg]:shrink-0";
-
-/** Campfire's `btn--success` (buttons.css) in Ember's colors: Copy link turns green as it copies. */
-const COPIED = ["text-positive", "motion-safe:animate-success"];
 
 interface Props {
   message: Message;
@@ -492,7 +491,7 @@ export function MessageActionsMenu({ message, nodes, row, threaded, editable, th
               </QuoteButton>
             )}
             {text !== null && (
-              <button type="button" className={ITEM} onClick={(event) => void copy(event, text)}>
+              <button type="button" className={ITEM} onClick={(event) => void copyWithSuccess(event.currentTarget, text)}>
                 <Copy />
                 Copy text
               </button>
@@ -602,25 +601,19 @@ function QuoteButton({ message, nodes, onQuote, onClick, ...props }: QuoteButton
   return <button type="button" onClick={quote} {...props} />;
 }
 
-/**
- * Copies `text`, then turns the button clicked green and plays its success animation from the start. It
- * stays green until it's clicked again, and a clipboard that refuses leaves it as it was.
- */
-async function copy({ currentTarget: button }: MouseEvent<HTMLButtonElement>, text: string) {
-  button.classList.remove(...COPIED);
-  // Reading the layout ends the last run of the animation, so adding the classes starts it again.
-  void button.offsetWidth;
-  try {
-    await navigator.clipboard.writeText(text);
-    button.classList.add(...COPIED);
-  } catch {
-    // Nothing to show.
-  }
-}
-
 /** Copies the message's address, as Copy link does. Pages carry only the path, made absolute against the page. */
 function copyLink(event: MouseEvent<HTMLButtonElement>, message: Message) {
-  return copy(event, new URL(permalinkOf(message), document.baseURI).href);
+  return copyWithSuccess(event.currentTarget, new URL(permalinkOf(message), document.baseURI).href);
+}
+
+/** The top of the highest of `row`'s Copy code buttons between `left` and `right`, or Infinity. */
+function copyCodeTop(row: HTMLElement, left: number, right: number): number {
+  let top = Infinity;
+  for (const button of row.querySelectorAll(COPY_CODE)) {
+    const box = button.getBoundingClientRect();
+    if (box.left < right && box.right > left) top = Math.min(top, box.top);
+  }
+  return top;
 }
 
 interface Placed {
@@ -638,7 +631,8 @@ interface Placed {
 
 /**
  * Places an open bar within the timeline less 8px on each side, and within what's on screen. With a
- * mouse, it overlaps the row, its top 17px above the row's and its right 16px in from the timeline's,
+ * mouse, it overlaps the row, its top 17px above the row's, or higher to keep clear of a code block's
+ * Copy code, and its right 16px in from the timeline's,
  * with Message options pinned as its last button, and the tray or More actions opens below it, or above
  * when there's more room there. For fingers, it opens 6px below its anchor, lined up with its right
  * edge, or above when it doesn't fit, or beside it when it fits neither, so it doesn't cover what opened
@@ -672,8 +666,10 @@ function placeMenu({ row, container, trigger, anchor, menu, bar, panel, overlapp
   let barHeight = 0;
   if (overlapping) {
     barHeight = bar.getBoundingClientRect().height;
-    // Overlapping the row by more than half the bar leaves the pointer a way across to it.
-    barTop = Math.max(bounds.top, Math.min(rowBox.top - 17, bounds.bottom - barHeight));
+    // Overlapping the row by more than half the bar leaves the pointer a way across to it. Over a code
+    // block's Copy code, as at the top of a follow-up, it sits on the block's edge instead.
+    const copyCode = copyCodeTop(row, Math.max(bounds.left, bounds.right - 8 - menuBox.width), bounds.right - 8);
+    barTop = Math.max(bounds.top, Math.min(rowBox.top - 17, copyCode - 6 - barHeight, bounds.bottom - barHeight));
     const below = bounds.bottom - barTop - barHeight;
     const above = barTop - bounds.top;
     const panelAbove = !panel.hidden && menuBox.height - barHeight > below && above > below;

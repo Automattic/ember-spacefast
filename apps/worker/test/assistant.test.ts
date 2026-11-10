@@ -340,6 +340,21 @@ describe("Ember AI", () => {
         429,
         { error: "AI Gateway is turning requests away for now, or a spend limit was reached. Try again later. Cloudflare says: Spend limit reached" },
       ],
+      [
+        "a question the gateway's Guardrails block",
+        refusing(424, 2016, "Prompt blocked due to security configurations"),
+        422,
+        { error: "AI Gateway's Guardrails blocked the question. Change what they block in AI Gateway. Cloudflare says: Prompt blocked due to security configurations" },
+      ],
+      [
+        "an answer the gateway's Data Loss Prevention blocks",
+        refusing(400, 2030, "Response content blocked due to DLP policy violations"),
+        422,
+        {
+          error:
+            "AI Gateway's Data Loss Prevention blocked the model's answer. Change its policies in AI Gateway. Cloudflare says: Response content blocked due to DLP policy violations",
+        },
+      ],
       ["a gateway that fails", () => new Response("Bad gateway", { status: 502 }), 502, { error: GATEWAY_UNANSWERED }],
       [
         "a gateway that can't be reached",

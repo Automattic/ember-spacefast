@@ -5,9 +5,11 @@ import { isReservedName, MAX_USER_NAME_LENGTH, NAME_RESERVED, type DirectoryUser
 
 /**
  * Where a bot posts messages to a room and reads them, as Campfire's `room_bot_messages_path` gives it,
- * with the bot's key: `/rooms/<room id>/<bot key>/messages`.
+ * with the bot's key: `/rooms/<room id>/<bot key>/messages`, and with `threadId`, where it posts to that
+ * message's thread.
  */
-export const botMessagesPath = (roomId: RoomId, key: string) => `/rooms/${encodeURIComponent(roomId)}/${key}/messages`;
+export const botMessagesPath = (roomId: RoomId, key: string, threadId?: string) =>
+  `/rooms/${encodeURIComponent(roomId)}/${key}/messages` + (threadId === undefined ? "" : `?thread=${encodeURIComponent(threadId)}`);
 
 /** Where a bot posts what a Slack incoming webhook is sent to a room, with the bot's key: `/rooms/<room id>/<bot key>/slack`. */
 export const botSlackPath = (roomId: RoomId, key: string) => `/rooms/${encodeURIComponent(roomId)}/${key}/slack`;

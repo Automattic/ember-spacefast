@@ -457,17 +457,21 @@ export class ChatRoom extends DurableObject<Env> {
   /**
    * Posts `markup` as a message from the bot the Workspace let in: as a socket's message.create does,
    * with a client message id of its own, as Campfire gives one (`Random.uuid`, message.rb), and with
-   * `cards` under its text, as a Slack incoming webhook's attachments show. Answers the message, why the
-   * room keeps nothing of it, or null once the room has heard that the bot's access ended, or the room
-   * was deleted, after the Workspace checked, as it turns away a socket then.
+   * `cards` under its text, as a Slack incoming webhook's attachments show, and with `threadId` in that
+   * message's thread, only there, as a reply to a delivery goes. Answers the message, why the room keeps
+   * nothing of it, or null once the room has heard that the bot's access ended, or the room was deleted,
+   * after the Workspace checked, as it turns away a socket then, or when it has no such thread.
    */
-  async createBotMessage(roomId: RoomId, { bot, authorizedAt }: BotAccess, markup: string, cards: Card[] = []): Promise<Message | string | null> {
+  async createBotMessage(roomId: RoomId, { bot, authorizedAt }: BotAccess, markup: string, cards: Card[] = [], threadId?: string): Promise<Message | string | null> {
     return this.serially(async () => {
       const now = new Date().toISOString();
       if (await this.revocationsFor(roomId).refuse([bot.id], authorizedAt)) return null;
+      const store = this.storeFor(roomId);
+      const inThread = threadId === undefined ? undefined : await this.inThread(store, threadId, false);
+      if (inThread === null) return null;
       const body = await this.prepareWithCards(markup, cards);
       if (typeof body === "string") return body;
-      return this.create(this.storeFor(roomId), bot, crypto.randomUUID(), body, now);
+      return this.create(store, bot, crypto.randomUUID(), body, now, { inThread });
     });
   }
 
@@ -685,18 +689,23 @@ export class ChatRoom extends DurableObject<Env> {
   /**
    * Posts the bot's file `key`, which R2 has all of, as it came to in `file`, as the bot's message,
    * recording that its upload has finished and the message in one transaction, as `finishUpload` does.
-   * With `messageId`, gives it to the bot's message in place of the file that had, as `update` does.
+   * With `messageId`, gives it to the bot's message in place of the file that had, as `update` does, and
+   * otherwise posts it in the thread `threadId` names, if it names one, as `createBotMessage` posts text.
    * Answers the message, or `NOT_FOUND` when the room turns the bot away, as `createBotMessage` does, or
-   * has no such upload or message, and `FORBIDDEN` when the message is someone else's.
+   * has no such upload, message or thread, and `FORBIDDEN` when the message is someone else's.
    */
-  async finishBotUpload(roomId: RoomId, { bot, authorizedAt }: BotAccess, { key, file }: KeptFile, messageId?: string): Promise<Message | string> {
+  async finishBotUpload(roomId: RoomId, { bot, authorizedAt }: BotAccess, { key, file }: KeptFile, messageId?: string, threadId?: string): Promise<Message | string> {
     return this.serially(async () => {
       const now = new Date().toISOString();
       if (await this.revocationsFor(roomId).refuse([bot.id], authorizedAt)) return NOT_FOUND;
       const blob = await this.blobsFor(roomId).find(key);
       if (blob?.uploaderId !== bot.id) return NOT_FOUND;
       const store = this.storeFor(roomId);
-      if (messageId === undefined) return this.postFile(store, bot, blob, this.streamed(roomId, blob, file, now), now);
+      if (messageId === undefined) {
+        const inThread = threadId === undefined ? undefined : await this.inThread(store, threadId, false);
+        if (inThread === null) return NOT_FOUND;
+        return this.postFile(store, bot, blob, this.streamed(roomId, blob, file, now), now, { inThread });
+      }
       const message = await this.botsOwn(store, bot, messageId);
       return typeof message === "string" ? message : this.attach(store, message, this.streamed(roomId, blob, file, now), now);
     });

@@ -3,7 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../src/workspace";
 import { ACTIVE_PEOPLE, ACTIVE_PEOPLE_IN_ROOM, QUEUE_MEMBER_REVOCATIONS, REVOKE_ROOM_FROM_OTHERS, ROOM_TO_CHANGE, type WorkspaceStore } from "../src/workspace-store";
-import { api, closeOf, connect, createRoom, direct, freshDeploy, post, settle, signIn, upgrade, workspaceSql, workspaceStub, type Session } from "./support";
+import { api, closeOf, connect, createRoom, direct, freshDeploy, openWorkspaceSocket, post, settle, signIn, upgrade, workspaceSql, workspaceStub, type Session } from "./support";
 
 beforeEach(freshDeploy);
 
@@ -200,6 +200,84 @@ describe("Who can change a room", () => {
     });
     expect(crossSite.status).toBe(422);
     expect(await nameOf(room.id)).toBe("Design");
+  });
+});
+
+describe("Leave a private room", () => {
+  const leave = (roomId: RoomId, session?: Session) => api(`/api/rooms/${roomId}/membership`, { method: "DELETE", ...(session && as(session)) });
+
+  it("takes out someone who can't change the room, by their own choice, closing their sockets there, and nobody else", async () => {
+    const [ada, grace, linus] = [await signIn("Ada"), await signIn("Grace"), await signIn("Linus")];
+    const room = await createRoom("Leads", { closedTo: [ada.user.id, grace.user.id, linus.user.id], as: ada });
+    const graceInRoom = await connect(room.id, grace);
+    const linusInRoom = await connect(room.id, linus);
+    const gracesTab = await openWorkspaceSocket(grace);
+    const closed = closeOf(graceInRoom.ws);
+
+    expect((await leave(room.id, grace)).status).toBe(204);
+    expect(await membersOf(room.id)).toEqual(ids(ada, linus));
+    expect(await gracesTab.next()).toEqual({ type: "room.gone", roomId: room.id });
+    expect(await closed).toMatchObject({ code: CloseCode.Reconnect, reason: "Reconnect" });
+    expect(await linusInRoom.next("presence.left")).toEqual({ type: "presence.left", userId: grace.user.id });
+    expect((await post(linusInRoom, "Still here")).body).toBe("Still here");
+    expect((await settings(room.id, grace)).status).toBe(404);
+    expect(await reconnect(room.id, grace)).toBe(CloseCode.NotFound);
+    expect((await leave(room.id, grace)).status).toBe(404);
+  });
+
+  it("refuses whoever can change the room, creator or administrator, whose settings take them out, and keeps them in", async () => {
+    const [ada, grace, linus] = [await signIn("Ada"), await signIn("Grace"), await signIn("Linus")];
+    const room = await createRoom("Leads", { closedTo: [ada.user.id, grace.user.id, linus.user.id], as: ada });
+    await promote(grace);
+    for (const session of [ada, grace]) {
+      const refused = await leave(room.id, session);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({ error: "You can change this room, so take yourself out in its settings" });
+    }
+    expect(await membersOf(room.id)).toEqual(ids(ada, grace, linus));
+  });
+
+  it("refuses the last person who could open it, counting neither bots nor anyone banned, and keeps them in", async () => {
+    const [ada, grace, linus] = [await signIn("Ada"), await signIn("Grace"), await signIn("Linus")];
+    const room = await createRoom("Leads", { closedTo: [grace.user.id, linus.user.id], as: ada });
+    const refused = async () => {
+      const response = await leave(room.id, grace);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "Nobody else could open this room, so you can't leave it" });
+      expect(await membersOf(room.id)).toEqual(ids(grace, linus));
+    };
+    await workspaceSql("UPDATE users SET role = 2 WHERE id = ?", linus.user.id);
+    await refused();
+    await workspaceSql("UPDATE users SET role = 0, status = 2 WHERE id = ?", linus.user.id);
+    await refused();
+    // Someone suspended has it again once their membership is renewed.
+    await workspaceSql("UPDATE users SET status = 3 WHERE id = ?", linus.user.id);
+    expect((await leave(room.id, grace)).status).toBe(204);
+    expect(await membersOf(room.id)).toEqual(ids(linus));
+  });
+
+  it("refuses an open room, which takes in everyone, and answers 404 to people who aren't in the room, for missing rooms and DMs", async () => {
+    const [ada, grace, linus] = [await signIn("Ada"), await signIn("Grace"), await signIn("Linus")];
+    const open = await createRoom("Design", { as: ada });
+    const refused = await leave(open.id, grace);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "Everyone is in an open room, so nobody can leave it" });
+    expect(await membersOf(open.id)).toContain(grace.user.id);
+
+    const closed = await createRoom("Leads", { closedTo: [ada.user.id, grace.user.id], as: ada });
+    const dm = await direct(grace, linus);
+    for (const roomId of [closed.id, "nothing"]) expect((await leave(roomId, linus)).status).toBe(404);
+    expect((await leave(dm.id, grace)).status).toBe(404);
+    expect(await membersOf(closed.id)).toEqual(ids(ada, grace));
+  });
+
+  it("asks who's signed in, and refuses requests from other sites", async () => {
+    const [ada, grace] = [await signIn("Ada"), await signIn("Grace")];
+    const room = await createRoom("Leads", { closedTo: [ada.user.id, grace.user.id], as: ada });
+    expect((await leave(room.id)).status).toBe(401);
+    const crossSite = await api(`/api/rooms/${room.id}/membership`, { method: "DELETE", headers: { Cookie: grace.cookie, "Sec-Fetch-Site": "cross-site" } });
+    expect(crossSite.status).toBe(422);
+    expect(await membersOf(room.id)).toEqual(ids(ada, grace));
   });
 });
 

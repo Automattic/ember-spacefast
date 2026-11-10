@@ -79,9 +79,23 @@ export interface Question {
  * What went wrong asking a model: Cloudflare didn't take the API token, or found no such account, AI
  * Gateway's credits ran out, the model wasn't taken, AI Gateway turned the request away, the conversation
  * was longer than the model reads, AI Gateway didn't answer, the model answered with nothing, or it took
- * every token it could before it answered anything.
+ * every token it could before it answered anything. Or the gateway's Guardrails or Data Loss Prevention,
+ * which administrators turn on in AI Gateway, blocked the question, with what it read, or the answer.
  */
-export type RefusalReason = "token" | "account" | "credits" | "model" | "busy" | "too long" | "unanswered" | "nothing" | "out of room";
+export type RefusalReason =
+  | "token"
+  | "account"
+  | "credits"
+  | "model"
+  | "busy"
+  | "too long"
+  | "unanswered"
+  | "nothing"
+  | "out of room"
+  | "guardrails"
+  | "guardrails answer"
+  | "dlp"
+  | "dlp answer";
 
 /**
  * Why a model didn't answer, in words an administrator can act on, with what went wrong, the status to
@@ -395,6 +409,8 @@ export function refusalOf(status: number, body: unknown): GatewayRefusal {
   if (codes.includes(7003) || codes.includes(7000)) {
     return { status: 422, reason: "account", field: "accountId", refusal: said("Cloudflare has no account with that ID that the token can reach.") };
   }
+  const blocked = BLOCKS.find(({ code }) => codes.includes(code));
+  if (blocked) return { status: 422, reason: blocked.reason, refusal: said(blocked.refusal) };
   if (status === 402) {
     const refusal = said("This model is paid for with AI Gateway's credits, and there aren't enough. Top them up under Credits Available in AI Gateway, or choose a Workers AI model.");
     return { status: 422, reason: "credits", refusal };
@@ -407,6 +423,19 @@ export function refusalOf(status: number, body: unknown): GatewayRefusal {
   if (status === 429) return { status: 429, reason: "busy", refusal: said("AI Gateway is turning requests away for now, or a spend limit was reached. Try again later.") };
   return { status: 502, reason: "unanswered", refusal: said(GATEWAY_UNANSWERED) };
 }
+
+/**
+ * What the gateway's Guardrails and Data Loss Prevention block, by the code of the error AI Gateway
+ * answers with, which Guardrails send with a 424: the request, which holds the conversation the model was
+ * to read as well as the question, or the model's answer. Asking again, or in another format, would be
+ * blocked the same, so nothing is.
+ */
+const BLOCKS: ReadonlyArray<{ code: number; reason: RefusalReason; refusal: string }> = [
+  { code: 2016, reason: "guardrails", refusal: "AI Gateway's Guardrails blocked the question. Change what they block in AI Gateway." },
+  { code: 2017, reason: "guardrails answer", refusal: "AI Gateway's Guardrails blocked the model's answer. Change what they block in AI Gateway." },
+  { code: 2029, reason: "dlp", refusal: "AI Gateway's Data Loss Prevention blocked the question. Change its policies in AI Gateway." },
+  { code: 2030, reason: "dlp answer", refusal: "AI Gateway's Data Loss Prevention blocked the model's answer. Change its policies in AI Gateway." },
+];
 
 /** The codes and the first message of the errors in a refusal's body, in any of the shapes AI Gateway answers with. */
 function errorIn(body: unknown): { codes: number[]; message: string | null } {

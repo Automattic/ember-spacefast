@@ -929,6 +929,22 @@ async function deleteRoom(request: Request, env: Env, roomId: RoomId): Promise<R
 }
 
 /**
+ * Takes the signed-in person out of a private room, as Leave on its settings page does, answering 204: 404
+ * unless they're in it, and 403 for an open room, for whoever can change the room, or when nobody else
+ * could open it then.
+ */
+async function leaveRoom(request: Request, env: Env, roomId: RoomId): Promise<Response> {
+  const credentials = await credentialsOf(request, env);
+  const left = credentials && (await workspace(env).leaveRoom(credentials, roomId));
+  if (!left) return problem(401, "Not signed in");
+  if (left === "not found") return problem(404, ROOM_NOT_FOUND);
+  if (left === "open") return problem(403, "Everyone is in an open room, so nobody can leave it");
+  if (left === "can change") return problem(403, "You can change this room, so take yourself out in its settings");
+  if (left === "last") return problem(403, "Nobody else could open this room, so you can't leave it");
+  return new Response(null, { status: 204 });
+}
+
+/**
  * Stars a room for the signed-in person, or unstars it, as its header's star does, answering their
  * stars: 400 for a room id or a `favorite` it can't read, and 403 for a room they can't star.
  */
@@ -1154,6 +1170,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   const involvement = pathname.match(/^\/api\/rooms\/([^/]+)\/involvement$/);
   if (involvement && request.method === "PUT")
     return () => (isRoomId(involvement[1]!) ? setInvolvement(request, env, involvement[1]!) : problem(404, ROOM_NOT_FOUND));
+  const membership = pathname.match(/^\/api\/rooms\/([^/]+)\/membership$/);
+  if (membership && request.method === "DELETE") return () => (isRoomId(membership[1]!) ? leaveRoom(request, env, membership[1]!) : problem(404, ROOM_NOT_FOUND));
   const uploads = pathname.match(/^\/api\/rooms\/([^/]+)\/uploads$/);
   if (uploads && request.method === "POST") return () => (isRoomId(uploads[1]!) ? startUpload(request, env, uploads[1]!) : problem(404, ROOM_NOT_FOUND));
   // A file's key never needs percent-encoding either, so an encoded segment names no upload.
