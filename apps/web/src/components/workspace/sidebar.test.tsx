@@ -18,7 +18,7 @@ const HELP = "Hold a starred room to drag it, or press Alt and the up or down ar
 type Props = ComponentProps<typeof Sidebar>;
 
 /** The workspace, as it's set up. */
-const EMBER: Account = { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {} };
+const EMBER: Account = { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {}, huddles: false };
 
 /** The sidebar, with `props` in place of an unstarred one listing `rooms` with none open, in `account`'s workspace. */
 function renderSidebar(props: Partial<Props> = {}, account = EMBER) {

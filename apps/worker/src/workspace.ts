@@ -248,7 +248,7 @@ function memberfulChange(account: Pick<Account, "memberfulJoin" | "memberfulSign
   return join === account.memberfulJoin && membersOnly === account.memberfulSignIn ? undefined : { memberfulJoin: join, memberfulSignIn: membersOnly };
 }
 
-/** The account as every page shows it, without its join code, which only the people in it see, nor its email domains while Email domain is off. */
+/** The account as every page shows it, without its join code, which only the people in it see, nor its email domains while Email domain is off, and with whether huddles are on in place of the app they run through. */
 const accountOf = ({
   name,
   tagline,
@@ -263,6 +263,7 @@ const accountOf = ({
   emailDomainSignUp,
   emailDomains,
   navigationIcons,
+  huddles,
   updatedAt,
   storedLogo,
 }: JoinableAccount): Account => ({
@@ -280,6 +281,7 @@ const accountOf = ({
   emailDomainSignUp,
   emailDomains: emailDomainSignUp ? emailDomains : [],
   navigationIcons,
+  huddles: huddles !== null,
 });
 
 /** The parts of the account that Ember AI's settings are made of. */
@@ -587,8 +589,8 @@ const NO_EMAIL_FROM = "Give Ember a From address first.";
 /** Why there's no test email to an administrator without an email address. */
 const NO_EMAIL_ADDRESS = "Your profile has no email address to send it to.";
 
-/** The workspace as pages show it before first run: named "Ember" and looking as a new one does. */
-export const ACCOUNT_BEFORE_SETUP: Account = { name: ACCOUNT_NAME, ...NEW_ACCOUNT_LOOKS, logo: null };
+/** The workspace as pages show it before first run: named "Ember" and looking as a new one does, with huddles off. */
+export const ACCOUNT_BEFORE_SETUP: Account = { name: ACCOUNT_NAME, ...NEW_ACCOUNT_LOOKS, logo: null, huddles: false };
 
 /** A join link's code: 12 random letters and digits in fours, like aB3d-Ef5h-iJ7k. */
 const newJoinCode = () => alphanumeric(12).match(/.{4}/g)!.join("-");
@@ -1111,13 +1113,14 @@ export class Workspace extends DurableObject<Env> {
    * are, which the Worker has had Cloudflare start a session with, its secret sealed under SESSION_SECRET
    * (`seal`), or changes the app while they're on, or turns them off with null, which forgets the app's
    * keys, answering huddles as the Huddles card then shows them: "forbidden" unless they're an
-   * administrator, or null without a valid session. Only that card shows them, so no socket hears of it.
+   * administrator, or null without a valid session. Every page hears whether huddles are on, which is
+   * what gives a room's header its huddle button, so every workspace socket hears the account.
    */
   async changeHuddles(credentials: Credentials, app: SfuApp | null): Promise<{ huddles: HuddlesSettings | null } | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       if (app === null && account.huddles === null) return { huddles: null };
       const huddles = app && { appId: app.appId, sealedAppSecret: await seal(this.env.SESSION_SECRET, "sfu-app-secret", app.appSecret) };
-      await this.saveAccount({ ...account, huddles }, (now) => this.store.changeAccount({ huddles }, now));
+      await this.publishAccount({ ...account, huddles }, (now) => this.store.changeAccount({ huddles }, now));
       return { huddles: huddles && { appId: huddles.appId } };
     });
   }
