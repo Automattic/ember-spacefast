@@ -99,6 +99,7 @@ export {
   CUSTOM_STYLES_PATH,
   EMAIL_SIGN_UP_PATH,
   emailSignUpLink,
+  huddlePath,
   INVITATION_PATH,
   invitationLink,
   isAppPage,
