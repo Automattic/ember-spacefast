@@ -1,8 +1,11 @@
 import { HISTORY_PAGE_SIZE, threadPath, type BotAnswer, type BotSettings, type Message, type NewWorkspace, type RoomId, type SearchResults, type ServerFrame, type Upload, type User } from "@ember/protocol";
+import { botMessagesPath } from "@ember/protocol/bots";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MESSAGE_GONE } from "../src/chat-room";
+import type { Env } from "../src/env";
 import {
   api,
   connect,
@@ -10,6 +13,7 @@ import {
   cutOff,
   freshDeploy,
   freshRoom,
+  origin,
   post,
   pushBrowser,
   reconnect,
@@ -67,6 +71,9 @@ async function openThread(client: Socket, parentId: string) {
 
 /** The ids of `messages`, in order. */
 const idsOf = (messages: Message[]) => messages.map(({ id }) => id);
+
+/** The keys of the files R2 keeps. */
+const storedFiles = async () => (await (env as unknown as Env).FILES!.list({ prefix: "files/" })).objects.map(({ key }) => key);
 
 /** How a message mentioning `person` is written. */
 const mention = (person: Pick<User, "id">) => `<action-text-attachment sgid="${mentionSgid(person.id)}" content-type="${MENTION_CONTENT_TYPE}"></action-text-attachment>`;
@@ -455,6 +462,74 @@ describe("Bots in threads", () => {
     expect(answered.message).toMatchObject({ creator: { id: bot.id }, plainText: "On it", parentId: parent.id, alsoSent: false });
     expect(JSON.parse(bodies[0]!).message.path).toBe(threadPath(general, parent.id, asked.id));
     expect(idsOf((await openThread(client, parent.id)).messages)).toEqual([asked.id, answered.message.id]);
+  });
+
+  /** What Ember delivers to a webhook that says nothing back, as one that answers later doesn't, each by the message it delivers. */
+  function deliveredLater(): Map<string, { room: { path: string } }> {
+    const delivered = new Map<string, { room: { path: string } }>();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(init!.body as string) as { room: { path: string }; message: { id: string } };
+      delivered.set(body.message.id, body);
+      return new Response(null, { status: 204 });
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    return delivered;
+  }
+
+  it("delivers a reply in a thread with an address that posts in the thread alone, for a bot that answers later, and a message in the room with the room's", async () => {
+    const { ada, general } = await setUp();
+    const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
+    const delivered = deliveredLater();
+    const client = await connect(general, ada);
+    const parent = await post(client, `<p>${mention(bot)} release notes</p>`);
+    const asked = await reply(client, parent, `<p>${mention(bot)} build it</p>`);
+    await vi.waitFor(() => expect(delivered.size).toBe(2));
+    expect(delivered.get(parent.id)!.room.path).toBe(botMessagesPath(general, bot.key));
+    expect(delivered.get(asked.id)!.room.path).toBe(botMessagesPath(general, bot.key, parent.id));
+
+    const posted = await api(delivered.get(asked.id)!.room.path, { method: "POST", body: "Built" });
+    expect(posted.status).toBe(201);
+    const answered = await client.next("message.created");
+    expect(answered.message).toMatchObject({ creator: { id: bot.id }, plainText: "Built", parentId: parent.id, alsoSent: false });
+    expect(posted.headers.get("Location")).toBe(`${origin}${threadPath(general, parent.id, answered.message.id)}`);
+    expect(idsOf((await openThread(client, parent.id)).messages)).toEqual([asked.id, answered.message.id]);
+
+    expect((await api(delivered.get(parent.id)!.room.path, { method: "POST", body: "Noted" })).status).toBe(201);
+    const inRoom = await client.next("message.created");
+    expect(inRoom.message.plainText).toBe("Noted");
+    expect(inRoom.message.parentId).toBeUndefined();
+  });
+
+  it("posts a file a bot sends later to a thread's address in the thread", async () => {
+    const { ada, general } = await setUp();
+    const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
+    const client = await connect(general, ada);
+    const parent = await post(client, "<p>Release notes</p>");
+
+    const form = new FormData();
+    form.set("attachment", new File([recordedImage("moon-thumb.jpg")], "moon.jpg", { type: "image/jpeg" }));
+    expect((await api(botMessagesPath(general, bot.key, parent.id), { method: "POST", body: form })).status).toBe(201);
+    const { message } = await client.next("message.created");
+    expect(message).toMatchObject({ creator: { id: bot.id }, plainText: "moon.jpg", parentId: parent.id, alsoSent: false });
+    expect(idsOf((await openThread(client, parent.id)).messages)).toEqual([message.id]);
+  });
+
+  it("answers 404 to a bot posting to a thread the room doesn't have, or to a reply, which has no thread, posting nothing and keeping none of its file", async () => {
+    const { ada, general } = await setUp();
+    const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
+    const client = await connect(general, ada);
+    const parent = await post(client, "<p>Release notes</p>");
+    const asked = await reply(client, parent, "<p>Build it</p>");
+
+    for (const threadId of ["nothing", asked.id]) {
+      expect((await api(botMessagesPath(general, bot.key, threadId), { method: "POST", body: "Built" })).status).toBe(404);
+      const form = new FormData();
+      form.set("attachment", new File([recordedImage("moon-thumb.jpg")], "moon.jpg", { type: "image/jpeg" }));
+      expect((await api(botMessagesPath(general, bot.key, threadId), { method: "POST", body: form })).status).toBe(404);
+      expect(await storedFiles()).toEqual([]);
+    }
+    await settle(client);
+    expect(await roomSql(general, "SELECT id FROM messages WHERE room_id = ? AND id NOT IN (?, ?)", general, parent.id, asked.id)).toEqual([]);
   });
 });
 

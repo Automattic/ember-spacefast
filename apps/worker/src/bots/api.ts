@@ -134,12 +134,15 @@ function segmentText(segment: string): string {
 /**
  * `POST /rooms/<room id>/<bot key>/messages`: posts the request's body, whatever its type, as the bot's
  * message, as `create` posts `raw_request_body`, or the file a form sends as `attachment`, answering 201
- * with where the message is.
+ * with where the message is. With `?thread=<message id>`, as the address a delivery of a reply in a
+ * thread gives (webhooks.ts), it goes in that message's thread, or answers an empty 404 when the room has
+ * no such thread.
  */
 async function createMessage(request: Request, env: Env, roomId: RoomId, key: string): Promise<Response> {
   const access = await botIn(env, roomId, key);
   if (access instanceof Response) return access;
-  const formAnswer = await withForm(request, (form) => createFileMessage(request, env, roomId, key, access, form));
+  const threadId = present(urlOf(request).searchParams.get("thread"));
+  const formAnswer = await withForm(request, (form) => createFileMessage(request, env, roomId, key, access, form, threadId));
   if (formAnswer) return formAnswer;
   const markup = await bodyText(request);
   if (markup === null) return exception(413);
@@ -150,7 +153,7 @@ async function createMessage(request: Request, env: Env, roomId: RoomId, key: st
   if (arrived instanceof Response) return arrived;
   // `raw_request_body.blank?`: empty or only spaces.
   if (markup.trim() === "") return head(422);
-  const created = await env.CHAT_ROOM.getByName(roomId).createBotMessage(roomId, arrived, markup);
+  const created = await env.CHAT_ROOM.getByName(roomId).createBotMessage(roomId, arrived, markup, [], threadId);
   if (!created) return head(404);
   if (typeof created === "string") return unprocessable(created);
   return createdAt(request, arrived, created);
@@ -225,10 +228,10 @@ const createdAt = (request: Request, { customDomain }: BotKeyAccess, message: Me
  * Posts the file `form` sends as `attachment` as the bot's message, answering as a post of text does. A
  * form with no file posts nothing, an empty 422.
  */
-async function createFileMessage(request: Request, env: Env, roomId: RoomId, key: string, access: BotKeyAccess, form: FormReader): Promise<Response> {
+async function createFileMessage(request: Request, env: Env, roomId: RoomId, key: string, access: BotKeyAccess, form: FormReader, threadId?: string): Promise<Response> {
   const attachment = await attachmentIn(form);
   if (attachment?.kind !== "file") return attachment?.kind === "text" ? unprocessable(NOT_A_FILE) : head(422);
-  const created = await postFile(env, roomId, key, access, form, attachment);
+  const created = await postFile(env, roomId, key, access, form, attachment, undefined, threadId);
   if (created instanceof Response) return created;
   return typeof created === "string" ? head(404) : createdAt(request, access, created);
 }
@@ -355,12 +358,12 @@ async function withForm(request: Request, answer: (form: FormReader) => Promise<
 }
 
 /**
- * Has the room post the file `form` is reading, `attachment`, as the bot's message, or with `messageId`
- * give it to the bot's message in place of its file, R2 keeping it as it arrives, a part at a time, as a
- * browser's upload is, since a form can bring more than a Worker can hold. Answers the message, why the
- * room took nothing, as `finishBotUpload` says, or what the request answers otherwise: 413 for a file
- * larger than a browser can upload, and 422 for a name too long to keep. Without an R2 bucket bound as
- * FILES, it answers 503, as a browser's upload does.
+ * Has the room post the file `form` is reading, `attachment`, as the bot's message, in the thread
+ * `threadId` names if it names one, or with `messageId` give it to the bot's message in place of its file,
+ * R2 keeping it as it arrives, a part at a time, as a browser's upload is, since a form can bring more
+ * than a Worker can hold. Answers the message, why the room took nothing, as `finishBotUpload` says, or
+ * what the request answers otherwise: 413 for a file larger than a browser can upload, and 422 for a name
+ * too long to keep. Without an R2 bucket bound as FILES, it answers 503, as a browser's upload does.
  */
 async function postFile(
   env: Env,
@@ -370,6 +373,7 @@ async function postFile(
   form: FormReader,
   { filename, contentType }: { filename: string; contentType: string | null },
   messageId?: string,
+  threadId?: string,
 ): Promise<Message | string | Response> {
   const files = env.FILES;
   if (!files) return noStorage();
@@ -384,7 +388,7 @@ async function postFile(
   if (!stored) return exception(413);
   // Again now the file has arrived, as `createMessage` checks text.
   const arrived = await botIn(env, roomId, key);
-  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, { key: started.key, file: stored }, messageId);
+  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, { key: started.key, file: stored }, messageId, threadId);
   // A file that isn't posted goes from R2 at once, since a room deleted meanwhile had R2 delete its files
   // before this one was there. The room's alarm forgets the upload, as it does a browser's never finished.
   if (finished instanceof Response || typeof finished === "string") await files.delete(objectKey(started.key));

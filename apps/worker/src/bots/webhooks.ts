@@ -43,10 +43,11 @@ const HEADERS = { "Content-Type": "application/json", Accept: "*/*", "User-Agent
 
 /**
  * `Webhook#payload`: who wrote `message` and where, as `delivery` names them, and what it says, for
- * `webhook`'s bot. The room's address is the one the bot posts to there, with its key, and the message's
- * is its permalink, both without an origin, as Rails' path helpers write them. A file message has no
- * rich text, so its `html` is null, as Campfire's `message.body.body` is, and its plain text is its
- * file's name.
+ * `webhook`'s bot. The room's address is the one the bot posts to there, with its key, which for a reply
+ * in a thread posts to that thread, so a bot that answers later finds it as one that answers at once does.
+ * The message's is its permalink, both without an origin, as Rails' path helpers write them. A file
+ * message has no rich text, so its `html` is null, as Campfire's `message.body.body` is, and its plain text
+ * is its file's name.
  */
 export function webhookPayload(
   roomId: RoomId,
@@ -59,7 +60,7 @@ export function webhookPayload(
   const path = message.parentId === undefined ? `/rooms/${roomId}/@${message.id}` : threadPath(roomId, message.parentId, message.id);
   return railsJson({
     user: { id: author.id, name: author.name },
-    room: { id: roomId, name: roomName, path: botMessagesPath(roomId, botKeyOf(bot.id, token)) },
+    room: { id: roomId, name: roomName, path: botMessagesPath(roomId, botKeyOf(bot.id, token), message.parentId) },
     message: { id: message.id, body: { html: message.body === "" ? null : message.body, plain }, path },
   });
 }

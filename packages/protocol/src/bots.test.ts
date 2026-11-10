@@ -48,6 +48,7 @@ describe("Chat bots page", () => {
   it("puts where a bot posts to a room at the room's address, then the bot's key", () => {
     expect(botMessagesPath("0mgk3x2a9b4c5a", "0mgk3x2a9b4c5e-Ab3dEf5hiJ7k")).toBe("/rooms/0mgk3x2a9b4c5a/0mgk3x2a9b4c5e-Ab3dEf5hiJ7k/messages");
     expect(botMessagesPath("café", "1-a")).toBe("/rooms/caf%C3%A9/1-a/messages");
+    expect(botMessagesPath("0mgk3x2a9b4c5a", "1-a", "0mgk3x2a9b4c5f")).toBe("/rooms/0mgk3x2a9b4c5a/1-a/messages?thread=0mgk3x2a9b4c5f");
   });
 });
 
