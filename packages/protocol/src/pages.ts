@@ -20,9 +20,10 @@ export type WorkspacePage =
    * A room, at `/rooms/<id>`, or at one of its messages' permalinks, `/rooms/<id>/@<message id>`, which
    * opens it around that message, or with a message's thread open beside it, at
    * `/rooms/<id>/threads/<message id>`, or at a reply's permalink, `/rooms/<id>/threads/<message id>/@<reply id>`,
-   * which opens the thread at the reply.
+   * which opens the thread at the reply, or at its huddle's link, `/rooms/<id>/huddle`, which offers to
+   * start its huddle, or to join the one going on.
    */
-  | { page: "room"; roomId: RoomId; messageId?: string; threadId?: string; replyId?: string }
+  | { page: "room"; roomId: RoomId; messageId?: string; threadId?: string; replyId?: string; huddle?: true }
   /**
    * A message at its own address, `/rooms/<id>/messages/<message id>`, which goes on to its permalink.
    */
@@ -81,6 +82,9 @@ export const SEARCHES_PATH = "/searches";
 export const threadPath = (roomId: RoomId, parentId: string, replyId?: string) =>
   `/rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(parentId)}` + (replyId === undefined ? "" : `/@${encodeURIComponent(replyId)}`);
 
+/** A room's huddle's link, as Copy huddle link gives it, which opens the room and offers to join its huddle. */
+export const huddlePath = (roomId: RoomId) => `/rooms/${encodeURIComponent(roomId)}/huddle`;
+
 /** A path segment as text, or null for a malformed escape, which names nothing. */
 function decoded(segment: string): string | null {
   try {
@@ -126,6 +130,8 @@ export function workspacePageOf(pathname: string): WorkspacePage | null {
   if (directSettingsRoomId) return { page: "direct-settings", roomId: directSettingsRoomId };
   const thread = pathname.match(/^\/rooms\/([^/]+)\/threads\/([^/]+)(?:\/@([^/]+))?$/);
   if (thread) return threadPageOf(thread[1]!, thread[2]!, thread[3]);
+  const huddle = pathname.match(/^\/rooms\/([^/]+)\/huddle$/);
+  if (huddle) return huddlePageOf(huddle[1]!);
   const ofKind = pathname.match(/^\/rooms\/(opens|closeds|directs)\/([^/]+)$/);
   const ofKindRoomId = ofKind && decoded(ofKind[2]!);
   if (ofKindRoomId) return { page: "room-of-kind", kind: kindOf(ofKind[1]!), roomId: ofKindRoomId };
@@ -153,6 +159,12 @@ function threadPageOf(roomSegment: string, threadSegment: string, replySegment: 
   if (!isMessageId(threadId)) return { page: "room", roomId };
   const replyId = replySegment === undefined ? null : decoded(replySegment);
   return isMessageId(replyId) ? { page: "room", roomId, threadId, replyId } : { page: "room", roomId, threadId };
+}
+
+/** A room's page at its huddle's link, from the address's room segment. */
+function huddlePageOf(roomSegment: string): WorkspacePage | null {
+  const roomId = roomSegment === "new" ? null : decoded(roomSegment);
+  return roomId ? { page: "room", roomId, huddle: true } : null;
 }
 
 /**

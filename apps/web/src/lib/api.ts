@@ -875,7 +875,7 @@ export async function clearSearches(): Promise<void> {
 export const mentionPromptSrc = (roomId: RoomId) => `/api/autocompletable/users?room_id=${encodeURIComponent(roomId)}`;
 
 /** The address of a socket at `path` on this page's host, over wss on https pages. */
-function socketUrl(path: string): string {
+export function socketUrl(path: string): string {
   const url = new URL(path, location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();

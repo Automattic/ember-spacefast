@@ -69,8 +69,8 @@ export default defineConfig<MobileOptions>({
     // Ember AI spec fakes, which Ember asks models through once it's given an account in Set up Ember AI,
     // the ID of the account Ember is deployed to, as `pnpm run deploy` gives it, which Set up Ember AI
     // fills in, and the address of the Realtime SFU the huddles spec fakes, which Ember asks to start a
-    // session with an app's keys before it keeps them in Set up huddles. Servers start in turn, so the app
-    // is built by then.
+    // session with an app's keys before it keeps them in Set up huddles, and then to carry what's said in
+    // a huddle. Servers start in turn, so the app is built by then.
     {
       command: [
         `node -e "require('node:fs').rmSync('e2e/.wrangler/settings-state', { recursive: true, force: true })"`,

@@ -122,9 +122,9 @@ export const NEW_ACCOUNT_LOOKS = {
  * The workspace's account as the Workspace keeps it: as every page shows it, but for its logo's address,
  * with the code in its join link, which only the people in it see, when it last changed, which the
  * logo's address goes by, and the logo as R2 keeps it. Its email domains are the ones kept, whether Email
- * domain is on or not.
+ * domain is on or not, and its huddles the app they run through, where pages hear only that they're on.
  */
-export interface JoinableAccount extends Omit<Account, "logo"> {
+export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
   joinCode: string;
   updatedAt: string;
   storedLogo: StoredPicture | null;

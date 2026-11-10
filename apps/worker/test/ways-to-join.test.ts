@@ -78,6 +78,7 @@ const account = (changes: Partial<Account> = {}): Account => ({
   emailDomainSignUp: false,
   emailDomains: [],
   navigationIcons: {},
+  huddles: false,
   ...changes,
 });
 

@@ -21,6 +21,7 @@ const EMBER: Account = {
   emailDomainSignUp: false,
   emailDomains: [],
   navigationIcons: {},
+  huddles: false,
 };
 
 /** How a new workspace sends email: with the binding wrangler.jsonc declares, from no address yet. */

@@ -487,6 +487,17 @@ export function Hashtag(props: IconoirIconProps) {
   );
 }
 
+export function Headset(props: IconoirIconProps) {
+  return (
+    <IconoirIcon name="headset" {...props}>
+      <path
+        d="M4 13.4998L3.51493 13.6211C2.62459 13.8437 2 14.6437 2 15.5614V17.4383C2 18.356 2.62459 19.156 3.51493 19.3786L5.25448 19.8135C5.63317 19.9081 6 19.6217 6 19.2314V13.7683C6 13.378 5.63317 13.0916 5.25448 13.1862L4 13.4998ZM4 13.4998V13C4 8.02944 7.58172 4 12 4C16.4183 4 20 8.02944 20 13V13.5M20 13.5L20.4851 13.6211C21.3754 13.8437 22 14.6437 22 15.5614V17.4383C22 18.356 21.3754 19.156 20.4851 19.3786L18.7455 19.8135C18.3668 19.9081 18 19.6217 18 19.2314V13.7683C18 13.378 18.3668 13.0916 18.7455 13.1862L20 13.5Z"
+        {...LINE}
+      />
+    </IconoirIcon>
+  );
+}
+
 export function Home(props: IconoirIconProps) {
   return (
     <IconoirIcon name="home" {...props}>
@@ -599,6 +610,27 @@ export function MessageText(props: IconoirIconProps) {
   );
 }
 
+export function Microphone(props: IconoirIconProps) {
+  return (
+    <IconoirIcon name="microphone" {...props}>
+      <rect x="9" y="2" width="6" height="12" rx="3" {...OUTLINE} />
+      <path d="M5 10V11C5 14.866 8.13401 18 12 18V18V18C15.866 18 19 14.866 19 11V10" {...LINE} />
+      <path d="M12 18V22M12 22H9M12 22H15" {...LINE} />
+    </IconoirIcon>
+  );
+}
+
+export function MicrophoneMute(props: IconoirIconProps) {
+  return (
+    <IconoirIcon name="microphone-mute" {...props}>
+      <path d="M3 3L21 21" {...LINE} />
+      <path d="M9 9V9C9 11.7614 11.2386 14 14 14V14M15 10.5V5C15 3.34315 13.6569 2 12 2V2C10.3431 2 9 3.34315 9 5V5.5" {...LINE} />
+      <path d="M5 10V11C5 14.866 8.13401 18 12 18V18V18C15.866 18 19 14.866 19 11V10" {...LINE} />
+      <path d="M12 18V22M12 22H9M12 22H15" {...LINE} />
+    </IconoirIcon>
+  );
+}
+
 export function Minus(props: IconoirIconProps) {
   return (
     <IconoirIcon name="minus" {...props}>
@@ -656,6 +688,14 @@ export function MultiBubble(props: IconoirIconProps) {
         d="M15.2824 17.8978C16.2587 17.7405 17.1758 17.4065 18 16.9297L21.6 17.6L20.9297 14C21.6104 12.8233 22 11.4571 22 10C22 5.58172 18.4183 2 14 2C9.97262 2 6.64032 4.97598 6.08221 8.84884"
         {...LINE}
       />
+    </IconoirIcon>
+  );
+}
+
+export function NavArrowDown(props: IconoirIconProps) {
+  return (
+    <IconoirIcon name="nav-arrow-down" {...props}>
+      <path d="M6 9L12 15L18 9" {...LINE} />
     </IconoirIcon>
   );
 }

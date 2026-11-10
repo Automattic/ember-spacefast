@@ -4,6 +4,9 @@ export const hasTouchKeyboard = () => matchMedia("(pointer: coarse)").matches;
 /** Whether the keyboard is an Apple device's, whose shortcuts take Cmd where others take Ctrl. */
 const appleKeyboard = () => /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
+/** Whether Cmd is held and Ctrl isn't on an Apple keyboard, or Ctrl and not Cmd on any other. */
+const commandHeld = (event: KeyboardEvent) => (appleKeyboard() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
+
 /**
  * Cmd+F on a Mac, iPad or iPhone, or Ctrl+F elsewhere, which opens the search box, as it opens Slack's,
  * and the browser's own find from inside it. A Mac's Ctrl+F moves the caret on in a field, so it stays
@@ -11,8 +14,39 @@ const appleKeyboard = () => /Mac|iPhone|iPad|iPod/.test(navigator.platform);
  */
 export function opensFind(event: KeyboardEvent): boolean {
   if (event.key.toLowerCase() !== "f" || event.altKey || event.shiftKey || event.isComposing) return false;
-  return appleKeyboard() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return commandHeld(event);
 }
+
+/**
+ * Cmd+Option+Shift+H on a Mac, iPad or iPhone, or Ctrl+Alt+Shift+H elsewhere, which starts or joins the
+ * huddle of the room shown, or leaves the one the tab is in. Slack's app takes the keys without Option or
+ * Alt, which browsers keep for their home page or their history. Option changes the letter a Mac's key
+ * types, so the key counts by where it is on the keyboard too.
+ */
+export function togglesHuddle(event: KeyboardEvent): boolean {
+  if (event.code !== "KeyH" && event.key.toLowerCase() !== "h") return false;
+  return event.altKey && event.shiftKey && !event.isComposing && commandHeld(event);
+}
+
+/** Cmd+Shift+Space on a Mac, iPad or iPhone, or Ctrl+Shift+Space elsewhere, which mutes or unmutes a huddle's microphone, as Slack's do. */
+export function togglesMute(event: KeyboardEvent): boolean {
+  if (event.code !== "Space" && event.key !== " ") return false;
+  return event.shiftKey && !event.altKey && !event.isComposing && commandHeld(event);
+}
+
+/** A shortcut's keys: as a tooltip shows them, and as `aria-keyshortcuts` names them for screen readers. */
+export interface Shortcut {
+  keys: string[];
+  aria: string;
+}
+
+/** The keys `togglesHuddle` takes on this keyboard. */
+export const huddleShortcut = (): Shortcut =>
+  appleKeyboard() ? { keys: ["⌘", "⌥", "⇧", "H"], aria: "Meta+Alt+Shift+H" } : { keys: ["Ctrl", "Alt", "Shift", "H"], aria: "Control+Alt+Shift+H" };
+
+/** The keys `togglesMute` takes on this keyboard. */
+export const muteShortcut = (): Shortcut =>
+  appleKeyboard() ? { keys: ["⌘", "⇧", "Space"], aria: "Meta+Shift+Space" } : { keys: ["Ctrl", "Shift", "Space"], aria: "Control+Shift+Space" };
 
 /** Ctrl+K, or Cmd+K on a Mac, which opens the Link field of Lexxy's toolbar (its `data-hotkey="cmd+k ctrl+k"`). */
 export function opensLink(event: KeyboardEvent): boolean {

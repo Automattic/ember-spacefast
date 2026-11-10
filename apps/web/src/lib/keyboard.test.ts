@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { opensFind, opensLink, pressedAlone, savesEdit, sendsMessage } from "./keyboard";
+import { huddleShortcut, muteShortcut, opensFind, opensLink, pressedAlone, savesEdit, sendsMessage, togglesHuddle, togglesMute } from "./keyboard";
 
 function pointer(coarse: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(pointer: coarse)" && coarse }));
@@ -93,10 +93,10 @@ describe("pressedAlone", () => {
   });
 });
 
-describe("opensFind", () => {
-  /** The keyboard of a device whose `navigator.platform` is `platform`. */
-  const on = (platform: string) => vi.stubGlobal("navigator", { ...navigator, platform });
+/** The keyboard of a device whose `navigator.platform` is `platform`. */
+const on = (platform: string) => vi.stubGlobal("navigator", { ...navigator, platform });
 
+describe("opensFind", () => {
   it("takes Ctrl+F, in either case, but on Apple's devices", () => {
     on("Win32");
     expect(opensFind(press("f", { ctrlKey: true }))).toBe(true);
@@ -122,5 +122,73 @@ describe("opensFind", () => {
     expect(opensFind(press("f", { ctrlKey: true, metaKey: true }))).toBe(false);
     expect(opensFind(press("f", { ctrlKey: true, isComposing: true }))).toBe(false);
     expect(opensFind(press("g", { ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe("togglesHuddle", () => {
+  it("takes Ctrl+Alt+Shift+H, but on Apple's devices", () => {
+    on("Win32");
+    expect(togglesHuddle(press("H", { code: "KeyH", ctrlKey: true, altKey: true, shiftKey: true }))).toBe(true);
+    expect(togglesHuddle(press("h", { code: "KeyH", ctrlKey: true, altKey: true, shiftKey: true }))).toBe(true);
+    expect(togglesHuddle(press("H", { code: "KeyH", metaKey: true, altKey: true, shiftKey: true }))).toBe(false);
+  });
+
+  it("takes Cmd+Option+Shift+H on a Mac, where Option makes the key type another letter", () => {
+    on("MacIntel");
+    expect(togglesHuddle(press("Ó", { code: "KeyH", metaKey: true, altKey: true, shiftKey: true }))).toBe(true);
+    expect(togglesHuddle(press("Ó", { code: "KeyH", ctrlKey: true, altKey: true, shiftKey: true }))).toBe(false);
+  });
+
+  it("takes the key that types H on a keyboard laid out another way", () => {
+    on("Linux x86_64");
+    expect(togglesHuddle(press("H", { code: "KeyJ", ctrlKey: true, altKey: true, shiftKey: true }))).toBe(true);
+  });
+
+  it("leaves the browser's own Cmd+Shift+H and Ctrl+Shift+H, and H with anything less", () => {
+    on("MacIntel");
+    expect(togglesHuddle(press("H", { code: "KeyH", metaKey: true, shiftKey: true }))).toBe(false);
+    on("Win32");
+    expect(togglesHuddle(press("H", { code: "KeyH", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(togglesHuddle(press("h", { code: "KeyH", ctrlKey: true, altKey: true }))).toBe(false);
+    expect(togglesHuddle(press("H", { code: "KeyH", altKey: true, shiftKey: true }))).toBe(false);
+    expect(togglesHuddle(press("H", { code: "KeyH", ctrlKey: true, metaKey: true, altKey: true, shiftKey: true }))).toBe(false);
+    expect(togglesHuddle(press("H", { code: "KeyH", ctrlKey: true, altKey: true, shiftKey: true, isComposing: true }))).toBe(false);
+    expect(togglesHuddle(press("G", { code: "KeyG", ctrlKey: true, altKey: true, shiftKey: true }))).toBe(false);
+  });
+
+  it("names its keys as the keyboard does, and as screen readers hear them", () => {
+    on("MacIntel");
+    expect(huddleShortcut()).toEqual({ keys: ["⌘", "⌥", "⇧", "H"], aria: "Meta+Alt+Shift+H" });
+    on("Win32");
+    expect(huddleShortcut()).toEqual({ keys: ["Ctrl", "Alt", "Shift", "H"], aria: "Control+Alt+Shift+H" });
+  });
+});
+
+describe("togglesMute", () => {
+  it("takes Ctrl+Shift+Space, but on Apple's devices, which take Cmd+Shift+Space", () => {
+    on("Win32");
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(togglesMute(press(" ", { code: "Space", metaKey: true, shiftKey: true }))).toBe(false);
+    on("MacIntel");
+    expect(togglesMute(press(" ", { code: "Space", metaKey: true, shiftKey: true }))).toBe(true);
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true, shiftKey: true }))).toBe(false);
+  });
+
+  it("leaves Space alone, with anything less or more held, and other keys", () => {
+    on("Win32");
+    expect(togglesMute(press(" ", { code: "Space" }))).toBe(false);
+    expect(togglesMute(press(" ", { code: "Space", shiftKey: true }))).toBe(false);
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true }))).toBe(false);
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true, shiftKey: true, altKey: true }))).toBe(false);
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true, metaKey: true, shiftKey: true }))).toBe(false);
+    expect(togglesMute(press(" ", { code: "Space", ctrlKey: true, shiftKey: true, isComposing: true }))).toBe(false);
+    expect(togglesMute(press("Enter", { code: "Enter", ctrlKey: true, shiftKey: true }))).toBe(false);
+  });
+
+  it("names its keys as the keyboard does, and as screen readers hear them", () => {
+    on("MacIntel");
+    expect(muteShortcut()).toEqual({ keys: ["⌘", "⇧", "Space"], aria: "Meta+Shift+Space" });
+    on("Linux x86_64");
+    expect(muteShortcut()).toEqual({ keys: ["Ctrl", "Shift", "Space"], aria: "Control+Shift+Space" });
   });
 });
