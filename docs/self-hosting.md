@@ -601,8 +601,8 @@ While Ember AI is on, New agent, on the Agents card, makes one, up to 20, and th
 agent's page, which changes it. The page sets up:
 
 - **Name and avatar.** An agent's name is unique among everyone, in any capitals, so no person or bot
-  can pose as it, nor take its name while it exists, whether Ember AI is on or off. Its avatar is its
-  initials until an administrator uploads a picture.
+  can pose as it, nor take its name while it exists, whether Ember AI is on or off. Its avatar is the
+  one chat bots start with until an administrator uploads a picture.
 - **What it does**, in a line of at most 100 characters, which the Agents card and the agent's profile
   show, so people know when to ask it.
 - **Instructions**, its system prompt, up to 10,000 characters: its task, how to go about it, and what to
