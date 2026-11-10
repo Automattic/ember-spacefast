@@ -1,5 +1,4 @@
 import {
-  ASSISTANT_ID,
   AVATAR_PATH,
   CloseCode,
   CURRENT_PASSWORD_NEEDED,
@@ -809,7 +808,7 @@ function segmentText(segment: string): string {
 
 /**
  * Someone's page: anyone, whatever their status, with their email address and a new sign-in link for
- * administrators. An id nobody has is 404.
+ * administrators, and what an agent's page tells everyone of it. An id nobody has is 404.
  */
 async function showPerson(request: Request, env: Env, userId: UserId): Promise<Response> {
   const credentials = await credentialsOf(request, env);
@@ -818,7 +817,7 @@ async function showPerson(request: Request, env: Env, userId: UserId): Promise<R
   if (found === "not found") return problem(404, "Not found");
   const [shown] = await directoryOf([found.person], env.SESSION_SECRET);
   const transferId = found.transfer ? await newTransferId(found.transfer, env.SESSION_SECRET, Date.now()) : undefined;
-  return json({ person: shown!, transferId } satisfies PersonAnswer, { headers: { "Cache-Control": "no-store" } });
+  return json({ person: shown!, transferId, ...(found.agent && { agent: found.agent }) } satisfies PersonAnswer, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**
@@ -833,8 +832,8 @@ async function personPage(request: Request, env: Env, pathname: string, userId: 
 
 /**
  * Whom the mentions prompt offers: the first 20 by name of the active people in `room_id`, or anywhere
- * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s, with @ember's
- * badged as an agent's. A room someone isn't in is 404.
+ * without one, whose names contain `filter` (or `query`), as `<lexxy-prompt-item>`s, with the AI agents'
+ * badged, @ember's among them. A room someone isn't in is 404.
  */
 async function mentionable(request: Request, env: Env): Promise<Response> {
   const credentials = await credentialsOf(request, env);
@@ -846,7 +845,7 @@ async function mentionable(request: Request, env: Env): Promise<Response> {
   const people = await workspace(env).mentionable(credentials, roomId ?? null, query);
   if (!people) return problem(401, "Not signed in");
   if (people === "not found") return problem(404, ROOM_NOT_FOUND);
-  const items = (await directoryOf(people, env.SESSION_SECRET)).map((person) => mentionPromptItem({ ...person, agent: person.id === ASSISTANT_ID }));
+  const items = (await directoryOf(people, env.SESSION_SECRET)).map((person) => mentionPromptItem(person));
   return new Response(items.join(""), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 

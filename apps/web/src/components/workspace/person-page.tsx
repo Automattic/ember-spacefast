@@ -1,14 +1,16 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DirectoryUser, Me, Person, PersonAnswer, User, UserId } from "@ember/protocol";
+import type { AgentProfile } from "@ember/protocol/agents";
+import { isWorkersAiModel } from "@ember/protocol/assistant";
 import { ChatLines, EditPencil, Prohibition } from "@/components/icons/iconoir";
 import { PageLink } from "@/components/page-link";
-import { PeopleContext } from "@/hooks/use-directory";
+import { PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMounted } from "@/hooks/use-mounted";
 import { leave, PROFILE_PATH, useBackPath } from "@/hooks/use-route";
 import { useTitle } from "@/hooks/use-title";
 import { banPerson, fetchPerson, isSignedOut, unbanPerson } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { AgentBadge, isAssistant } from "./agent-badge";
+import { AgentBadge, isAgent } from "./agent-badge";
 import { HEADER_BUTTON } from "./page-header";
 import { isMissing } from "./room-settings-page";
 import { Panel, SettingsPage } from "./settings-page";
@@ -46,12 +48,13 @@ const DIRECT_BUTTON =
  * page it was opened from, a pencil to Edit my profile on your own, and their avatar. Active and banned
  * people show their name and bio, with their email address for administrators, and active people a
  * button that starts a DM with them, or opens the one you have. Removed people show their name and that
- * they're no longer on this account, and bots only their avatar, with the agent badge under @ember's,
- * then the DM button while they're active. Administrators get a new sign-in link for anyone active who
- * isn't a bot, themselves included, and Ban for anyone else active or Remove ban for anyone banned. The
- * people directory keeps what it lists of them current. Members suspended for their Memberful
- * membership's lapsing show as removed people do, but to administrators, who see them as banned people,
- * with why they can't sign in, and Ban.
+ * they're no longer on this account, and bots their avatar, with the agent badge under an AI agent's
+ * and, for an agent an administrator made, what `AboutAgent` says of it, then the DM button while
+ * they're active. Administrators get a new sign-in link for anyone active who isn't a bot, themselves
+ * included, and Ban for anyone else active or Remove ban for anyone banned. The people directory keeps
+ * what it lists of them current. Members suspended for their Memberful membership's lapsing show as
+ * removed people do, but to administrators, who see them as banned people, with why they can't sign in,
+ * and Ban.
  */
 export function PersonPage({ userId, me, onStartDirect, onPersonChanged, reloadPeople, onMissing, onFailed }: Props) {
   const [fetched, setFetched] = useState<PersonAnswer | null>(null);
@@ -139,7 +142,8 @@ export function PersonPage({ userId, me, onStartDirect, onPersonChanged, reloadP
         {person && (
           <div className="flex flex-col gap-x-[1ch] gap-y-4 wrap-anywhere">
             <Avatar person={person} />
-            {isAssistant(person) && <AgentBadge className="mx-auto" />}
+            {isAgent(person) && <AgentBadge className="mx-auto" />}
+            {fetched?.agent && <AboutAgent name={person.name} agent={fetched.agent} meId={me.id} />}
             {person.role === "bot" ? (
               person.status === "active" ? (
                 // At the page's text size.
@@ -247,4 +251,35 @@ function Avatar({ person }: { person: Person }) {
 
 function NoLongerHere({ name }: { name: string }) {
   return <div>{name} is no longer on this account</div>;
+}
+
+/**
+ * What an agent's page tells everyone of it, but its instructions: its name, what it does, then smaller
+ * and muted, the model it answers with, whom that sends what's asked to, and who set it up, by the name
+ * the people directory has for them now.
+ */
+function AboutAgent({ name, agent, meId }: { name: string; agent: AgentProfile; meId: UserId }) {
+  const nameOf = useNameOf();
+  return (
+    <div className="flex flex-col gap-x-[1ch] gap-y-[calc(1rem/3)]">
+      <h1 className="text-[23px] leading-[1.2] font-bold">{name}</h1>
+      <div>{agent.description}</div>
+      <div className="mx-auto max-w-[32em] text-[0.8em] text-muted-foreground">
+        {runsOn(agent)} {agent.setUpBy.id === meId ? "You" : nameOf(agent.setUpBy)} set it up.
+      </div>
+    </div>
+  );
+}
+
+/** The companies whose models AI Gateway sends to, by the start of their models' IDs. */
+const MAKERS: Readonly<Record<string, string>> = { anthropic: "Anthropic", openai: "OpenAI", google: "Google", moonshotai: "Moonshot AI" };
+
+/**
+ * The model an agent answers with, and where it runs: on Cloudflare, for Workers AI's, or else at the
+ * company that makes it, which AI Gateway sends the conversation the agent's asked in to.
+ */
+function runsOn({ model, modelName }: AgentProfile): string {
+  if (isWorkersAiModel(model)) return `An AI agent running on ${modelName}, on Cloudflare’s Workers AI.`;
+  const maker = MAKERS[model.split("/", 1)[0]!] ?? "the model’s maker";
+  return `An AI agent running on ${modelName} through Cloudflare AI Gateway, which sends the conversation you ask it in to ${maker}.`;
 }

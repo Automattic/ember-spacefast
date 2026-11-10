@@ -86,7 +86,9 @@ Turn on Ember AI and choose a model, from Workers AI's free ones to Claude, GPT 
 or a thread, or DM it, and it reads the conversation and answers right there, with links, lists, code
 and pictures, as a teammate would. On Claude or GPT it can search the web too, listing the pages its
 answer came from. Administrators set how long it may think and write, and each person picks their own
-levels on their profile.
+levels on their profile. Administrators can add agents of their own too, each with its instructions,
+model and rooms, such as one that sums up long threads or drafts replies in Support, and people
+mention or DM them just the same.
 
 ### Find anything
 
@@ -161,7 +163,7 @@ it's yours. Slack's plans are as [slack.com/pricing](https://slack.com/pricing) 
 |---|---|---|
 | **Apps and workflows** | — | ✅ a directory of 2,600+ apps (Free: 10 of them) and Workflow Builder |
 | **Voice and video calls** | — | ✅ huddles (Free: one-on-one only) |
-| **AI** | @ember answers when you mention or DM it, on the model you choose | ✅ summaries, recaps and AI search on every plan, more on Business+ |
+| **AI** | @ember and agents of your own answer when you mention or DM them, each on the model you choose | ✅ summaries, recaps and AI search on every plan, more on Business+ |
 | **Canvases, lists and clips** | — | ✅ |
 | **Channels shared with other companies** | — | ✅ Slack Connect |
 | **Scheduled messages and reminders** | — | ✅ |
@@ -182,7 +184,7 @@ Ember is free. Cloudflare runs it, at its own prices:
 | **A growing team** | $5 a month on Workers Paid, for the whole account. It includes 50 million database rows written a month, where Free allows 100,000 a day, and bills any use past its allowances. |
 | **Files** | 10 GB in [R2](https://developers.cloudflare.com/r2/pricing/) free, then $0.015 per GB a month, with nothing to pay for downloads. |
 | **Email, if you want it** | Free with [Resend](https://resend.com), up to 3,000 emails a month and 100 a day, or 3,000 a month included with Workers Paid through Cloudflare Email Service. |
-| **@ember, if you turn it on** | Workers AI's models free up to 10,000 Neurons a day, or other companies' at their own prices, paid with [AI Gateway's credits](https://developers.cloudflare.com/ai-gateway/features/unified-billing/). |
+| **@ember and agents, if you turn them on** | Workers AI's models free up to 10,000 Neurons a day, or other companies' at their own prices, paid with [AI Gateway's credits](https://developers.cloudflare.com/ai-gateway/features/unified-billing/). |
 | **Your own domain, if you want one** | Whatever your registrar charges. |
 
 The free plan's allowances are daily: once a day's are used up, Ember can't save anything new until

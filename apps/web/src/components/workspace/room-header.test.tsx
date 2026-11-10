@@ -1,4 +1,4 @@
-import { avatarSvg, type Room, type User } from "@ember/protocol";
+import { avatarSvg, type DirectoryUser, type Room, type User } from "@ember/protocol";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
@@ -135,6 +135,32 @@ describe("Group DMs and DM names", () => {
     expect(heading).toHaveTextContent(/^Direct message with Ember$/);
     expect(heading.nextElementSibling).toHaveTextContent(/^Agent$/);
     expect(heading.nextElementSibling).toHaveAttribute("data-slot", "badge");
+  });
+
+  it("badges a DM with any agent alone, as the people directory lists it", () => {
+    const recap: DirectoryUser = { id: "u9", name: "Recap", bio: null, role: "bot", status: "active", avatarUrl: "/users/u9/avatar", agent: true };
+    render(
+      <PeopleContext value={new Map([[recap.id, recap]])}>
+        <Sheet>
+          <RoomHeader
+            room={{ ...adaDirect, members: [{ id: "ada", name: "Ada" }, { id: recap.id, name: recap.name }] }}
+            name="Recap"
+            present={[]}
+            status="open"
+            offline={false}
+            favorite={false}
+            onStarred={vi.fn()}
+            involvement="mentions"
+            askForRoom={() => vi.fn()}
+            onSessionChanged={vi.fn()}
+            onFailed={vi.fn()}
+          />
+        </Sheet>
+      </PeopleContext>,
+    );
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Direct message with Recap$/);
+    expect(heading.nextElementSibling).toHaveTextContent(/^Agent$/);
   });
 
   it("badges no other DM, nor a group DM @ember is in", () => {

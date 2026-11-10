@@ -4,7 +4,7 @@ import { PageLink } from "@/components/page-link";
 import { PeopleContext, type People } from "@/hooks/use-directory";
 import { personPath } from "@/hooks/use-route";
 import { cn } from "@/lib/utils";
-import { isAssistant } from "./agent-badge";
+import { isAgent } from "./agent-badge";
 
 /** How many drawings are kept: more people than a page shows at once, so a tab left open doesn't keep everyone it has shown. */
 export const DRAWINGS_KEPT = 1_000;
@@ -32,10 +32,11 @@ export const avatarUrlOf = (people: People, user: User) => people.get(user.id)?.
 export const avatarVersionOf = (avatarUrl: string) => Number(new URL(avatarUrl, location.origin).searchParams.get("v"));
 
 /**
- * Whether someone is a bot, as the people directory lists them, or @ember, before the directory lists
- * anyone. A bot's avatar is a circle wherever it shows, so bots stand apart from the people around them.
+ * Whether someone is a bot, as the people directory lists them, AI agents among them, or @ember, before
+ * the directory lists anyone. A bot's avatar is a circle wherever it shows, so bots stand apart from the
+ * people around them.
  */
-const isBot = (user: User, listed: DirectoryUser | undefined) => listed?.role === "bot" || isAssistant(user);
+const isBot = (user: User, listed: DirectoryUser | undefined) => listed?.role === "bot" || isAgent(listed ?? user);
 
 interface Props {
   /** Someone, with their avatar's address where it's known, as the directory lists it. */

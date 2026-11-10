@@ -85,7 +85,7 @@ import {
   type YourAssistant,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
-import { MAX_AGENTS, type Agent, type AgentChanges, type AgentRoom, type AgentSettings, type NewAgent } from "@ember/protocol/agents";
+import { MAX_AGENTS, type Agent, type AgentChanges, type AgentProfile, type AgentRoom, type AgentSettings, type NewAgent } from "@ember/protocol/agents";
 import type { Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, TooSoon, tooSoonAfter, versionOf } from "./avatar-tokens";
@@ -444,6 +444,8 @@ export interface ShownPerson {
    * administrators when they're active and aren't a bot (users/show.html.erb), or null.
    */
   transfer: Transfer | null;
+  /** What the page tells everyone of an agent an administrator made, or null for anyone else. */
+  agent: AgentProfile | null;
 }
 
 /**
@@ -2561,12 +2563,13 @@ export class Workspace extends DurableObject<Env> {
     if (!session) return null;
     const [person, administrator] = await Promise.all([this.store.personWithProfile(userId), this.store.isAdministrator(session.user.id)]);
     if (!person) return "not found";
+    const agent = person.agent ? await this.store.agentProfile(userId) : null;
     if (administrator) {
       const transferable = person.status === "active" && person.role !== "bot";
-      return { person, transfer: transferable ? { userId: person.id, sessionId: session.id } : null };
+      return { person, transfer: transferable ? { userId: person.id, sessionId: session.id } : null, agent };
     }
     const { emailAddress, ...listed } = person;
-    return { person: listed, transfer: null };
+    return { person: listed, transfer: null, agent };
   }
 
   /**
@@ -2641,10 +2644,10 @@ export class Workspace extends DurableObject<Env> {
    * their sessions end, and their sockets close for good: here at once, and in every room they're in
    * through the outbox. Everyone's workspace sockets hear of it.
    */
-  private async deactivate({ id, name, bio, role }: DirectoryEntry): Promise<DirectoryUser> {
+  private async deactivate({ id, name, bio, role, agent }: DirectoryEntry): Promise<DirectoryUser> {
     const now = Date.now();
     const removedAt = new Date(now).toISOString();
-    const removed = await this.directoryUser({ id, name, bio, role, status: "deactivated", updatedAt: removedAt });
+    const removed = await this.directoryUser({ id, name, bio, role, status: "deactivated", updatedAt: removedAt, agent });
     // As when resetting a password, until the database says it queued nothing.
     let queued = true;
     try {
@@ -2740,8 +2743,8 @@ export class Workspace extends DurableObject<Env> {
         if (previous) await this.wakeAt(now);
         const changed = (await this.store.activeBot(botId))!;
         if (changed.name !== bot.name || avatar) {
-          const { id, name, bio, role, status, updatedAt } = changed;
-          this.broadcast({ type: "user.updated", user: await this.directoryUser({ id, name, bio, role, status, updatedAt }) });
+          const { id, name, bio, role, status, updatedAt, agent } = changed;
+          this.broadcast({ type: "user.updated", user: await this.directoryUser({ id, name, bio, role, status, updatedAt, agent }) });
         }
         return this.shownBotSettings(changed);
       }),
@@ -3091,8 +3094,8 @@ export class Workspace extends DurableObject<Env> {
    * Someone as the people directory lists them, with their avatar's address, and nothing else known of
    * them, such as their email address, whatever `person` brings.
    */
-  private async directoryUser({ id, name, bio, role, status, updatedAt }: DirectoryEntry): Promise<DirectoryUser> {
-    return (await directoryOf([{ id, name, bio, role, status, updatedAt }], this.env.SESSION_SECRET))[0]!;
+  private async directoryUser({ id, name, bio, role, status, updatedAt, agent }: DirectoryEntry): Promise<DirectoryUser> {
+    return (await directoryOf([{ id, name, bio, role, status, updatedAt, agent }], this.env.SESSION_SECRET))[0]!;
   }
 
   /** The profile of the person `credentials` signs in, or null without a valid session. */

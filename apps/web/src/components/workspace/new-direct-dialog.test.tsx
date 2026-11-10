@@ -106,6 +106,13 @@ describe("Where bots show up", () => {
     await user.click(option("Ember Agent"));
     expect(chips()).toEqual(["Ember"]);
   });
+
+  it("badges every agent the people directory lists, and no other bot", async () => {
+    const bots = [{ ...person("b1", "Build Bot"), role: "bot" as const }, { ...person("b2", "Recap"), role: "bot" as const, agent: true as const }];
+    showDialog({ people: [...everyone, ...bots] });
+    await waitFor(() => expect(listed()).toEqual(["Ada Byron", "alan Turing", "Barbara Liskov", "Build Bot", "Grace Hopper", "Linus Torvalds", "Recap Agent"]));
+    expect(within(option("Recap Agent")).getByText("Agent")).toHaveAttribute("data-slot", "badge");
+  });
 });
 
 describe("New direct message dialog", () => {

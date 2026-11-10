@@ -61,7 +61,7 @@ import {
   type WebTool,
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
-import type { AgentRoom } from "@ember/protocol/agents";
+import type { AgentProfile, AgentRoom } from "@ember/protocol/agents";
 import type { LiveHuddle } from "@ember/protocol/huddles";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
@@ -248,6 +248,8 @@ export interface DirectoryEntry extends User {
   role: Role;
   status: UserStatus;
   updatedAt: string;
+  /** Whether they're an AI agent, @ember or one an administrator made, deleted ones too. */
+  agent: boolean;
 }
 
 /** Someone as the people directory lists them, with their email address, which their profile shows too. */
@@ -858,6 +860,7 @@ const SESSION = `SELECT sessions.id AS session_id, sessions.last_active_at, user
   FROM sessions JOIN users ON users.id = sessions.user_id
   WHERE sessions.token_digest = ? AND users.status = ${ACTIVE}`;
 
+/** Someone as `DIRECTORY_COLUMNS` reads them. */
 interface DirectoryRow {
   id: UserId;
   name: string;
@@ -865,6 +868,7 @@ interface DirectoryRow {
   role: number;
   status: number;
   updated_at: string;
+  agent: number;
 }
 
 /** The columns that say what avatar someone has uploaded (migrations/0032_avatars.sql). */
@@ -908,6 +912,7 @@ const directoryEntry = (row: DirectoryRow): DirectoryEntry => ({
   role: ROLES[row.role] ?? "member",
   status: STATUSES[row.status] ?? "active",
   updatedAt: row.updated_at,
+  agent: row.agent === 1,
 });
 
 interface BotRow extends DirectoryRow {
@@ -1844,14 +1849,22 @@ export function mergedSharedOrder(saved: Array<{ id: RoomId; orderable: boolean 
 /** Everyone active, by name. */
 export const ACTIVE_PEOPLE = `SELECT id, name FROM users WHERE status = ${ACTIVE} ORDER BY lower(name), id`;
 
+/**
+ * What the people directory lists of whoever `users` reads, as `DirectoryRow` has it, with whether they're
+ * an AI agent: a bot without a token, as @ember and the agents administrators make are and chat bots never
+ * are, deleted agents too, whose answers stay.
+ */
+const DIRECTORY_COLUMNS = `users.id, users.name, users.bio, users.role, users.status, users.updated_at,
+  (users.role = ${BOT} AND users.bot_token IS NULL) AS agent`;
+
 /** Everyone, for the people directory: removed and banned people too, whose messages stay. */
-const DIRECTORY = `SELECT id, name, bio, role, status, updated_at FROM users ORDER BY id`;
+const DIRECTORY = `SELECT ${DIRECTORY_COLUMNS} FROM users ORDER BY id`;
 
 /** Someone active, as the directory lists them. */
-const ACTIVE_PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ? AND status = ${ACTIVE}`;
+const ACTIVE_PERSON = `SELECT ${DIRECTORY_COLUMNS} FROM users WHERE id = ? AND status = ${ACTIVE}`;
 
 /** The same, or someone suspended for their membership's lapsing, as an administrator can remove them too. */
-const REMOVABLE_PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ? AND status IN (${ACTIVE}, ${SUSPENDED})`;
+const REMOVABLE_PERSON = `SELECT ${DIRECTORY_COLUMNS} FROM users WHERE id = ? AND status IN (${ACTIVE}, ${SUSPENDED})`;
 
 /** Whether the user `users` reads is no agent's: the AI assistant tab looks after agents, as it does @ember, not Chat bots. */
 const NOT_AN_AGENT = `NOT EXISTS (SELECT 1 FROM agents WHERE agents.user_id = users.id)`;
@@ -1860,7 +1873,7 @@ const NOT_AN_AGENT = `NOT EXISTS (SELECT 1 FROM agents WHERE agents.user_id = us
  * The active bots, by name, with their tokens. @ember and the agents aren't among them: the AI assistant
  * tab looks after them, not Chat bots.
  */
-const ACTIVE_BOTS = `SELECT id, name, bio, role, status, updated_at, bot_token FROM users
+const ACTIVE_BOTS = `SELECT ${DIRECTORY_COLUMNS}, bot_token FROM users
   WHERE status = ${ACTIVE} AND role = ${BOT} AND id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT} ORDER BY lower(name), id`;
 
 /**
@@ -1874,7 +1887,7 @@ const ACTIVE_BOTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
 /**
  * An active bot, with its token and where its webhook delivers. @ember and the agents aren't, as above.
  */
-const ACTIVE_BOT = `SELECT users.id, users.name, users.bio, users.role, users.status, users.updated_at, users.bot_token, webhooks.url AS webhook_url
+const ACTIVE_BOT = `SELECT ${DIRECTORY_COLUMNS}, users.bot_token, webhooks.url AS webhook_url
   FROM users LEFT JOIN webhooks ON webhooks.user_id = users.id
   WHERE users.id = ? AND users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT}`;
 
@@ -1889,7 +1902,7 @@ const BOT_ROOMS = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON ro
   WHERE memberships.user_id = ? AND rooms.kind <> 'direct' ORDER BY lower(rooms.name), rooms.id`;
 
 /** What the AI assistant tab lists of an agent, of its user and its row. */
-const AGENT_COLUMNS = `users.id, users.name, users.bio, users.role, users.status, users.updated_at,
+const AGENT_COLUMNS = `${DIRECTORY_COLUMNS},
   agents.description, agents.model, agents.model_name, agents.web_tools, agents.every_open_room`;
 
 /** The active agents, by name, as the AI assistant tab lists them. */
@@ -1922,7 +1935,11 @@ const OPEN_ROOMS_OF = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms O
   WHERE memberships.user_id = ? AND rooms.kind = 'open' ORDER BY lower(rooms.name), rooms.id`;
 
 /** Every agent, active or not, as the directory lists it. */
-const AGENTS_LISTED = `SELECT users.id, users.name, users.bio, users.role, users.status, users.updated_at FROM agents JOIN users ON users.id = agents.user_id`;
+const AGENTS_LISTED = `SELECT ${DIRECTORY_COLUMNS} FROM agents JOIN users ON users.id = agents.user_id`;
+
+/** An agent, active or not, as its page shows it to everyone, with who made it. */
+const AGENT_PROFILE = `SELECT agents.description, agents.model, agents.model_name, agents.created_by, makers.name AS created_by_name
+  FROM agents JOIN users AS makers ON makers.id = agents.created_by WHERE agents.user_id = ?`;
 
 /** What makes a bot an agent, ?10 being 1 to put it in every open room, made by ?11. */
 const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
@@ -2079,10 +2096,10 @@ const LEAVE_SHARED_ROOMS = `DELETE FROM memberships WHERE user_id = ?
 const DEACTIVATE = `UPDATE users SET status = ${DEACTIVATED}, email_address = replace(email_address, '@', ?), updated_at = ? WHERE id = ?`;
 
 /** Someone as the directory lists them, whatever their status. */
-const PERSON = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id = ?`;
+const PERSON = `SELECT ${DIRECTORY_COLUMNS} FROM users WHERE id = ?`;
 
 /** The same, with the avatar they've uploaded, or a bot was given. */
-const PERSON_WITH_AVATAR = `SELECT id, name, bio, role, status, updated_at, avatar_key, avatar_variant FROM users WHERE id = ?`;
+const PERSON_WITH_AVATAR = `SELECT ${DIRECTORY_COLUMNS}, avatar_key, avatar_variant FROM users WHERE id = ?`;
 
 /**
  * The IP addresses recorded on someone's sessions, each once, without none or blanks.
@@ -2090,10 +2107,10 @@ const PERSON_WITH_AVATAR = `SELECT id, name, bio, role, status, updated_at, avat
 const SESSION_IP_ADDRESSES = `SELECT DISTINCT ip_address FROM sessions WHERE user_id = ? AND trim(ip_address) <> ''`;
 
 /** Someone as the directory lists them, with their email address, whatever their status. */
-const PERSON_WITH_PROFILE = `SELECT id, name, email_address, bio, role, status, updated_at FROM users WHERE id = ?`;
+const PERSON_WITH_PROFILE = `SELECT ${DIRECTORY_COLUMNS}, email_address FROM users WHERE id = ?`;
 
 /** The same, with the avatar they've uploaded, and whether they have a password, which people without one keep as none or blank. */
-const OWN_PROFILE = `SELECT id, name, email_address, bio, role, status, updated_at, avatar_key, avatar_variant,
+const OWN_PROFILE = `SELECT ${DIRECTORY_COLUMNS}, email_address, avatar_key, avatar_variant,
     coalesce(password_digest, '') <> '' AS password, NOT ${NEEDS_NO_MEMBERSHIP} AS membership_needed,
     (SELECT json_group_array(json_object('issuer', issuer, 'subject', subject, 'name', identities.name, 'emailAddress', identities.email_address))
       FROM identities WHERE identities.user_id = users.id) AS accounts,
@@ -2149,7 +2166,7 @@ export const ACTIVE_PEOPLE_IN_ROOM = `SELECT users.id, users.name, memberships.u
 export const PEOPLE_WITH_IDS = `SELECT id, name FROM users WHERE id IN (SELECT value FROM json_each(?))`;
 
 /** The same, as the people directory lists them. */
-const DIRECTORY_WITH_IDS = `SELECT id, name, bio, role, status, updated_at FROM users WHERE id IN (SELECT value FROM json_each(?))`;
+const DIRECTORY_WITH_IDS = `SELECT ${DIRECTORY_COLUMNS} FROM users WHERE id IN (SELECT value FROM json_each(?))`;
 
 /** How many people the mentions prompt offers: the first page of them, the only one Lexxy asks for. */
 export const MENTIONABLE_PAGE = 20;
@@ -2158,11 +2175,11 @@ export const MENTIONABLE_PAGE = 20;
  * Active people whose names contain ?1, by name. It's `LIKE`, so only ASCII letters ignore case, `%` and
  * `_` match anything, and "" matches everyone.
  */
-const MENTIONABLE_PEOPLE = `SELECT id, name, bio, role, status, updated_at FROM users
+const MENTIONABLE_PEOPLE = `SELECT ${DIRECTORY_COLUMNS} FROM users
   WHERE status = ${ACTIVE} AND name LIKE '%' || ?1 || '%' ORDER BY lower(name), id LIMIT ${MENTIONABLE_PAGE}`;
 
 /** The same of room ?2's members (`Current.user.rooms.find(room_id).users`). */
-const MENTIONABLE_MEMBERS = `SELECT users.id, users.name, users.bio, users.role, users.status, users.updated_at
+const MENTIONABLE_MEMBERS = `SELECT ${DIRECTORY_COLUMNS}
   FROM memberships JOIN users ON users.id = memberships.user_id
   WHERE memberships.room_id = ?2 AND users.status = ${ACTIVE} AND users.name LIKE '%' || ?1 || '%'
   ORDER BY lower(users.name), users.id LIMIT ${MENTIONABLE_PAGE}`;
@@ -3497,6 +3514,12 @@ export class WorkspaceStore {
   async answeringAgent(roomId: RoomId, agentId: UserId): Promise<AnsweringAgent | null> {
     const [row] = await this.db.all<AnsweringColumns & { name: string; model: string }>(ANSWERING_AGENT, roomId, agentId);
     return row ? { name: row.name, model: row.model, ...answeringOf(row) } : null;
+  }
+
+  /** What agent `agentId`'s page tells everyone of it, whether Ember AI is on or off, or null unless it's an agent. */
+  async agentProfile(agentId: UserId): Promise<AgentProfile | null> {
+    const [row] = await this.db.all<{ description: string; model: string; model_name: string; created_by: UserId; created_by_name: string }>(AGENT_PROFILE, agentId);
+    return row ? { description: row.description, model: row.model, modelName: row.model_name, setUpBy: { id: row.created_by, name: row.created_by_name } } : null;
   }
 
   /** Every agent, whether Ember AI is on or off, as the people directory lists it. */
