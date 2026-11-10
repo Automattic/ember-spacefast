@@ -5,20 +5,24 @@ import { Xmark } from "@/components/icons/iconoir";
 import { MainContent, SkipLink } from "@/components/main-content";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { useAccount } from "@/hooks/use-account";
 import { useAppBadge } from "@/hooks/use-app-badge";
 import { DirectoryLoaded, PeopleContext, useDirectory } from "@/hooks/use-directory";
+import { useHuddle } from "@/hooks/use-huddle";
 import { useMounted } from "@/hooks/use-mounted";
 import { useReleaseCheck } from "@/hooks/use-release-check";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { ApiError, dismissInvitation, isSignedOut, startDirect } from "@/lib/api";
+import { hearHuddleEnd, leaveHuddle, muteHuddle } from "@/lib/huddle-store";
 import { whenIdle } from "@/lib/idle";
-import { opensFind } from "@/lib/keyboard";
+import { opensFind, togglesHuddle, togglesMute } from "@/lib/keyboard";
 import { lastRoomVisited } from "@/lib/last-room";
 import { takeMemberfulFlash } from "@/lib/memberful";
 import { loadPage } from "@/lib/page";
 import { markedUnread } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
 import { afterNavigating, messagePath, navigate, pageMark, roomPath, routeOf, useHash, useRoute, type Route } from "@/hooks/use-route";
+import { HuddlesContext, NO_HUDDLES, type Huddles } from "./huddle-button";
 import { MovedNotice } from "./moved-notice";
 import { NewDirectDialog } from "./new-direct-dialog";
 import { DrawerOpen, PageHeader } from "./page-header";
@@ -330,8 +334,25 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     setSearchBox(options);
   }, []);
 
+  // The huddle this tab is in, and the preview one is started or joined from, while it's open, by its room.
+  const huddle = useHuddle();
+  const huddlesOn = useAccount().huddles;
+  const [huddlePreview, setHuddlePreview] = useState<RoomId | null>(null);
+  const closeHuddlePreview = useCallback(() => setHuddlePreview(null), []);
+  const liveHuddles = list?.huddles ?? NO_HUDDLES;
+  const huddles = useMemo<Huddles>(() => ({ live: liveHuddles, preview: setHuddlePreview }), [liveHuddles]);
+  // Only a room that's still this person's, and only while huddles are on, has a preview to show.
+  const previewedRoom = huddlePreview !== null && huddlesOn ? rooms?.find((r) => r.id === huddlePreview) : undefined;
+  const previewed = previewedRoom?.kind === "direct" ? undefined : previewedRoom;
+  useEffect(() => {
+    if (huddlePreview !== null && rooms !== null && !previewed) setHuddlePreview(null);
+  }, [huddlePreview, rooms, previewed]);
+
   const flash = useFlash();
   const mounted = useMounted();
+  // Why the room ended this tab's huddle, when it does. Whoever's signed in next starts in none.
+  useEffect(() => hearHuddleEnd((why) => flash("alert", why)), [flash]);
+  useEffect(() => leaveHuddle, []);
   // What connecting a Memberful account came to, as the address Memberful sent this browser back to says.
   useEffect(() => {
     const message = takeMemberfulFlash();
@@ -356,6 +377,13 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     [flash],
   );
   const missing = useCallback(() => redirect(ROOM_NOT_FOUND), [redirect]);
+  const huddlePreviewFailed = useCallback(
+    (error: unknown) => {
+      setHuddlePreview(null);
+      failed(error);
+    },
+    [failed],
+  );
   // A room just saved takes its place in the list, and one that's gone leaves it.
   const listRoom = useCallback((room: Room) => changeRooms({ type: "saved", room }), []);
   const unlistRoom = useCallback((roomId: RoomId) => changeRooms({ type: "gone", roomId }), []);
@@ -519,11 +547,42 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     const { search, sort } = searchOfQuery(new URLSearchParams(location.search));
     openSearch({ opener: null, search, sort });
   });
+  // Slack's huddle keys: one mutes or unmutes the huddle the tab is in, wherever it's pressed, and the
+  // other leaves it, or else starts or joins the huddle of the room shown, as the header's button does,
+  // unless it's pressed in a dialog.
+  const huddleKeyPressed = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    // Held down, the keys repeat, which counts as the one press: they'd mute and unmute by turns
+    // otherwise, and leaving would go on to offer the room's huddle.
+    const pressed = (act: () => void) => {
+      event.preventDefault();
+      if (!event.repeat) act();
+    };
+    if (togglesMute(event) && huddle) return pressed(() => muteHuddle(!huddle.muted));
+    if (!togglesHuddle(event) || (event.target instanceof Element && event.target.closest("[role=dialog]"))) return;
+    if (huddle) return pressed(leaveHuddle);
+    if (!huddlesOn || !room || room.kind === "direct" || goneRoom) return;
+    pressed(() => setHuddlePreview(room.id));
+  });
   useEffect(() => {
-    const listener = (event: KeyboardEvent) => findPressed(event);
+    const listener = (event: KeyboardEvent) => {
+      findPressed(event);
+      huddleKeyPressed(event);
+    };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, []);
+  // A huddle's link shows its room and offers the huddle, unless the tab is in it. The address becomes
+  // the room's, so that loading the page again, or coming back to it, doesn't offer it again.
+  const followHuddleLink = useEffectEvent((room: Room) => {
+    if (!huddlesOn) flash("alert", "Huddles are turned off.");
+    else if (room.kind !== "direct" && huddle?.roomId !== room.id) setHuddlePreview(room.id);
+    navigate(roomPath(room.id), { replace: true });
+  });
+  const huddleLinked = route.page === "room" && route.huddle === true && !goneRoom ? room : null;
+  useLayoutEffect(() => {
+    if (huddleLinked) followHuddleLink(huddleLinked);
+  }, [huddleLinked]);
 
   // The app's badge counts what Activity does, as badge_dot_controller.js counts the sidebar's unread rows,
   // once the server's list has come: the empty one a failed first load leaves knows nothing of what's unread.
@@ -770,6 +829,20 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
             />
           )}
           {searchBox && <SearchBox {...searchBox} me={me} rooms={rooms ?? NO_ROOMS} onClose={() => setSearchBox(null)} onFailed={failed} />}
+          {previewed && (
+            <RarePage
+              show={({ HuddlePreview }) => <HuddlePreview key={previewed.id} room={previewed} me={me} live={liveHuddles[previewed.id]} onClose={closeHuddlePreview} />}
+              loading={null}
+              onFailed={huddlePreviewFailed}
+            />
+          )}
+          {huddle && (
+            <RarePage
+              show={({ HuddleBar }) => <HuddleBar huddle={huddle} room={rooms?.find((r) => r.id === huddle.roomId) ?? null} meId={me.id} />}
+              loading={null}
+              onFailed={failed}
+            />
+          )}
         </div>
       </DrawerOpen>
     </Sheet>
@@ -778,7 +851,9 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     <PeopleContext value={directory.people}>
       <DirectoryLoaded value={directory.loaded}>
         <SettingsLayout value={settings}>
-          <OpenSearchContext value={openSearch}>{layout}</OpenSearchContext>
+          <OpenSearchContext value={openSearch}>
+            <HuddlesContext value={huddles}>{layout}</HuddlesContext>
+          </OpenSearchContext>
         </SettingsLayout>
       </DirectoryLoaded>
     </PeopleContext>

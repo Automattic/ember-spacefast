@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSettings } from "@ember/protocol";
 import { HUDDLES_FORBIDDEN } from "@ember/protocol/huddles";
 import { ApiError } from "@/lib/api";
-import { CONFIRM_STOP_HUDDLES, HUDDLES_COMING, HUDDLES_EXPLAINED, HuddlesSettings } from "./huddles-settings";
+import { CONFIRM_STOP_HUDDLES, HUDDLES_EXPLAINED, HuddlesSettings } from "./huddles-settings";
 
 const APP_ID = "2a95132c15732412d22c1476fa83f27a";
 
@@ -40,7 +40,6 @@ describe("Set up huddles", () => {
     serve();
     const { user, onSetUp } = showCard(null);
     expect(card()).toHaveTextContent(HUDDLES_EXPLAINED);
-    expect(card()).toHaveTextContent(HUDDLES_COMING);
     expect(within(card()).getByRole("heading", { level: 3, name: "Huddles" })).toBeVisible();
     expect(huddlesSwitch()).not.toBeChecked();
     expect(huddlesSwitch()).toHaveAccessibleDescription(HUDDLES_EXPLAINED);
@@ -56,7 +55,6 @@ describe("Set up huddles", () => {
     const { user, onSetUp } = showCard({ appId: APP_ID });
     const description = `Huddles run through the Realtime SFU app ${APP_ID} in your Cloudflare account.`;
     expect(card()).toHaveTextContent(description);
-    expect(card()).toHaveTextContent(HUDDLES_COMING);
     expect(huddlesSwitch()).toBeChecked();
     expect(huddlesSwitch()).toBeEnabled();
     expect(huddlesSwitch()).toHaveAccessibleDescription(description);

@@ -584,8 +584,17 @@ search, and that an administrator can turn Search the web on.
 
 ### Huddles
 
-Huddles aren't finished: for now the Huddles card only keeps the keys they'll run through, and nobody
-can start one until the updates that follow.
+A huddle is a room's voice call, laid out as Slack's is. The headphones at the top of a room start its
+huddle, or join the one going on, and show the rest of the room how many are in it. A preview comes
+first, which asks the browser for a microphone and offers a choice of it and, where the browser has
+one, of the speaker; without a microphone you join to listen. While you're in a huddle, a bar along
+the window's base follows you from page to page, with the microphone's switch and Leave.
+Ctrl+Alt+Shift+H (⌘⌥⇧H on a Mac) leaves the huddle you're in, or opens the preview for the room
+you're looking at, and Ctrl+Shift+Space (⌘⇧Space) mutes and unmutes. The arrow beside the headphones
+copies the huddle's link, which opens the room at the preview. A huddle takes up to 50 people and
+ends when the last of them leaves. A tab is in one huddle at a time, and joining a room's huddle from
+another tab or device leaves it in the first. DMs have no huddles yet, and there's no video or screen
+sharing yet.
 
 An administrator turns huddles on with the Huddles card, under Rooms and permissions in community
 settings. Huddles run through Cloudflare's [Realtime SFU](https://developers.cloudflare.com/realtime/sfu/),
@@ -596,8 +605,10 @@ in the account Ember is deployed to when the deploy gave it. Before it keeps the
 the SFU to start a session with them (`POST /apps/{appId}/sessions/new`), which nobody connects to, so
 an app Cloudflare doesn't know, or a secret that isn't the app's, is refused on its field. Cloudflare
 can take a minute to know a new app everywhere. Change keys takes another app's, and turning the card
-off forgets them. The secret stays in the Worker, which alone asks the SFU's API. What the SFU charges
-is in [What it costs](#what-it-costs).
+off forgets them, which ends any huddle going on within half a minute. The secret stays in the Worker,
+which alone asks the SFU's API: a browser sends its microphone to the SFU, and hears the others from
+it, over WebRTC, and finds its way there with Cloudflare's STUN server (`stun.cloudflare.com:3478`).
+What the SFU charges is in [What it costs](#what-it-costs).
 
 ### A preview from GitHub Actions
 
@@ -782,7 +793,9 @@ pages had them in October 2026:
   results and pages it reads count as input, up to about 10,000 tokens a page.
 - **Huddles**, if they're on: Cloudflare's Realtime SFU charges for what it sends to the people in a
   huddle, and nothing for what they send it. The first 1,000 GB a month are free, and it's $0.05 per GB
-  after that, as its page had it in November 2026.
+  after that, as its page had it in November 2026. A voice is about 50 kbps to each person who hears
+  it, so five people talking for an hour are sent under half a GB between them, and the free 1,000 GB
+  carry about 2,000 such hours a month.
 
 Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),

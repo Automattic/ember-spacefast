@@ -99,6 +99,7 @@ export {
   CUSTOM_STYLES_PATH,
   EMAIL_SIGN_UP_PATH,
   emailSignUpLink,
+  huddlePath,
   INVITATION_PATH,
   invitationLink,
   isAppPage,
@@ -458,6 +459,12 @@ export interface Account {
    * modes. A slot without one shows its default.
    */
   navigationIcons: NavigationIcons;
+  /**
+   * Whether huddles are on, which an administrator turns on in Rooms and permissions by giving Ember the
+   * keys of the Realtime SFU app they run through. Off until one does, when no room's header has a
+   * huddle button.
+   */
+  huddles: boolean;
 }
 
 /** What `GET /api/account` answers for workspace settings. */

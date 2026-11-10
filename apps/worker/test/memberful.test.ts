@@ -282,6 +282,7 @@ const account = (memberful: Partial<Pick<Account, "memberfulJoin" | "memberfulSi
   emailDomainSignUp: false,
   emailDomains: [],
   navigationIcons: {},
+  huddles: false,
   ...memberful,
 });
 

@@ -13,7 +13,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { APP, OTHER_APP } from "./huddle-support";
-import { api, apiWith, cookieOf, freshDeploy, shown, signIn, withWorkspaceEnv, workspaceSql, workspaceStub, type Session } from "./support";
+import { api, apiWith, cookieOf, freshDeploy, openWorkspaceSocket, shown, signIn, withWorkspaceEnv, workspaceSql, workspaceStub, type Session } from "./support";
 
 const ada = { name: "Ada Lovelace", emailAddress: "ada@example.com", password: "analytical engine" };
 
@@ -42,8 +42,11 @@ async function saveKeys(administrator: Session, app = APP): Promise<void> {
 /** Turns huddles off as `session`, as the Huddles card's switch does. */
 const turnOff = (session: Session | null) => api("/api/account/huddles", { method: "DELETE", headers: as(session) });
 
+/** The workspace's settings as `session` sees them. */
+const settings = async (session: Session) => (await (await api("/api/account", { headers: as(session) })).json()) as WorkspaceSettings;
+
 /** Huddles as the workspace's settings show them to `session`. */
-const huddlesSettings = async (session: Session) => ((await (await api("/api/account", { headers: as(session) })).json()) as WorkspaceSettings).huddles;
+const huddlesSettings = async (session: Session) => (await settings(session)).huddles;
 
 /** The account's settings, as the database keeps them. */
 const storedSettings = async () => JSON.parse(((await workspaceSql("SELECT settings FROM accounts")) as Array<{ settings: string }>)[0]!.settings) as Record<string, unknown>;
@@ -208,6 +211,35 @@ describe("Set up huddles", () => {
     expect(await huddlesSettings(member)).toBeNull();
   });
 
+  it("tells every page whether huddles are on, as they're turned on and off, and never which app they run through", async () => {
+    const administrator = await setUp();
+    const member = await signIn("Grace");
+    fakeSfu();
+    expect((await settings(member)).account.huddles).toBe(false);
+    const sockets = [await openWorkspaceSocket(administrator), await openWorkspaceSocket(member)];
+
+    await saveKeys(administrator);
+    for (const socket of sockets) {
+      const heard = await socket.next();
+      expect(heard).toMatchObject({ type: "account.updated", account: { huddles: true } });
+      expect(JSON.stringify(heard)).not.toContain(APP.appId);
+    }
+    expect((await settings(member)).account.huddles).toBe(true);
+    // As it does once the Workspace starts afresh.
+    await evictDurableObject(workspaceStub());
+    expect((await settings(member)).account.huddles).toBe(true);
+
+    // Another app's keys leave them on, and turning them off says so once.
+    const again = [await openWorkspaceSocket(administrator), await openWorkspaceSocket(member)];
+    await saveKeys(administrator, OTHER_APP);
+    for (const socket of again) expect(await socket.next()).toMatchObject({ type: "account.updated", account: { huddles: true } });
+    expect((await turnOff(administrator)).status).toBe(200);
+    for (const socket of again) expect(await socket.next()).toMatchObject({ type: "account.updated", account: { huddles: false } });
+    expect((await turnOff(administrator)).status).toBe(200);
+    for (const socket of again) expect(await socket.answers()).toBe(true);
+    expect((await settings(member)).account.huddles).toBe(false);
+  });
+
   it("turns huddles off, forgetting the app's keys", async () => {
     const administrator = await setUp();
     const requests = fakeSfu();
@@ -232,9 +264,13 @@ describe("Set up huddles", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     await withWorkspaceEnv({ SESSION_SECRET: "another secret, after the app's was sealed" }, async () => {
       expect(await huddlesSettings(administrator)).toBeNull();
+      // Nor is any page told they're on, whose rooms would have a huddle button that starts nothing.
+      expect((await settings(administrator)).account.huddles).toBe(false);
+      expect((await openWorkspaceSocket(administrator)).welcome).toMatchObject({ account: { huddles: false } });
     });
     expect(logged).toHaveBeenCalledWith("The SFU app secret Ember was given doesn't open under SESSION_SECRET, so huddles are off.");
     expect(await huddlesSettings(administrator)).toEqual({ appId: APP.appId });
+    expect((await settings(administrator)).account.huddles).toBe(true);
   });
 
   it("asks a stand-in for the Realtime SFU only at a loopback address", async () => {

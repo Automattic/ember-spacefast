@@ -1,9 +1,10 @@
 import { avatarSvg, type Room, type User } from "@ember/protocol";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sheet } from "@/components/ui/sheet";
+import { AccountContext, useAccount } from "@/hooks/use-account";
 import { PeopleContext } from "@/hooks/use-directory";
 import { PushContext, type Push } from "@/hooks/use-push";
 import { PUSH_ON } from "@/test-push";
@@ -267,5 +268,55 @@ describe("Notification levels", () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json({ error: "Sign in" }, { status: 401 }));
     await userEvent.click(bell);
     expect(onFailed).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Huddles", () => {
+  /** Gives what's inside it a workspace where huddles are on. */
+  function HuddlesOn({ children }: { children: ReactNode }) {
+    return <AccountContext value={{ ...useAccount(), huddles: true }}>{children}</AccountContext>;
+  }
+  /** The header of `room` where huddles are on. */
+  const renderWithHuddles = (room: Room, name: string) =>
+    render(
+      <PushContext value={PUSH_ON}>
+        <Sheet>
+          <RoomHeader
+            room={room}
+            name={name}
+            present={[]}
+            status="open"
+            offline={false}
+            favorite={false}
+            onStarred={vi.fn()}
+            involvement="mentions"
+            askForRoom={() => vi.fn()}
+            onSessionChanged={vi.fn()}
+            onFailed={vi.fn()}
+          />
+        </Sheet>
+      </PushContext>,
+      { wrapper: HuddlesOn },
+    );
+  const following = (a: Element, b: Element) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+
+  it("has no huddle button until huddles are on, and Search stays on the narrowest phones", () => {
+    renderHeader();
+    expect(screen.queryByRole("button", { name: "Start huddle" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search messages" })).not.toHaveClass("max-[429px]:hidden");
+  });
+
+  it("starts its actions with the huddle button once they are, and gives up Search for it under 430px wide", () => {
+    renderWithHuddles(general, "general");
+    const search = screen.getByRole("link", { name: "Search messages" });
+    expect(following(screen.getByRole("button", { name: "Start huddle" }), search)).toBeTruthy();
+    expect(following(screen.getByRole("button", { name: "Huddle options" }), search)).toBeTruthy();
+    expect(search).toHaveClass("max-[429px]:hidden");
+  });
+
+  it("has none in a DM, which keeps Search", () => {
+    renderWithHuddles(adaDirect, "Ada");
+    expect(screen.queryByRole("button", { name: "Start huddle" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search messages" })).not.toHaveClass("max-[429px]:hidden");
   });
 });

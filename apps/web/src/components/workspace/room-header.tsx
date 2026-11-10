@@ -3,6 +3,7 @@ import type { Favorites, Involvement, Me, Room, User } from "@ember/protocol";
 import { ChatBubbleEmpty, MoreHoriz, Search } from "@/components/icons/iconoir";
 import { RoomIcon } from "@/components/icons/room-icon";
 import { PageLink } from "@/components/page-link";
+import { useAccount } from "@/hooks/use-account";
 import { useNameOf } from "@/hooks/use-directory";
 import { roomSettingsPath, SEARCHES_PATH } from "@/hooks/use-route";
 import type { RoomAnswer } from "@/lib/room-list";
@@ -10,6 +11,7 @@ import type { ConnectionStatus } from "@/lib/room-state";
 import { cn } from "@/lib/utils";
 import { AgentBadge, isWithAssistant } from "./agent-badge";
 import { FavoriteButton } from "./favorite-button";
+import { HuddleButton } from "./huddle-button";
 import { NotificationBell } from "./notification-bell";
 import { HEADER_BUTTON, PageHeader } from "./page-header";
 import { OpenSearchContext, opensSearch } from "./search-box";
@@ -39,15 +41,16 @@ interface Props {
 }
 
 /**
- * The room header: the room's name, its star, who's here, Search, which opens the search box in the
- * room, the bell, which turns notifications on until they're on and is then your notification level's,
- * and its settings. A DM's has a chat bubble in place of the room's icon, and no star, and a DM with
- * @ember alone the agent badge after its name.
+ * The room header: the room's name, its star, who's here, the huddle button once huddles are on, Search,
+ * which opens the search box in the room, the bell, which turns notifications on until they're on and
+ * is then your notification level's, and its settings. A DM's has a chat bubble in place of the room's
+ * icon, and no star or huddle button, and a DM with @ember alone the agent badge after its name.
  */
 export function RoomHeader({ room, name, present, status, offline, favorite, onStarred, involvement, askForRoom, onSessionChanged, onFailed }: Props) {
   const nameOf = useNameOf();
   const openSearch = useContext(OpenSearchContext);
   const direct = room.kind === "direct";
+  const huddles = useAccount().huddles && !direct;
   return (
     <PageHeader>
       <div className="flex min-w-0 flex-1 items-center gap-2.5 max-md:gap-[7px]">
@@ -89,7 +92,14 @@ export function RoomHeader({ room, name, present, status, offline, favorite, onS
 
       {/* The room's actions, 6px apart, and touching at 900px and below. */}
       <div className="flex shrink-0 items-center gap-1.5 max-md:gap-0">
-        <PageLink href={SEARCHES_PATH} title="Search messages" onClick={opensSearch(openSearch, { roomId: room.id })} className={HEADER_BUTTON}>
+        {huddles && <HuddleButton roomId={room.id} />}
+        {/* A phone under 430px wide has no room for both, and Search is in the drawer's rail too. */}
+        <PageLink
+          href={SEARCHES_PATH}
+          title="Search messages"
+          onClick={opensSearch(openSearch, { roomId: room.id })}
+          className={cn(HEADER_BUTTON, huddles && "max-[429px]:hidden")}
+        >
           <Search className="size-5" />
           <span className="sr-only">Search messages</span>
         </PageLink>

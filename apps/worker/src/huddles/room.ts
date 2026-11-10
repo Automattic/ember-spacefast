@@ -427,8 +427,10 @@ export class Huddle {
    * connection's session, which is started for the first of them, and sends the tab the offer to
    * answer. With nobody new, or nobody the SFU can offer yet, the tab hears that it's listening to
    * whoever it was offered. Tracks it heard of people who've left, or who publish anew, are closed
-   * first. Should the SFU refuse, the room lets go of the connection, since it can't tell what the
-   * session then carries.
+   * first. Someone can do either while the SFU makes the offer, too, and the offer then names nobody
+   * for the track it carries of them, which is of what they published before: named, the tab would
+   * take it for what they publish now, and never ask for that. Should the SFU refuse, the room lets
+   * go of the connection, since it can't tell what the session then carries.
    */
   private async listen(ws: WebSocket, fresh: boolean): Promise<void> {
     const app = await this.appOf(ws);
@@ -464,7 +466,9 @@ export class Huddle {
       // The session waits for the tab's answer to whatever it offers, even an offer of nobody.
       change(ws, (attachment) => ({ ...attachment, receiving: pulled.offer === null ? { sessionId, heard } : { sessionId, heard, offered } }));
       if (pulled.offer === null) return send(ws, { type: "huddle.listening" });
-      const tracks = offered.map(({ mid, from, kind }) => ({ mid, kind, userId: publications.get(from)!.userId }));
+      // As the others publish now, which the SFU's answer may have taken long enough to change.
+      const current = this.publications(ws);
+      const tracks = offered.filter(({ from }) => current.has(from)).map(({ mid, from, kind }) => ({ mid, kind, userId: current.get(from)!.userId }));
       send(ws, { type: "huddle.offer", sdp: pulled.offer, tracks });
     } catch (error) {
       this.letGo(ws);
@@ -514,7 +518,7 @@ export class Huddle {
       if (publishing?.connectedAt === undefined || !sessionIds.includes(publishing.sessionId) || now - publishing.connectedAt < PUBLICATION_SETTLES_MS) continue;
       const { connectedAt: _, ...unconnected } = publishing;
       this.broadcast({ type: "huddle.changed", person: personOf(change(socket, (attachment) => ({ ...attachment, publishing: unconnected }))) }, socket);
-      send(socket, { type: "error", message: HUDDLE_FAILED, failed: "huddle.publish" });
+      send(socket, { type: "huddle.unpublished" });
     }
   }
 
