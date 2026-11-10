@@ -376,6 +376,34 @@ export async function reconnect(room: string, session: Session, since: number) {
   return { ...socket, opening: await socket.next("welcome", "resumed") };
 }
 
+/** Queues every frame `ws` receives, for a test to read in its own time. */
+export function framesOf<Frame extends { type: string }>(ws: WebSocket) {
+  const frames: Frame[] = [];
+  /** Every frame received, in order, whether or not it has been read. */
+  const log: Frame[] = [];
+  const waiters: Array<() => void> = [];
+  ws.addEventListener("message", (event) => {
+    const frame = JSON.parse(event.data as string) as Frame;
+    frames.push(frame);
+    log.push(frame);
+    waiters.splice(0).forEach((wake) => wake());
+  });
+
+  /** The next unread frame of one of `types`, waiting for it if need be. */
+  async function next<T extends Frame["type"]>(...types: T[]): Promise<Extract<Frame, { type: T }>> {
+    for (;;) {
+      const index = frames.findIndex((f) => (types as string[]).includes(f.type));
+      if (index >= 0) return frames.splice(index, 1)[0] as Extract<Frame, { type: T }>;
+      await new Promise<void>((resolve) => waiters.push(resolve));
+    }
+  }
+
+  /** Unread frames of `type` that have already arrived. */
+  const pending = (type: Frame["type"]) => frames.filter((f) => f.type === type);
+
+  return { next, pending, log };
+}
+
 /** Opens a room socket in `session` and queues every frame it receives. */
 async function openSocket(room: string, session: Session, params?: RoomSocketParams | "outdated") {
   const query = params === "outdated" ? "" : params ? roomSocketQuery(params) : `?protocol=${ROOM_PROTOCOL}`;
@@ -384,35 +412,10 @@ async function openSocket(room: string, session: Session, params?: RoomSocketPar
   if (!ws) throw new Error(`No socket: ${response.status} ${await response.text()}`);
   ws.accept();
 
-  const frames: ServerFrame[] = [];
-  /** Every frame received, in order, whether or not it has been read. */
-  const log: ServerFrame[] = [];
-  const waiters: Array<() => void> = [];
-  ws.addEventListener("message", (event) => {
-    const frame = JSON.parse(event.data as string) as ServerFrame;
-    frames.push(frame);
-    log.push(frame);
-    waiters.splice(0).forEach((wake) => wake());
-  });
-
-  /** The next unread frame of one of `types`, waiting for it if need be. */
-  async function next<T extends ServerFrame["type"]>(...types: T[]): Promise<Extract<ServerFrame, { type: T }>> {
-    for (;;) {
-      const index = frames.findIndex((f) => (types as string[]).includes(f.type));
-      if (index >= 0) return frames.splice(index, 1)[0] as Extract<ServerFrame, { type: T }>;
-      await new Promise<void>((resolve) => waiters.push(resolve));
-    }
-  }
-
-  /** Unread frames of `type` that have already arrived. */
-  const pending = (type: ServerFrame["type"]) => frames.filter((f) => f.type === type);
-
   return {
     ws,
     session,
-    next,
-    pending,
-    log,
+    ...framesOf<ServerFrame>(ws),
     // Any frame, the ones the protocol refuses included. Not `Record<string, unknown>`: once ClientFrame
     // has ten members, TypeScript checks an object literal against the member its `type` names alone.
     send: (frame: ClientFrame | { type: string; [field: string]: unknown }) => ws.send(JSON.stringify(frame)),

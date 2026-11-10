@@ -12,14 +12,11 @@ import {
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
+import { APP, OTHER_APP } from "./huddle-support";
 import { api, apiWith, cookieOf, freshDeploy, shown, signIn, withWorkspaceEnv, workspaceSql, workspaceStub, type Session } from "./support";
 
 const ada = { name: "Ada Lovelace", emailAddress: "ada@example.com", password: "analytical engine" };
 
-/** A Realtime SFU app's keys, as an administrator copies them from Cloudflare's dashboard. */
-const APP = { appId: "2a95132c15732412d22c1476fa83f27a", appSecret: "66bcf64aa8907b9f9d90ac17746a77ce394c393b92b3916633dc02846e608ad4" };
-/** Another app's. */
-const OTHER_APP = { appId: "f".repeat(32), appSecret: "0123456789abcdef".repeat(4) };
 /** Where Cloudflare's Realtime SFU is asked to start a session with an app, or a stand-in for it at `sfu`. */
 const newSession = (appId: string, sfu = "https://rtc.live.cloudflare.com") => `${sfu}/v1/apps/${appId}/sessions/new`;
 

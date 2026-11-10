@@ -283,6 +283,27 @@ Objects, D1 or speed call for something else.
   decide who can see a room, so nothing comes between the read and the writes. A deleted room leaves
   the order with its row. Whether only administrators create rooms stays in the account's settings,
   as in Campfire, and the Workspace keeps it with the rest of the account it has read.
+- **A room's huddle is columns of the room.** A huddle's sockets are its room's object's, which
+  alone knows who's in it, and Campfire has nothing like one. For everyone in the room to see it, in
+  the huddle or not, the Workspace keeps who's in it, a JSON list of their ids in the order they
+  joined, and when it started, in `rooms.huddle_user_ids` and `rooms.huddle_started_at` (workspace
+  migration 0051), so the sidebar's statement reads each room's huddle with the room, and listing
+  them costs nothing more. The room tells the Workspace whenever who's in its huddle changes, one
+  call at a time, so the changes made while a call is out go together in the next, and the Workspace
+  tells everyone in the room on their workspace sockets. Each report carries the room's own time for
+  it, kept in `rooms.huddle_reported_at`, and one no later than that changes nothing: of two that
+  arrive out of order the later stands, one from before a huddle ended can't bring it back, and a
+  room that was too late is told so, and reports again after it. While a huddle goes on the room's
+  alarm rings every half a minute and says who's in it again, which is what makes up for a call that
+  failed; a report that says what's kept reads no memberships and writes nothing, unless it says
+  that no huddle is going on, when its time is kept: the Workspace may never have heard of the
+  huddle that's over, and a report of it that arrived after that would otherwise start it again,
+  with nobody left in it to say it's over. From before the Workspace hears of anyone until it has
+  heard that the huddle is over, the room's object keeps the room's id in its own storage
+  (`huddleRoom`), so the alarm can say so with nobody left in it, whatever became of the object
+  meanwhile. The tracks Cloudflare's Realtime SFU didn't close when asked wait there too
+  (`huddleUnclosed`), for the alarm to ask about again, and since the alarm then rings far more
+  often than a failed log is sent again, the room keeps when its logs are next due (`logsDue`).
 - **Rooms are named by their ids, and some have no creator.** A room's id names its Durable Object
   too, so it's a 16-character sortable string like a message's rather than an integer, and its kind
   is `open`, `closed` or `direct` rather than Rails' class name. The rooms from before the Workspace

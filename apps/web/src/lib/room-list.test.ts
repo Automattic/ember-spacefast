@@ -1,4 +1,4 @@
-import type { Favorites, Room, Sidebar, SidebarRoom, User } from "@ember/protocol";
+import type { Favorites, LiveHuddle, Room, Sidebar, SidebarRoom, User } from "@ember/protocol";
 import { describe, expect, it } from "vitest";
 import {
   apart,
@@ -26,7 +26,7 @@ const direct = (id: string, ...names: string[]): DirectSidebarRoom => ({
 });
 const unstarred: Favorites = { rooms: [], version: 0 };
 /** The sidebar's list of `rooms`, starred as `favorites` says. */
-const sidebar = (rooms: SidebarRoom[], favorites = unstarred): Sidebar => ({ rooms, favorites, sharedOrder: [], invitation: null, suggestions: [] });
+const sidebar = (rooms: SidebarRoom[], favorites = unstarred): Sidebar => ({ rooms, favorites, sharedOrder: [], invitation: null, suggestions: [], huddles: {} });
 
 describe("Create an open room", () => {
   it("puts a new room last, as the room made most recently, and the sidebar in its place by name", () => {
@@ -328,5 +328,34 @@ describe("Hide a room", () => {
   it("marks no row of a room you've hidden unread, so Activity leaves it out", () => {
     expect(markedUnread(hidden(room("r1", "Design", true)), null)).toBe(false);
     expect(markedUnread({ ...room("r1", "Design", true), involvement: "nothing" }, null)).toBe(true);
+  });
+});
+
+describe("Huddles in your rooms", () => {
+  /** A huddle with the people `userIds` names in it, started at noon. */
+  const huddle = (...userIds: string[]): LiveHuddle => ({ startedAt: NOON, userIds });
+  const list: Sidebar = { ...sidebar([room("r1", "Design"), room("r2", "general")]), huddles: { r1: huddle("ada") } };
+  const loaded = roomListReducer(NO_ROOM_LIST, { type: "loaded", list });
+
+  it("keeps who's in each room's huddle as the workspace socket says, until it says the huddle is over", () => {
+    const joined = roomListReducer(loaded, { type: "huddle", roomId: "r1", huddle: huddle("ada", "grace") });
+    expect(joined.list!.huddles).toEqual({ r1: huddle("ada", "grace") });
+    const another = roomListReducer(joined, { type: "huddle", roomId: "r2", huddle: huddle("linus") });
+    expect(another.list!.huddles).toEqual({ r1: huddle("ada", "grace"), r2: huddle("linus") });
+    expect(roomListReducer(another, { type: "huddle", roomId: "r1", huddle: null }).list!.huddles).toEqual({ r2: huddle("linus") });
+    expect(another.list!.rooms).toBe(loaded.list!.rooms);
+  });
+
+  it("forgets the huddle of a room that's gone", () => {
+    expect(roomListReducer(loaded, { type: "gone", roomId: "r1" }).list!.huddles).toEqual({});
+    expect(roomListReducer(loaded, { type: "gone", roomId: "r2" }).list!.huddles).toEqual({ r1: huddle("ada") });
+  });
+
+  it("keeps what it heard of a huddle while a list was on its way over what the list says", () => {
+    const asked = roomListReducer(loaded, { type: "asked" });
+    const over = roomListReducer(asked, { type: "huddle", roomId: "r1", huddle: null });
+    expect(roomListReducer(over, { type: "loaded", list }).list!.huddles).toEqual({});
+    const started = roomListReducer(asked, { type: "huddle", roomId: "r2", huddle: huddle("grace") });
+    expect(roomListReducer(started, { type: "loaded", list }).list!.huddles).toEqual({ r1: huddle("ada"), r2: huddle("grace") });
   });
 });

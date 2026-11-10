@@ -115,7 +115,7 @@ import type { BanProblem } from "./bans";
 import { BodyTooLarge, jsonBodyOf } from "./bodies";
 import { botPage, changeBot, createBot, deleteBot, listBots, resetBotKey, showBot } from "./bots/accounts";
 import { botAction, exception, isBotPath, withoutBotKeys } from "./bots/api";
-import { ADDRESS_HEADER, AUTHORIZED_AT_HEADER, BANNED_HEADER, ROOM_HEADER, SESSION_HEADER, USER_HEADER } from "./chat-room";
+import { ADDRESS_HEADER, AUTHORIZED_AT_HEADER, BANNED_HEADER, HUDDLE_HEADER, ROOM_HEADER, SESSION_HEADER, USER_HEADER } from "./chat-room";
 import { guestSignIn, type Env } from "./env";
 import { failed, notFound } from "./error-pages";
 import { jsonWithETag } from "./etag";
@@ -1031,7 +1031,12 @@ async function connectToWorkspace(request: Request, env: Env): Promise<Response>
   return workspace(env).fetch(new Request(request, { headers }));
 }
 
-async function connectToRoom(request: Request, env: Env, roomId: RoomId): Promise<Response> {
+/**
+ * Connects a tab to room `roomId`, or with `huddle` to the room's huddle, which has a socket of its own
+ * beside the one a tab shows the room on. Either is for the room's members. An address a ban blocks can
+ * read the room, as it can the rest of Ember, but can't join its huddle, where it would be heard.
+ */
+async function connectToRoom(request: Request, env: Env, roomId: RoomId, huddle = false): Promise<Response> {
   // As with Action Cable, the address is only there for upgrades from the app's own pages.
   if (request.headers.get("Upgrade") !== "websocket" || !isSameOriginUpgrade(request)) return problem(404, "Not found");
   const credentials = await credentialsOf(request, env);
@@ -1039,7 +1044,7 @@ async function connectToRoom(request: Request, env: Env, roomId: RoomId): Promis
   if (!access) return problem(401, "Sign in first");
   // Without waking the room's object, so a room nobody may open is never created. The app hears
   // that the room is gone for this person, deleted or theirs no longer, and stops connecting.
-  if (!access.member) return closedAtOnce(CloseCode.NotFound);
+  if (!access.member || (huddle && access.banned)) return closedAtOnce(CloseCode.NotFound);
 
   const headers = new Headers(request.headers);
   headers.set(USER_HEADER, JSON.stringify(access.user));
@@ -1047,6 +1052,8 @@ async function connectToRoom(request: Request, env: Env, roomId: RoomId): Promis
   headers.set(SESSION_HEADER, access.sessionId);
   headers.set(AUTHORIZED_AT_HEADER, String(access.authorizedAt));
   headers.set(BANNED_HEADER, String(access.banned));
+  // Set either way, so that only the address a socket asks at says which it is.
+  headers.set(HUDDLE_HEADER, String(huddle));
   // An address longer than any IP address isn't one a ban can hold, and would make too long a tag.
   const { ip } = clientOf(request);
   if (ip !== null && ip.length <= MAX_ADDRESS_LENGTH) headers.set(ADDRESS_HEADER, ip);
@@ -1167,6 +1174,8 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
     const roomId = socket[1]!;
     return () => (isRoomId(roomId) ? connectToRoom(request, env, roomId) : problem(404, ROOM_NOT_FOUND));
   }
+  const huddle = pathname.match(/^\/api\/rooms\/([^/]+)\/huddle$/);
+  if (huddle) return () => (isRoomId(huddle[1]!) ? connectToRoom(request, env, huddle[1]!, true) : problem(404, ROOM_NOT_FOUND));
   const settings = pathname.match(/^\/api\/rooms\/([^/]+)\/settings$/);
   if (settings && request.method === "GET") return () => (isRoomId(settings[1]!) ? roomSettings(request, env, settings[1]!) : problem(404, ROOM_NOT_FOUND));
   const favorite = pathname.match(/^\/api\/rooms\/([^/]+)\/favorite$/);
