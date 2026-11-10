@@ -192,7 +192,7 @@ describe("DM order", () => {
     const message = await post(await connect(room.id, ada, { visible: true }), "Hello, Grace");
     const active = { type: "room.active", roomId: room.id, at: message.createdAt };
     expect(await heard(adasTab, room.id)).toEqual([active]);
-    expect(await heard(gracesTab, room.id)).toEqual([{ type: "room.unread", roomId: room.id }, active]);
+    expect(await heard(gracesTab, room.id)).toEqual([{ type: "room.unread", roomId: room.id, at: expect.any(String) }, active]);
     expect(await heard(linussTab, room.id)).toEqual([]);
     for (const member of [ada, grace]) expect((await directsOf(member)).map((listed) => listed.activeAt)).toEqual([message.createdAt]);
   });
@@ -208,7 +208,7 @@ describe("DM order", () => {
 
     await apply(first, second);
     expect(await heard(tab)).toEqual([
-      { type: "room.unread", roomId: room.id },
+      { type: "room.unread", roomId: room.id, at: expect.any(String) },
       { type: "room.active", roomId: room.id, at: second.at },
     ]);
     // Sent again, as after a call whose answer was lost, they move nothing, and a read moves nothing either.
@@ -231,7 +231,7 @@ describe("DM order", () => {
     await apply(together, { seq: 1, kind: "message", userId: ada.user.id, at: ahead }, { seq: 2, kind: "message", userId: linus.user.id, at: behind });
     expect(await lastMessageAt(together.id)).toBe(ahead);
     expect(await heard(tab)).toEqual([
-      { type: "room.unread", roomId: together.id },
+      { type: "room.unread", roomId: together.id, at: expect.any(String) },
       { type: "room.active", roomId: together.id, at: ahead },
     ]);
   });

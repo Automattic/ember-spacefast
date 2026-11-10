@@ -17,6 +17,33 @@ test.describe("Who's here", () => {
   });
 });
 
+test.describe("New line", () => {
+  test("draws New over the first message that came while a room was unread, and none on the next visit", async ({ members, rooms }) => {
+    const ada = await members.signIn("Ada");
+    await ada.send("Before you left");
+    const grace = await members.signIn("Grace", { path: `/rooms/${rooms.random.id}` });
+    const rows = grace.page.getByRole("region", { name: "Rooms" });
+    const general = rows.getByRole("link", { name: "general" });
+
+    await ada.send("While you were away");
+    await ada.send("And another");
+    await expect(general).toHaveAccessibleDescription(/^Unread/);
+    await general.click();
+    const newLine = grace.page.getByRole("separator", { name: "New messages" });
+    await expect(newLine).toBeVisible();
+    await expect(grace.page.locator("[data-message-id]").filter({ has: newLine })).toContainText("While you were away");
+
+    // It stays while the room is open, and is gone once it's read and opened again.
+    await ada.send("Still here");
+    await expect(grace.message("Still here")).toBeVisible();
+    await expect(newLine).toHaveCount(1);
+    await rows.getByRole("link", { name: "random" }).click();
+    await general.click();
+    await expect(grace.message("Still here")).toBeVisible();
+    await expect(newLine).toHaveCount(0);
+  });
+});
+
 test.describe("Presence", () => {
   test("counts someone with two tabs open once", async ({ members, rooms }) => {
     const ada = await members.signIn("Ada");
