@@ -3,7 +3,7 @@ import { TRYING_BETAS, UPDATING_EMBER, type CopyOnGitHub, type ReleaseCheck } fr
 import BETA_WORKFLOW from "../../../../worker/scripts/update-ember-beta.yml?raw";
 // Ember's Update Ember workflow, as the deploy offers it to a copy without one (apps/worker/scripts/deploy.ts).
 import UPDATE_WORKFLOW from "../../../../worker/scripts/update-ember.yml?raw";
-import { betaToTryOf, updateOf } from "@/lib/release-check";
+import { betaToTryOf, updateOf, type NamedRelease } from "@/lib/release-check";
 import { BUTTON } from "./email-settings";
 
 // The Ember version card at the end of General, for administrators: the release this Ember is, and once
@@ -15,8 +15,9 @@ import { BUTTON } from "./email-settings";
 // owner asked (2026-11-05), or to adding it. A beta says it's one, ahead of the newest release, until its
 // release is out, and is told of the beta after it as of an update (docs/self-hosting.md#betas). A release
 // with nothing newer to update to is offered the newest beta to try, while one is out ahead of it, which it
-// takes only when asked: the card links to running the copy's beta workflow, Update Ember to its newest
-// beta, or to adding it, as the project's owner chose (2026-11-10), and the rail's Admin has no dot for it.
+// takes only when asked: a box of its own under the card links to running the copy's beta workflow, Update
+// Ember to its newest beta, or to adding it, as the project's owner chose (2026-11-10), and the rail's Admin
+// has no dot for it. The box is a little red, as he asked the same day, so the beta reads as experimental.
 
 const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 
@@ -87,44 +88,51 @@ export function EmberVersion({ check }: { check: ReleaseCheck | null }) {
   const newer = updateOf(check);
   const update = updating(copy);
   const beta = betaToTryOf(check);
+  return (
+    <>
+      <section aria-labelledby="ember-version-heading" className="flex flex-col gap-3 rounded-[10px] border bg-surface px-[2ch] py-4 text-start max-md:px-3">
+        <div>
+          <h2 id="ember-version-heading" className="text-base font-semibold">
+            {newer ? `Ember ${newer.release} is available` : `Ember ${release}`}
+          </h2>
+          <p className={NOTE}>{noteOf(check)}</p>
+        </div>
+        {newer && (
+          <>
+            <p className={NOTE}>{update.says}</p>
+            <div className="flex flex-wrap gap-[1ch]">
+              <a href={newer.notes} target="_blank" rel="noopener" className={BUTTON}>
+                What's new
+              </a>
+              <a href={update.href} target="_blank" rel="noopener" className={BUTTON}>
+                {update.link}
+              </a>
+            </div>
+          </>
+        )}
+      </section>
+      {beta && <BetaToTry beta={beta} copy={copy} />}
+    </>
+  );
+}
+
+/** The box under the card that offers `beta` to try, a little red, as a beta is experimental, with how `copy` tries it. */
+function BetaToTry({ beta, copy }: { beta: NamedRelease; copy: CopyOnGitHub | null }) {
   const tryBeta = trying(copy);
   return (
-    <section aria-labelledby="ember-version-heading" className="flex flex-col gap-3 rounded-[10px] border bg-surface px-[2ch] py-4 text-start max-md:px-3">
+    <section aria-labelledby="ember-beta-heading" className="flex flex-col gap-3 rounded-[10px] border border-beta-border bg-beta-background px-[2ch] py-4 text-start max-md:px-3">
       <div>
-        <h2 id="ember-version-heading" className="text-base font-semibold">
-          {newer ? `Ember ${newer.release} is available` : `Ember ${release}`}
-        </h2>
-        <p className={NOTE}>{noteOf(check)}</p>
+        <h2 id="ember-beta-heading" className="text-base font-semibold">{`Ember ${beta.release} is out to try`}</h2>
+        <p className={NOTE}>{tryBeta.says}</p>
       </div>
-      {newer && (
-        <>
-          <p className={NOTE}>{update.says}</p>
-          <div className="flex flex-wrap gap-[1ch]">
-            <a href={newer.notes} target="_blank" rel="noopener" className={BUTTON}>
-              What's new
-            </a>
-            <a href={update.href} target="_blank" rel="noopener" className={BUTTON}>
-              {update.link}
-            </a>
-          </div>
-        </>
-      )}
-      {beta && (
-        <>
-          <div>
-            <h3 className="font-semibold">{`Ember ${beta.release} is out to try`}</h3>
-            <p className={NOTE}>{tryBeta.says}</p>
-          </div>
-          <div className="flex flex-wrap gap-[1ch]">
-            <a href={beta.notes} target="_blank" rel="noopener" className={BUTTON}>
-              What's in it
-            </a>
-            <a href={tryBeta.href} target="_blank" rel="noopener" className={BUTTON}>
-              {tryBeta.link}
-            </a>
-          </div>
-        </>
-      )}
+      <div className="flex flex-wrap gap-[1ch]">
+        <a href={beta.notes} target="_blank" rel="noopener" className={BUTTON}>
+          What's in it
+        </a>
+        <a href={tryBeta.href} target="_blank" rel="noopener" className={BUTTON}>
+          {tryBeta.link}
+        </a>
+      </div>
     </section>
   );
 }

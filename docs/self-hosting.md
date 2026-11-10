@@ -179,9 +179,10 @@ Before a release with big changes, Ember may publish betas of it, such as `v0.5.
 pre-releases, for trying what's coming. Nobody gets one without asking: Update Ember brings a copy
 releases alone, and a copy whose update script predates betas, as Ember 0.4.2's and earlier do,
 doesn't see them at all. While a beta is out ahead of the newest release, General offers it to an
-Ember on the newest release, as **Ember 0.6 beta 1 is out to try**, with its notes and how to try it,
-but Admin on the rail has no dot for it. To know, the Worker asks GitHub for Ember's tags as
-`git ls-remote` does, with its check for the latest release, telling it nothing but the version it is.
+Ember on the newest release, in a reddish box of its own under the Ember card, since a beta is
+experimental: **Ember 0.6 beta 1 is out to try**, with its notes and how to try it. Admin on the rail
+has no dot for it. To know, the Worker asks GitHub for Ember's tags as `git ls-remote` does, with its
+check for the latest release, telling it nothing but the version it is.
 
 To try a beta:
 

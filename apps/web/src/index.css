@@ -54,6 +54,12 @@
   --auth-error: #b91c1c;
   --auth-error-background: color-mix(in srgb, var(--negative) 8%, var(--background));
   --auth-error-border: color-mix(in srgb, var(--negative) 25%, var(--border));
+  /*
+   * The box General offers a beta to try in, a little red, since a beta is experimental: the negative red at
+   * 6% over the surface, bordered by it at 30% over the border, mixed in whichever mode is on.
+   */
+  --beta-background: color-mix(in srgb, var(--negative) 6%, var(--surface));
+  --beta-border: color-mix(in srgb, var(--negative) 30%, var(--border));
   /* A bot card's `warning` bar: Slack's own amber, since Campfire's --lch-orange is too near the negative red to tell apart. */
   --warning: #daa038;
   /* Campfire's lightbox.css: the image viewer lays --lch-white at 66% over the blurred page. */
@@ -386,6 +392,8 @@
   --color-auth-error: var(--auth-error);
   --color-auth-error-background: var(--auth-error-background);
   --color-auth-error-border: var(--auth-error-border);
+  --color-beta-background: var(--beta-background);
+  --color-beta-border: var(--beta-border);
   --color-warning: var(--warning);
   --color-lightbox: var(--lightbox);
   --color-dialog-backdrop: var(--dialog-backdrop);

@@ -452,7 +452,9 @@ describe("Community settings page", () => {
 describe("Version", () => {
   /** Ember 0.2's page on GitHub, with its notes. */
   const NOTES = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0";
-  const card = () => screen.findByRole("region", { name: /^Ember \d/ });
+  const card = () => screen.findByRole("region", { name: /^Ember \d(?!.* is out to try$)/ });
+  /** The box under it that offers a beta to try, apart from it. */
+  const betaBox = () => screen.queryByRole("region", { name: / is out to try$/ });
   /** What the Worker says of a copy on GitHub, as its deploy told it, while Ember 0.2 is out, if `copy` is given. */
   const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, newestBeta: null, copy });
   /** The card's links, by name, which each open in a new tab. */
@@ -550,25 +552,36 @@ describe("Version", () => {
       newestBeta: { release: "0.3 beta 1", notes: BETA_NOTES, newer: true },
       copy,
     });
-    const betaHeading = (shown: HTMLElement) => within(shown).queryByRole("heading", { level: 3 });
+    /** The box that offers the beta, which is there. */
+    const shownBetaBox = () => {
+      const box = betaBox();
+      expect(box).toBeInTheDocument();
+      return box!;
+    };
 
-    it("offers the newest release the beta out ahead of it to try, linking a copy with the beta workflow to running it", async () => {
+    it("offers the newest release the beta out ahead of it to try, in a red box of its own under the card, linking a copy with the beta workflow to running it", async () => {
       release = betaOutFor({ repository: "someone/my-ember", branch: "main", workflow: true, betaWorkflow: true });
       showPage();
       const shown = await card();
-      expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent(/^Ember 0\.2$/);
-      expect(shown).toHaveTextContent("This is the newest release.");
-      expect(betaHeading(shown)).toHaveTextContent("Ember 0.3 beta 1 is out to try");
-      expect(shown).toHaveTextContent(HOW_THIS_COPY_TRIES_BETAS);
-      expect(linksIn(shown)).toEqual({ "What's in it": BETA_NOTES, "Open GitHub action to try it": "https://github.com/someone/my-ember/actions/workflows/update-ember-beta.yml" });
+      expect(shown).toHaveTextContent(/^Ember 0\.2This is the newest release\.$/);
+      expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
+      const box = shownBetaBox();
+      expect(shown.nextElementSibling).toBe(box);
+      expect(screen.getByRole("region", { name: "Basic community settings" }).lastElementChild).toBe(box);
+      // A little red, as a beta is experimental.
+      expect(box).toHaveClass("border-beta-border", "bg-beta-background");
+      expect(within(box).getByRole("heading", { level: 2 })).toHaveTextContent(/^Ember 0\.3 beta 1 is out to try$/);
+      expect(box).toHaveTextContent(HOW_THIS_COPY_TRIES_BETAS);
+      expect(linksIn(box)).toEqual({ "What's in it": BETA_NOTES, "Open GitHub action to try it": "https://github.com/someone/my-ember/actions/workflows/update-ember-beta.yml" });
     });
 
     it("links a copy without the beta workflow to GitHub's editor, on the branch that deploys, with Ember's filled in to commit", async () => {
       release = betaOutFor({ repository: "someone/my-ember", branch: "release/v1#stable", workflow: true, betaWorkflow: false });
       showPage();
-      const shown = await card();
-      expect(shown).toHaveTextContent(HOW_TO_ADD_THE_BETA_WORKFLOW);
-      const { "Add GitHub action to try betas": add, ...others } = linksIn(shown);
+      await card();
+      const box = shownBetaBox();
+      expect(box).toHaveTextContent(HOW_TO_ADD_THE_BETA_WORKFLOW);
+      const { "Add GitHub action to try betas": add, ...others } = linksIn(box);
       expect(others).toEqual({ "What's in it": BETA_NOTES });
       const editor = new URL(add!);
       expect(`${editor.origin}${editor.pathname}`).toBe("https://github.com/someone/my-ember/new/release/v1%23stable");
@@ -581,9 +594,10 @@ describe("Version", () => {
     it("tells a copy the Worker doesn't know how to try a beta, from the docs", async () => {
       release = betaOutFor();
       showPage();
-      const shown = await card();
-      expect(shown).toHaveTextContent(HOW_COPIES_TRY_BETAS);
-      expect(linksIn(shown)).toEqual({ "What's in it": BETA_NOTES, "How to try a beta": TRYING_BETAS });
+      await card();
+      const box = shownBetaBox();
+      expect(box).toHaveTextContent(HOW_COPIES_TRY_BETAS);
+      expect(linksIn(box)).toEqual({ "What's in it": BETA_NOTES, "How to try a beta": TRYING_BETAS });
     });
 
     it("offers no beta while a newer release is out to update to, or the beta isn't newer", async () => {
@@ -591,7 +605,7 @@ describe("Version", () => {
       showPage();
       let shown = await card();
       expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent("Ember 0.2 is available");
-      expect(betaHeading(shown)).not.toBeInTheDocument();
+      expect(betaBox()).not.toBeInTheDocument();
       expect(Object.keys(linksIn(shown))).toEqual(["What's new", "Open GitHub action to update"]);
       cleanup();
 
@@ -600,6 +614,7 @@ describe("Version", () => {
       shown = await card();
       expect(shown).toHaveTextContent(/^Ember 0\.3 beta 1This is a beta, ahead of Ember 0\.2, the newest release\.$/);
       expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
+      expect(betaBox()).not.toBeInTheDocument();
     });
 
     it("tells a beta of the beta after it as of an update, which Update Ember brings", async () => {
@@ -610,7 +625,7 @@ describe("Version", () => {
       expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent("Ember 0.3 beta 2 is available");
       expect(shown).toHaveTextContent("This is Ember 0.3 beta 1.");
       expect(shown).toHaveTextContent(HOW_THIS_COPY_UPDATES);
-      expect(betaHeading(shown)).not.toBeInTheDocument();
+      expect(betaBox()).not.toBeInTheDocument();
       expect(linksIn(shown)).toEqual({ "What's new": nextNotes, "Open GitHub action to update": "https://github.com/someone/my-ember/actions/workflows/update-ember.yml" });
     });
   });
