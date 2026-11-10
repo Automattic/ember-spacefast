@@ -412,7 +412,7 @@ describe("Ember's newest beta", () => {
     ]);
   });
 
-  it("keeps the beta it heard when a later ask lists no tags, and hears a newer one while it keeps the release", async () => {
+  it("keeps the beta it heard when a later ask lists no tags, however long ago it heard it, and hears a newer one while it keeps the release", async () => {
     const administrator = await setUp();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let release = () => redirectTo(pageOf(NEXT));
@@ -438,6 +438,14 @@ describe("Ember's newest beta", () => {
     expect(check.newest).toEqual(namedAs(NEXT, true));
     expect(check.newestBeta).toEqual(namedAs(betaAfter(2), true));
     expect(askedForTags).toHaveLength(3);
+
+    // Once the release heard a minute in is no longer kept, GitHub names it again but doesn't list the tags,
+    // and the beta heard last stays.
+    release = () => redirectTo(pageOf(NEXT));
+    tags = () => new Response("Unavailable", { status: 503 });
+    vi.setSystemTime(start + AFRESH_AFTER_MS + ANSWER_KEPT_MS);
+    expect(await releaseCheckFor(administrator)).toMatchObject({ newest: namedAs(NEXT, true), newestBeta: namedAs(betaAfter(2), true) });
+    expect(askedForTags).toHaveLength(4);
   });
 });
 

@@ -52,7 +52,7 @@ interface Release {
 
 /**
  * The newest release GitHub last named, or null when it named none, and until when that's kept, with the
- * newest beta its tags named, or null when they named none, or GitHub didn't say.
+ * newest beta Ember's tags last named, kept through a listing that fails, or null while they've named none.
  */
 let heard: { release: Release | null; beta: Release | null; until: number } | undefined;
 /** When this isolate last asked GitHub, or 0 before it has. */
@@ -83,7 +83,8 @@ export async function releaseCheck(env: Env, afresh = false): Promise<ReleaseChe
     ]);
     const kept = heard && Date.now() < heard.until ? heard : undefined;
     if (kept?.release && !release) heard = beta === undefined ? kept : { ...kept, beta };
-    else heard = { release, beta: beta === undefined ? (kept?.beta ?? null) : beta, until: Date.now() + (release ? ANSWER_KEPT_MS : NO_ANSWER_KEPT_MS) };
+    // A beta stays a beta once tagged, so the one heard last stands, however long ago, while the tags don't say.
+    else heard = { release, beta: beta === undefined ? (heard?.beta ?? null) : beta, until: Date.now() + (release ? ANSWER_KEPT_MS : NO_ANSWER_KEPT_MS) };
   }
   const { release: newest, beta } = heard;
   return {
