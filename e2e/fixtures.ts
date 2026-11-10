@@ -1,5 +1,5 @@
 import { test as base, expect, type APIRequestContext, type APIResponse, type Browser, type BrowserContext, type Locator, type Page, type WebSocketRoute } from "@playwright/test";
-import { roomSocketQuery, type Bootstrap, type ClientFrame, type Invitation, type Message, type ServerFrame, type Sidebar, type User, type WorkspaceServerFrame, type WorkspaceSettings } from "@ember/protocol";
+import { roomSocketQuery, type Account, type Bootstrap, type ClientFrame, type Invitation, type LiveHuddle, type Message, type ServerFrame, type Sidebar, type User, type WorkspaceServerFrame, type WorkspaceSettings } from "@ember/protocol";
 import { bodyFromPlainText } from "@ember/richtext";
 
 // Helpers every browser suite can share. They drive the real Worker and ChatRoom Durable Object
@@ -233,14 +233,41 @@ export async function keepOtherRoomsOut(target: Page | BrowserContext, roomIds: 
 /**
  * Makes `room` the only room in this page's sidebar, with nobody suggested for DMs, so the test starts
  * in an empty room of its own instead of among every other test's open rooms and oldest people. Given a `joinCode`, it's the room with the
- * welcome card too, inviting people with that code.
+ * welcome card too, inviting people with that code, and given a `huddle`, that's going on in it.
  */
-export async function isolateRoom(page: Page, room: TestRoom, { joinCode }: { joinCode?: string } = {}): Promise<void> {
+export async function isolateRoom(page: Page, room: TestRoom, { joinCode, huddle }: { joinCode?: string; huddle?: LiveHuddle } = {}): Promise<void> {
   const invitation = joinCode === undefined ? null : { roomId: room.id, joinCode };
+  const huddles = huddle ? { [room.id]: huddle } : {};
   await page.route("**/api/sidebar", (route) =>
-    route.fulfill({ json: { rooms: [{ ...room, kind: "open", icon: null, unread: false, involvement: "mentions" }], favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation, suggestions: [], huddles: {} } satisfies Sidebar }),
+    route.fulfill({ json: { rooms: [{ ...room, kind: "open", icon: null, unread: false, involvement: "mentions" }], favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation, suggestions: [], huddles } satisfies Sidebar }),
   );
   await keepOtherRoomsOut(page, [room.id]);
+}
+
+/** Which of the workspace socket's frames reach the page. */
+export type Passes = (frame: WorkspaceServerFrame) => boolean;
+
+/**
+ * Shows `page` the workspace as `change` makes it wherever the server says what it is, its socket's
+ * welcome included, without changing the test server's, which every other test shows. Its socket takes
+ * over from any the page routed before, such as `isolateRoom`'s, so it passes on just what `passes` does.
+ */
+export async function changeTheWorkspace(page: Page, change: (account: Account) => Account, passes: Passes = () => true): Promise<void> {
+  const changed = <T extends { account: Account }>(body: T): T => ({ ...body, account: change(body.account) });
+  for (const path of ["**/api/bootstrap", "**/api/account"]) {
+    await page.route(path, async (route) => {
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      await route.fulfill({ response, json: changed(await response.json()) });
+    });
+  }
+  await page.routeWebSocket(WORKSPACE_SOCKET, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (passes(frame)) ws.send(JSON.stringify("account" in frame ? changed(frame) : frame));
+    });
+  });
 }
 
 /**

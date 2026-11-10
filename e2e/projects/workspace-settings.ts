@@ -40,7 +40,15 @@ const ON_SETTINGS_SERVER: Project<PlaywrightTestOptions, PlaywrightWorkerOptions
   // `wrangler dev` serves HTTPS with a certificate of its own making. Chromium's own flag accepts
   // it during the handshake, rather than refusing it first, which the server would log as an error.
   ignoreHTTPSErrors: true,
-  launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, args: ["--ignore-certificate-errors"] },
+  launchOptions: {
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
+    args: [
+      "--ignore-certificate-errors",
+      // For the huddles spec: a microphone that beeps, which a page may use without asking anyone.
+      "--use-fake-device-for-media-stream",
+      "--use-fake-ui-for-media-stream",
+    ],
+  },
 };
 
 export const workspaceSettingsProjects: Project<PlaywrightTestOptions, PlaywrightWorkerOptions>[] = [

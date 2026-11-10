@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
-import type { Account, BotAnswer, Bots, BotSettings, WorkspaceServerFrame } from "@ember/protocol";
-import { fakeTurnstile, isolateRoom, listing, openRoom, signInAs, signInAsAdministrator, TURNSTILE_WIDGET, useOwnAddress, WORKSPACE_SOCKET } from "../../fixtures";
+import type { BotAnswer, Bots, BotSettings } from "@ember/protocol";
+import { changeTheWorkspace, fakeTurnstile, isolateRoom, listing, openRoom, signInAs, signInAsAdministrator, TURNSTILE_WIDGET, useOwnAddress, type Passes } from "../../fixtures";
 import { auditScreen, settle } from "./audits";
 import { expect, hasDrawerLayout, SWITCHES, test } from "./fixtures";
 
@@ -8,32 +8,6 @@ import { expect, hasDrawerLayout, SWITCHES, test } from "./fixtures";
 const LONG_NAME = "The-Analytical-Engine-Appreciation-Society-of-Greater-Marylebone-and-the-Surrounding-Districts";
 /** A tagline as long as the server takes, in everyday words. */
 const LONGEST_TAGLINE = "Engines and tea for every soul";
-
-/** Which of the workspace socket's frames reach the page. */
-type Passes = (frame: WorkspaceServerFrame) => boolean;
-
-/**
- * Shows `page` the workspace as `change` makes it wherever the server says what it is, its socket's
- * welcome included, without changing the test server's, which every other test shows. Its socket takes
- * over from any the page routed before, such as `isolateRoom`'s, so it passes on just what `passes` does.
- */
-async function changeTheWorkspace(page: Page, change: (account: Account) => Account, passes: Passes = () => true): Promise<void> {
-  const changed = <T extends { account: Account }>(body: T): T => ({ ...body, account: change(body.account) });
-  for (const path of ["**/api/bootstrap", "**/api/account"]) {
-    await page.route(path, async (route) => {
-      const response = await route.fetch();
-      if (!response.ok()) return route.fulfill({ response });
-      await route.fulfill({ response, json: changed(await response.json()) });
-    });
-  }
-  await page.routeWebSocket(WORKSPACE_SOCKET, (ws) => {
-    const server = ws.connectToServer();
-    server.onMessage((message) => {
-      const frame = JSON.parse(String(message));
-      if (passes(frame)) ws.send(JSON.stringify("account" in frame ? changed(frame) : frame));
-    });
-  });
-}
 
 const nameTheWorkspaceLong = (page: Page) => changeTheWorkspace(page, (account) => ({ ...account, name: LONG_NAME }));
 const showTranslationButtons = (page: Page, passes?: Passes) => changeTheWorkspace(page, (account) => ({ ...account, hideTranslationButtons: false }), passes);
