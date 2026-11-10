@@ -108,18 +108,29 @@ within a week ([Updating](self-hosting.md#updating)), as General settings tells 
 going by GitHub's latest release. Copies move from release to release, never to `main` between them,
 and may skip any number of releases or go back one, so:
 
-- A released migration never changes, since copies that update have applied it already: CI fails a
-  pull request that changes one. A schema change goes in a new migration.
+- A released migration never changes, a beta's included, since copies that update have applied it
+  already: CI fails a pull request that changes one. A schema change goes in a new migration.
 - A migration adds to the tables rather than takes away, so the release before still runs on what it
   leaves: drop a column or table a release after the code stops using it.
-- `.github/workflows/update-ember.yml` stays as it is, since an update can't change a copy's
-  workflows: change `apps/worker/scripts/update-ember.ts`, which updates bring, instead. Its copy
+- `.github/workflows/update-ember.yml` stays thin, since an update can't change a copy's
+  workflows: change `apps/worker/scripts/update-ember.ts`, which updates bring, instead, and add to
+  the workflow only what a copy with the one before can do without, as the box for a beta is. Its copy
   beside that script, which the deploy and General's release card offer copies without the
   workflow, as Deploy to Cloudflare's are, is the same file, as CI checks. The tests read that
   copy, never `.github`, since a copy's `.github` keeps its own workflow, or none, and a copy's
   owner may run them.
 - Ember's other workflows run only in its own repository, and `pnpm run deploy` stays the deploy
   command, which every copy's Workers Builds runs.
+
+A beta of the next release, for trying it before it's out, is a pull request that sets the version
+to that release's with `-beta.1`, such as `0.5.0-beta.1`, then `-beta.2` and so on. The Release
+workflow publishes it as a pre-release, "Ember 0.5.0 beta 1", whose notes start with a Deploy to
+Cloudflare button for it and list what's changed since the release or beta before, and no copy is
+offered it unless it asks for one, or runs an earlier beta ([Betas](self-hosting.md#betas)). The
+tests that name the release expect it named "0.5 beta 1". The release itself then sets `0.5.0`, and
+its notes list what's changed since the release before, as the copies it's offered come from there.
+Ember's version is a release's or a beta's, which the Release workflow checks, since copies tell
+them apart by their tags and know no other kind.
 
 ## Performance
 

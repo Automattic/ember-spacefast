@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({ checkForRelease: vi.fn(), checkForReleaseAfresh: v
 /** What the Worker says of releases while `newest` is GitHub's newest, after this Ember's 0.1. */
 const newestIs = (newest: string): ReleaseCheck => ({
   release: "0.1",
+  beta: false,
   newest: { release: newest, notes: `https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v${newest}.0`, newer: true },
   copy: null,
 });

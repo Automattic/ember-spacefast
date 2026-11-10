@@ -120,6 +120,12 @@ function releaseNext(repo: string): void {
   git(repo, ["tag", "v0.3.0"]);
 }
 
+/** A beta of Ember's next release, v0.3.0-beta.1 on the 15th and so on, which changes the line on the way to it. */
+function releaseBeta(repo: string, number = 1): void {
+  commit(repo, `2026-10-${14 + number}T12:00:00Z`, { "src/app.ts": app(`beta ${number}`), "apps/worker/package.json": `{ "version": "0.3.0-beta.${number}" }\n` });
+  git(repo, ["tag", `v0.3.0-beta.${number}`]);
+}
+
 /**
  * A copy as Deploy to Cloudflare makes one: a new repository whose one commit, on October 6th, holds
  * Ember's main of the 5th, with the Worker and bucket named as the deployer named them; or, on `date`,
@@ -397,6 +403,80 @@ describe("updating a clone of Ember's repository", () => {
   });
 });
 
+describe("Ember's betas", () => {
+  it("offers a copy on a release none of Ember's betas, however new", () => {
+    const repo = ember();
+    releaseBeta(repo);
+    const copy = deployedCopy(repo);
+    const { status, output } = update(copy, repo);
+    expect(status, output).toBe(0);
+    expect(output).toContain("update-ember/v0.2.0 brings this copy up to Ember v0.2.0");
+    git(copy, ["merge", "--quiet", "--ff-only", "update-ember/v0.2.0"]);
+    expect(update(copy, repo).output).toContain("This copy has everything in Ember's newest release, v0.2.0.");
+  });
+
+  it("brings Ember's newest beta to a copy that asks for one, as the workflow's box does", () => {
+    const repo = ember();
+    releaseBeta(repo);
+    for (const asked of [{ args: ["--beta"] }, { args: [], env: { EMBER_BETA: "true" } }]) {
+      const copy = deployedCopy(repo);
+      const { status, output } = update(copy, repo, asked.args, asked.env);
+      expect(status, output).toBe(0);
+      expect(output).toContain("update-ember/v0.3.0-beta.1 brings this copy up to Ember v0.3.0-beta.1 from Ember's commit");
+      expect(show(copy, "update-ember/v0.3.0-beta.1", "src/app.ts")).toBe(app("beta 1").trim());
+      rmSync(copy, { recursive: true, force: true });
+    }
+  });
+
+  it("brings a copy that runs a beta the betas after it, then the release, and releases alone from then on", () => {
+    const repo = ember();
+    releaseBeta(repo);
+    const copy = deployedCopy(repo);
+    update(copy, repo, ["--beta"]);
+    git(copy, ["merge", "--quiet", "--ff-only", "update-ember/v0.3.0-beta.1"]);
+    releaseBeta(repo, 2);
+    let { status, output } = update(copy, repo);
+    expect(status, output).toBe(0);
+    expect(output).toContain("update-ember/v0.3.0-beta.2 brings this copy up to Ember v0.3.0-beta.2 from v0.3.0-beta.1.");
+    git(copy, ["merge", "--quiet", "--ff-only", "update-ember/v0.3.0-beta.2"]);
+    releaseNext(repo);
+    ({ status, output } = update(copy, repo));
+    expect(status, output).toBe(0);
+    expect(output).toContain("update-ember/v0.3.0 brings this copy up to Ember v0.3.0 from v0.3.0-beta.2.");
+    expect(show(copy, "update-ember/v0.3.0", "src/app.ts")).toBe(app("2").trim());
+    git(copy, ["merge", "--quiet", "--ff-only", "update-ember/v0.3.0"]);
+    commit(repo, "2026-10-25T12:00:00Z", { "src/app.ts": app("next"), "apps/worker/package.json": '{ "version": "0.4.0-beta.1" }\n' });
+    git(repo, ["tag", "v0.4.0-beta.1"]);
+    ({ status, output } = update(copy, repo));
+    expect(status, output).toBe(0);
+    expect(output).toContain("This copy has everything in Ember's newest release, v0.3.0.");
+  });
+
+  it("measures a copy Deploy to Cloudflare made of a beta's tag from the tag, though Ember's main had moved on", () => {
+    const repo = ember();
+    releaseBeta(repo);
+    commit(repo, "2026-10-17T12:00:00Z", { "src/later.ts": "export const later = 1;\n" });
+    // The button deploys the beta's tag on the 18th, so the copy has none of main's change of the 17th.
+    const copy = deployedCopy(repo, wrangler("my-chat", "my-files", "2026-10-10"), { made: "v0.3.0-beta.1", date: "2026-10-18T09:00:00Z" });
+    releaseNext(repo);
+    const { status, output } = update(copy, repo);
+    expect(status, output).toBe(0);
+    expect(output).toContain("update-ember/v0.3.0 brings this copy up to Ember v0.3.0 from v0.3.0-beta.1.");
+    // From main's commit before the copy was made, its new file would look deleted in the copy.
+    expect(show(copy, "update-ember/v0.3.0", "src/later.ts")).toBe("export const later = 1;");
+    expect(show(copy, "update-ember/v0.3.0", "wrangler.jsonc")).toBe(wrangler("my-chat", "my-files", "2026-10-10").trim());
+  });
+
+  it("waits for Ember's first release while it has betas alone, unless it's asked for one", () => {
+    const repo = ember();
+    git(repo, ["tag", "--delete", "v0.1.0", "v0.2.0"]);
+    releaseBeta(repo);
+    const copy = deployedCopy(repo);
+    expect(update(copy, repo).output).toContain("Ember has no releases yet.");
+    expect(update(copy, repo, ["--beta"]).output).toContain("update-ember/v0.3.0-beta.1 brings this copy up to Ember v0.3.0-beta.1");
+  });
+});
+
 describe("publishing an update, as the Update Ember workflow does", () => {
   /** The copy with its repository on GitHub, a bare one here, and the GitHub CLI's stand-in on its PATH. */
   function published() {
@@ -588,6 +668,40 @@ describe("publishing an update, as the Update Ember workflow does", () => {
     releaseNext(repo);
     expect(update(copy, repo, ["--publish"], env).status).toBe(0);
     expect(body("pr")).toContain(`/blob/v0.3.0/${WORKFLOW}) over \`${WORKFLOW}\``);
+  });
+
+  it("says a beta's pull request is for a beta, and lists the releases and betas it brings", () => {
+    const { repo, copy, env, calls, body } = published();
+    releaseBeta(repo);
+    expect(update(copy, repo, ["--publish"], { ...env, EMBER_BETA: "true" }).status).toBe(0);
+    expect(calls()).toContain("pr create --base main --head update-ember/v0.3.0-beta.1 --title Update Ember to v0.3.0-beta.1 --body-file -");
+    expect(body("pr")).toContain("What's new: [v0.2.0](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0), [v0.3.0-beta.1](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.3.0-beta.1), and");
+    expect(body("pr")).toContain("**This is a beta** of Ember's next release, which a copy is offered only when it asks for one or runs one already");
+  });
+
+  it("lists the releases a release brings, not the betas before it", () => {
+    const { repo, copy, env, body } = published();
+    releaseBeta(repo);
+    releaseNext(repo);
+    expect(update(copy, repo, ["--publish"], env).status).toBe(0);
+    expect(body("pr")).toContain("What's new: [v0.2.0](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0), [v0.3.0](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.3.0), and");
+    expect(body("pr")).not.toContain("beta");
+  });
+
+  it("leaves the pull request of a beta the copy asked for open until a release passes it", () => {
+    const { repo, copy, env, calls } = published();
+    update(copy, repo, ["--publish"], env);
+    git(copy, ["pull", "--quiet", "--ff-only", "origin", "update-ember/v0.2.0"]);
+    releaseBeta(repo);
+    const pulls = JSON.stringify([{ number: 9, url: "https://github.com/me/chat/pull/9", state: "OPEN", headRefName: "update-ember/v0.3.0-beta.1" }]);
+    const issues = JSON.stringify([{ number: 10, url: "https://github.com/me/chat/issues/10", state: "OPEN", title: "Update Ember to v0.3.0-beta.1" }]);
+    const held = update(copy, repo, ["--publish"], { ...env, GH_PULLS: pulls, GH_ISSUES: issues });
+    expect(held.output).toContain("This copy has everything in Ember's newest release, v0.2.0.");
+    expect(calls().filter((call) => call.includes("close"))).toEqual([]);
+    releaseNext(repo);
+    expect(update(copy, repo, ["--publish"], { ...env, GH_PULLS: pulls, GH_ISSUES: issues }).status).toBe(0);
+    const reason = "Ember v0.3.0 is out, so https://github.com/me/chat/pull/7 brings this copy up to it instead.";
+    expect(calls().filter((call) => call.includes("close"))).toEqual([`pr close 9 --delete-branch --comment ${reason}`, `issue close 10 --comment ${reason}`]);
   });
 
   it("closes what's left once the copy has the newest release", () => {

@@ -1,6 +1,6 @@
 import { EMBER_REPOSITORY, type CopyOnGitHub, type ReleaseCheck } from "@ember/protocol";
 import type { Env } from "./env";
-import { releaseNameOf, VERSION } from "./version";
+import { isBeta, releaseNameOf, VERSION } from "./version";
 
 // Whether a newer release of Ember is out, which General settings tells administrators, with how to
 // update (docs/self-hosting.md#updating). GitHub's address for a repository's latest release redirects to
@@ -10,7 +10,8 @@ import { releaseNameOf, VERSION } from "./version";
 // GitHub said for six hours, and that it didn't say for ten minutes, before asking again, but a check
 // made afresh, as opening Admin makes one, asks again sooner, as the project's owner asked (2026-11-05):
 // once a minute has passed since the isolate last asked, so that going in and out of Admin can't keep
-// asking.
+// asking. GitHub's latest release is never a pre-release, as Ember's betas are, so nobody on a release
+// is told of one; a beta is told of its release (docs/self-hosting.md#betas).
 
 /** Where GitHub sends whoever asks for Ember's latest release. */
 const LATEST_RELEASE = `${EMBER_REPOSITORY}/releases/latest`;
@@ -29,7 +30,7 @@ export const AFRESH_AFTER_MS = 60 * 1000;
 
 /** The page of a repository's latest release, which redirects to that release's, and that release's, whose path ends in its tag. */
 const LATEST_PAGE = /^\/[^/]+\/[^/]+\/releases\/latest$/;
-const RELEASE_PAGE = /^\/[^/]+\/[^/]+\/releases\/tag\/v(\d+\.\d+\.\d+)$/;
+const RELEASE_PAGE = /^\/[^/]+\/[^/]+\/releases\/tag\/v(\d+\.\d+\.\d+(?:-beta\.\d+)?)$/;
 
 /** A release of Ember: its version, such as "0.2.0", and the address of its page on GitHub, which has its notes. */
 interface Release {
@@ -69,6 +70,7 @@ export async function releaseCheck(env: Env, afresh = false): Promise<ReleaseChe
   const newest = heard.release;
   return {
     release: releaseNameOf(VERSION),
+    beta: isBeta(VERSION),
     newest: newest && { release: releaseNameOf(newest.version), notes: newest.page, newer: isNewer(newest.version, VERSION) },
     copy: copyOf(env),
   };
@@ -98,6 +100,8 @@ async function newestOnGitHub(): Promise<Release | null> {
     if (location === null) return noRelease(`GitHub answered ${answer.status}`);
     const next = new URL(location, address);
     const version = next.origin === GITHUB ? RELEASE_PAGE.exec(next.pathname)?.[1] : undefined;
+    // Never a beta, which GitHub doesn't take for the latest, but should it name one, nobody on a release hears of it.
+    if (version && isBeta(version) && !isBeta(VERSION)) return noRelease(`GitHub's latest release is a beta, ${next.href}`);
     if (version) return { version, page: next.href };
     if (next.origin !== GITHUB || !LATEST_PAGE.test(next.pathname)) return noRelease(`GitHub redirected to ${next.href}`);
     address = next.href;
@@ -111,11 +115,17 @@ function noRelease(why: string): null {
   return null;
 }
 
-/** A version's numbers, such as [0, 1, 0] for "0.1.0". */
-const numbersOf = (version: string) => (/^(\d+)\.(\d+)\.(\d+)/.exec(version) ?? []).slice(1).map(Number);
+/**
+ * A version's numbers, such as [0, 1, 0] for "0.1.0", and then its beta's, which is Infinity for a
+ * release, as it comes after its betas: [0, 5, 0, 1] for "0.5.0-beta.1", and [0, 5, 0, Infinity] for "0.5.0".
+ */
+function numbersOf(version: string): number[] {
+  const [, ...numbers] = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version) ?? [];
+  return numbers.map((number) => (number === undefined ? Infinity : Number(number)));
+}
 
 /** Whether version `a` comes after version `b`. */
-function isNewer(a: string, b: string): boolean {
+export function isNewer(a: string, b: string): boolean {
   const [later, earlier] = [numbersOf(a), numbersOf(b)];
   const differs = later.findIndex((number, at) => number !== earlier[at]);
   return differs !== -1 && later[differs]! > (earlier[differs] ?? -1);

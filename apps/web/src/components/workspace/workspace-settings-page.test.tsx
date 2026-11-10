@@ -444,7 +444,7 @@ describe("Version", () => {
   const NOTES = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0";
   const card = () => screen.findByRole("region", { name: /^Ember \d/ });
   /** What the Worker says of a copy on GitHub, as its deploy told it, while Ember 0.2 is out, if `copy` is given. */
-  const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({ release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true }, copy });
+  const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, copy });
   /** The card's links, by name, which each open in a new tab. */
   function linksIn(shown: HTMLElement): Record<string, string | null> {
     const links = within(shown).getAllByRole("link");
@@ -458,7 +458,7 @@ describe("Version", () => {
   it.each([null, { repository: "someone/my-ember", branch: "main", workflow: true }])(
     "shows administrators which release this is once the Worker has said, at the end of General (copy: %j)",
     async (copy) => {
-      release = { release: "0.1", newest: { release: "0.1", notes: NOTES, newer: false }, copy };
+      release = { release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, copy };
       showPage();
       const shown = await card();
       expect(shown).toHaveTextContent(/^Ember 0\.1This is the newest release\.$/);
@@ -502,9 +502,31 @@ describe("Version", () => {
   });
 
   it("says when GitHub didn't say whether a newer release is out", async () => {
-    release = { release: "0.1", newest: null, copy: null };
+    release = { release: "0.1", beta: false, newest: null, copy: null };
     showPage();
     expect(await card()).toHaveTextContent(/^Ember 0\.1GitHub didn't say whether a newer release is out\.$/);
+  });
+
+  it("says a beta is one, ahead of the newest release, until its release is out", async () => {
+    const releaseNotes = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.1.0";
+    release = { release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: releaseNotes, newer: false }, copy: null };
+    showPage();
+    let shown = await card();
+    expect(shown).toHaveTextContent(/^Ember 0\.2 beta 1This is a beta, ahead of Ember 0\.1, the newest release\.$/);
+    expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
+    cleanup();
+
+    release = { release: "0.2 beta 1", beta: true, newest: null, copy: null };
+    showPage();
+    expect(await card()).toHaveTextContent(/^Ember 0\.2 beta 1This is a beta\. GitHub didn't say whether its release is out\.$/);
+    cleanup();
+
+    release = { ...newerFor(), release: "0.2 beta 1", beta: true };
+    showPage();
+    shown = await card();
+    expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent("Ember 0.2 is available");
+    expect(shown).toHaveTextContent("This is Ember 0.2 beta 1.");
+    expect(linksIn(shown)).toEqual({ "What's new": NOTES, "How to update": UPDATING_EMBER });
   });
 
   it("shows nothing of it before the Worker has said, nor to members", async () => {
