@@ -400,6 +400,13 @@ describe("New line", () => {
     rerender(list({ messages: timeline.slice(3), hasMore: false }, vi.fn(), null, { newSince: "2026-10-12T10:00:00.000Z" }));
     expect(newLineOver()).toBe("First new");
   });
+
+  it("draws none when the first message loaded is the reader's own, sent since, and older ones may not be loaded yet", () => {
+    const { rerender } = render(list({ messages: timeline.slice(2), hasMore: true }, vi.fn(), null, { newSince: "2026-10-12T09:45:00.000Z" }));
+    expect(newLine()).not.toBeInTheDocument();
+    rerender(list({ messages: timeline.slice(2), hasMore: false }, vi.fn(), null, { newSince: "2026-10-12T09:45:00.000Z" }));
+    expect(newLineOver()).toBe("First new");
+  });
 });
 
 describe("Scroll back through history", () => {

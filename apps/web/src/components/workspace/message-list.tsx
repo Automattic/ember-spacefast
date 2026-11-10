@@ -166,8 +166,9 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
   const items = timeline(state.messages);
   const newestFirst = !drawnAll && !state.focus?.messageId && items.length > FIRST_DRAWN;
   const firstNew = newSince === null ? -1 : items.findIndex(({ message }) => message.createdAt >= newSince && message.creator.id !== me.id);
-  // A page that starts with a new message may have older new ones before it that aren't loaded yet.
-  const newLineAt = firstNew === -1 || (firstNew === 0 && state.hasMore) ? null : items[firstNew]!.message;
+  // A page that doesn't reach back before `newSince` may have older new messages before it that aren't loaded yet,
+  // whoever wrote its first one.
+  const newLineAt = firstNew === -1 || (state.hasMore && items[0]!.message.createdAt >= newSince!) ? null : items[firstNew]!.message;
 
   const nearEnd = (el: HTMLElement) => !state.hasNewer && el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;
 
