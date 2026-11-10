@@ -10,6 +10,7 @@ import {
   modelName,
   PAGES_READ_PER_ANSWER,
   WEB_SEARCHES_PER_ANSWER,
+  withinMost,
   type AssistantChanges,
   type AssistantModel,
   type AssistantSettings as Assistant,
@@ -182,10 +183,11 @@ type WebTest = "searching" | { found: string } | { refusal: string } | { off: st
 /** Whether Ember AI, as `assistant` has it, searches the web. */
 const searchesIn = (assistant: Assistant) => assistant.webTools?.includes("search") ?? false;
 
-/** What @ember is told around its instructions when `me` writes to it, as it answers everyone. */
+/** What @ember is told around its instructions when `me` writes to it, as it answers anyone who hasn't picked its levels, which Limits may hold lower. */
 function emberPrompt(me: Me, community: string, assistant: Assistant): Prompt {
   const web = webPromptFor(me.name, assistant.webTools ?? [], searchesIn(assistant));
-  return promptAround(ASSISTANT_ID, ASSISTANT_NAME, me.name, { community, roomName: null, inThread: false }, ANSWER_WORDS[DEFAULT_LEVELS.length], web, new Date());
+  const { length } = withinMost(DEFAULT_LEVELS, assistant.most);
+  return promptAround(ASSISTANT_ID, ASSISTANT_NAME, me.name, { community, roomName: null, inThread: false }, ANSWER_WORDS[length], web, new Date());
 }
 
 /** @ember's settings, in one card. */

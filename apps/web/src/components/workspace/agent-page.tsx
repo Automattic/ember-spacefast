@@ -372,31 +372,24 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
     return agent;
   };
 
-  /**
-   * Says why the server refused what the page sent, if the page says it itself: on the field it's about, on
-   * the avatar, or under the button. Returns whether it did.
-   */
-  const sayRefused = (error: unknown): boolean => {
-    if (!(error instanceof ApiError)) return false;
-    if (error.field === "avatar") {
-      photo.refuse(error.message);
-      return true;
-    }
-    // What the Worker, AI Gateway or the model said of what was sent, or that it changed meanwhile.
+  /** Says why saving or deleting failed: on the field it's about, on the avatar, under the button, or as the workspace's alerts do. */
+  const refuse = (error: unknown) => {
+    if (!(error instanceof ApiError)) return onFailed(error);
+    if (error.field === "avatar") return photo.refuse(error.message);
+    // What the Worker, AI Gateway or the model said of what was sent, or that it changed meanwhile, which the page says itself.
     const said = [422, 429, 502].includes(error.status) || (error.status === 409 && error.message !== ASSISTANT_OFF);
     if (said) setRefusal({ field: fieldOf(error.field), error: error.message });
-    return said;
+    else onFailed(error);
   };
 
-  /** Says why saving or deleting failed: on the page, where it says so itself, or else as the workspace's alerts do. */
-  const refuse = (error: unknown) => {
-    if (!sayRefused(error)) onFailed(error);
-  };
-
-  /** Sends the page for the unsaved changes dialog, which says so when it isn't saved, saying on the page too why the server refused it. */
+  /**
+   * Sends the page for the unsaved changes dialog, which says so when it isn't saved, saying why the server
+   * refused it as Create agent and Save changes do: on the field it's about, say, or by going to sign in.
+   */
   const sendBeforeLeaving = () =>
     send().catch((error: unknown) => {
-      sayRefused(error);
+      // Anything else failed before the server answered, which the dialog says, or the page has said why already.
+      if (error instanceof ApiError) refuse(error);
       throw error;
     });
 

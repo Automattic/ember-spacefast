@@ -327,8 +327,14 @@ describe("Instructions", () => {
     expect(preview()).toHaveTextContent(aroundExplained("@ember"));
     expect(preview()).toHaveTextContent(`You are Ember, the AI assistant in the team chat "Analytical Engines".`);
     expect(preview()).toHaveTextContent("Your instructions");
-    expect(preview()).toHaveTextContent("You're asked in a direct message. Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, as a helpful teammate would");
+    expect(preview()).toHaveTextContent("You're asked in a direct message. Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, as a helpful teammate would: plainly, and in at most about 400 words.");
     expect(preview()).toHaveTextContent("You can't search the web or open links.");
+  });
+
+  it("shows @ember told to answer no longer than Limits let it answer anyone", () => {
+    serve();
+    showCard(on("anthropic/claude-sonnet-5.5", { ...TOP_LEVELS, length: "short" }));
+    expect(preview()).toHaveTextContent("Answer the last one, which Ada Lovelace wrote, as a helpful teammate would: plainly, and in at most about 150 words.");
   });
 
   it("shows @ember told it can search the web while Search the web is on", () => {

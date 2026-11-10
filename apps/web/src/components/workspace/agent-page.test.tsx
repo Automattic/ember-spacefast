@@ -414,6 +414,15 @@ describe("New agent", () => {
     expect(onFailed).not.toHaveBeenCalled();
   });
 
+  it("leaves a session that's ended by the time the dialog's Save sends it to the workspace, as its own Save does", async () => {
+    serve({ sent: () => refused(401, "Sign in to continue.") });
+    const { onFailed, user } = showNewAgent();
+    await fillIn(user);
+    act(() => navigate("/rooms/general"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onFailed).toHaveBeenCalledWith(new ApiError(401, "Sign in to continue.")));
+  });
+
   it("leaves without asking while nothing's typed", async () => {
     showNewAgent();
     await loaded();
@@ -630,6 +639,16 @@ describe("An agent's settings", () => {
     await user.type(await loaded(), " Bot");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(onMissing).toHaveBeenCalledOnce());
+  });
+
+  it("answers the 404 page when the agent has gone by the time the dialog's Save sends it, as its own Save does", async () => {
+    serve({ sent: () => refused(404, "Not found") });
+    const { onMissing, onFailed, user } = showSettings();
+    await user.type(await loaded(), " Bot");
+    act(() => navigate("/rooms/general"));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onMissing).toHaveBeenCalledOnce());
+    expect(onFailed).not.toHaveBeenCalled();
   });
 
   it("sends anyone but an administrator to workspace settings at once, reading nothing, saying why", async () => {
