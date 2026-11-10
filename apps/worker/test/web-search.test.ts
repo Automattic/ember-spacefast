@@ -639,17 +639,38 @@ describe("@ember on the web", () => {
 
     await post(client, askEmber("what's AI Gateway?"));
     expect((await nextAnswer(client)).plainText).toBe("I can't search the web.");
-    // Once without thinking, which it might not have taken, and then without the web.
-    expect(requests.map(({ body }) => [Boolean(body.tools), "thinking" in body])).toEqual([
-      [true, true],
-      [true, false],
-      [false, false],
+    // Once without thinking, which it might not have taken, then without reading pages, and then without the web.
+    expect(requests.map(({ body }) => [body.tools, "thinking" in body])).toEqual([
+      [[SEARCH_TOOL, READ_TOOL], true],
+      [[SEARCH_TOOL, READ_TOOL], false],
+      [[SEARCH_TOOL], false],
+      [undefined, false],
     ]);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${MESSAGES_MODEL} again without the web`));
     // Told then that it can't search, as it was told it could.
     expect(requests[0]!.body.system).toContain("You can search the web");
-    expect(requests[2]!.body.system).toContain("You can't search the web or open links this time, as AI Gateway didn't take the tools for them");
-    expect(requests[2]!.body.system).not.toContain("You can search the web");
+    expect(requests[3]!.body.system).toContain("You can't search the web or open links this time, as AI Gateway didn't take the tools for them");
+    expect(requests[3]!.body.system).not.toContain("You can search the web");
+    client.close();
+  });
+
+  it("only searches when AI Gateway no longer takes the tool for reading pages, told it can't read them", async () => {
+    const ada = await setUp();
+    fakeGateway(searching);
+    await turnedWebSearch(ada, true);
+    vi.restoreAllMocks();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const requests = fakeGateway((asked) =>
+      gives(asked, "web_fetch") ? Response.json({ type: "error", error: { type: "invalid_request_error", message: "tools.1: unknown tool type" } }, { status: 400 }) : searching(asked),
+    );
+    const client = await connect(await generalRoom(), ada);
+
+    await post(client, askEmber("what's AI Gateway?"));
+    expect((await nextAnswer(client)).plainText).toBe(`${FOUND}\n\nSources: ${DOCS.title}, ${BLOG.title}`);
+    expect(requests.map(({ body }) => body.tools)).toEqual([[SEARCH_TOOL, READ_TOOL], [SEARCH_TOOL, READ_TOOL], [SEARCH_TOOL]]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${MESSAGES_MODEL} to search again without reading pages`));
+    expect(requests[0]!.body.system).toContain("You can search the web, and read the pages people link to or your searches find,");
+    expect(requests[2]!.body.system).toContain("You can search the web when a question needs what's current");
     client.close();
   });
 
@@ -724,7 +745,7 @@ const QUESTION: Message = {
 describe("What @ember is told of the web", () => {
   it("says what it may do there, and that it writes its answer after it last searches, as the chat lists its sources", () => {
     const told = (webTools: Array<"search" | "read">, webSearchOn?: boolean) =>
-      questionFor([QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools, webSearchOn).instructions;
+      questionFor({ ...EMBER, instructions: "" }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools, webSearchOn).instructions;
     expect(told(["search", "read"])).toContain("You can search the web, and read the pages people link to or your searches find, when a question needs what's current");
     expect(told(["search"])).toContain("You can search the web when a question needs what's current");
     expect(told(["search"])).toContain("Only what you write after you last search or read is posted");
@@ -733,7 +754,7 @@ describe("What @ember is told of the web", () => {
   });
 
   it("says, while Search the web is on, that the model the asker picked can't search, and that they can pick one that can", () => {
-    const told = questionFor([QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), [], true).instructions;
+    const told = questionFor({ ...EMBER, instructions: "" }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), [], true).instructions;
     expect(told).toContain("You can't search the web or open links with the model Ada Lovelace picked for your answers to them.");
     expect(told).toContain("When they ask you to, say so, and that they can pick one that can, Anthropic's or OpenAI's, under Ember AI on their profile.");
     expect(told).not.toContain("an administrator");

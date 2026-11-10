@@ -1,4 +1,16 @@
-import { isReservedName, isRoomId, MAX_SHARED_ORDER, MAX_USER_NAME_LENGTH, NAME_RESERVED, type DirectoryUser, type RoomId, type User } from "./index.ts";
+import {
+  isMessageTooLong,
+  isReservedName,
+  isRoomId,
+  MAX_SHARED_ORDER,
+  MAX_USER_NAME_LENGTH,
+  MESSAGE_TOO_LONG,
+  NAME_RESERVED,
+  type Card,
+  type DirectoryUser,
+  type RoomId,
+  type User,
+} from "./index.ts";
 import {
   ANSWER_LENGTHS,
   INSTRUCTIONS_TOO_LONG,
@@ -95,8 +107,28 @@ export interface NewAgent {
 /** What `PATCH /api/account/agents/<id>` changes, as the agent's page saves it: any of what New agent takes. What's left out stays as it is. */
 export type AgentChanges = Partial<NewAgent>;
 
+/**
+ * What `POST /api/account/agents/trials` takes, and `POST /api/account/agents/<id>/trials` for an agent
+ * that's saved, as Try it sends it: the agent as its page sets it up, saved or not, but for what it does
+ * and its rooms, which it doesn't answer by, and the question to ask it.
+ */
+export interface AgentTrial extends Omit<NewAgent, "description" | "rooms"> {
+  question: string;
+}
+
+/**
+ * What Try it answers: what the agent said, as a message of its shows it, its text as the room keeps one
+ * (`Message.body`), which `displayBody` shows, and the cards of the pictures it shows, and how long its
+ * model took, in milliseconds.
+ */
+export interface AgentTrialAnswer {
+  body: string;
+  cards: Card[];
+  ms: number;
+}
+
 /** A field of an agent's page, which a refusal can be about. */
-export type AgentField = "name" | "description" | "instructions" | "model" | "levels" | "webSearch" | "rooms";
+export type AgentField = "name" | "description" | "instructions" | "model" | "levels" | "webSearch" | "rooms" | "question";
 
 /** Why what an agent's page sent is refused, on the field it's about. */
 export interface AgentRefusal {
@@ -132,6 +164,7 @@ export const DESCRIPTION_REFUSED = `Say what it does in one line of at most ${MA
 export const INSTRUCTIONS_NEEDED = "Give it instructions: its task, how to go about it, and what to leave alone.";
 export const WEB_SEARCH_UNSAID = "Say whether it searches the web.";
 export const ROOMS_REFUSED = "Choose rooms open to everyone, or every one.";
+export const QUESTION_NEEDED = "Ask it something.";
 
 /**
  * Parses an untrusted change to an agent, as its page saves it. Returns why it's refused instead, on the
@@ -201,6 +234,28 @@ export function parseNewAgent(data: unknown): NewAgent | AgentRefusal {
   if (webSearch === undefined) return { error: WEB_SEARCH_UNSAID, field: "webSearch" };
   if (rooms === undefined) return { error: ROOMS_REFUSED, field: "rooms" };
   return { ...agent, name, description, instructions, model, thinking, length, webSearch, rooms };
+}
+
+/**
+ * Parses an untrusted trial, as Try it sends it: the agent as `parseNewAgent` takes one, but for what it
+ * does and its rooms, which are left out, and a question of more than spaces, no longer than a message,
+ * without the spaces around it.
+ */
+export function parseAgentTrial(data: unknown): AgentTrial | AgentRefusal {
+  const given = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const { description: _, rooms: __, question: asked, ...setup } = given;
+  const agent = parseAgentChanges(setup);
+  if ("error" in agent) return agent;
+  const { name, instructions, model, thinking, length, webSearch } = agent;
+  if (name === undefined) return { error: NAME_REFUSED, field: "name" };
+  if (instructions === undefined) return { error: INSTRUCTIONS_NEEDED, field: "instructions" };
+  if (model === undefined) return { error: MODEL_REFUSED, field: "model" };
+  if (thinking === undefined || length === undefined) return { error: LEVELS_REFUSED, field: "levels" };
+  if (webSearch === undefined) return { error: WEB_SEARCH_UNSAID, field: "webSearch" };
+  const question = typeof asked === "string" ? asked.trim() : "";
+  if (!question) return { error: QUESTION_NEEDED, field: "question" };
+  if (isMessageTooLong(question)) return { error: MESSAGE_TOO_LONG, field: "question" };
+  return { ...agent, name, instructions, model, thinking, length, webSearch, question };
 }
 
 /** `text` without the spaces around it, or "" unless it's one line: without control characters or line breaks. */

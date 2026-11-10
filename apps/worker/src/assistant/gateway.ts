@@ -60,18 +60,21 @@ export interface Turn {
 /**
  * What to ask a model: how it should answer, the conversation, oldest first, ending with what it's asked,
  * the most tokens its answer may take, its thinking among them, how much to think first, if it's told,
- * who asked, if someone did, whom AI Gateway's logs and spend limits then know each request by (custom
- * metadata's `user_id`), and what it may do on the web, of what its format has tools for: nothing,
- * unless it's told.
+ * who asked, if someone did, and who answers, @ember or an agent, if either does, whom AI Gateway's logs
+ * and spend limits then know each request by (custom metadata's `user_id` and `agent_id`), and what it
+ * may do on the web, of what its format has tools for: nothing, unless it's told.
  */
 export interface Question {
   instructions: string;
+  /** How it should answer when it's asked again only searching, as AI Gateway didn't take the tool for reading pages, if that's not as `instructions` says. */
+  instructionsWithoutReading?: string;
   /** How it should answer when it's asked again without the web, whose tools AI Gateway didn't take, if that's not as `instructions` says. */
   instructionsWithoutWeb?: string;
   turns: Turn[];
   maxTokens: number;
   thinking?: ThinkingLevel;
   askerId?: string;
+  agentId?: string;
   webTools?: readonly WebTool[];
 }
 
@@ -135,8 +138,9 @@ export interface Answered {
 /**
  * What the model `gateway` names answers `question` in its format, or why it didn't, waiting at most
  * `timeoutMs` for it all. A model that doesn't take being told how much to think is asked again without
- * that, and then, as Search the web tried the web's tools when it was turned on, without them, told it
- * can't use them.
+ * that, and then, as Search the web tries the web's tools when it's turned on, without the one for
+ * reading pages, which AI Gateway may not have for every model, and then without them, told it can't
+ * use them.
  */
 export async function ask(env: Env, gateway: Gateway, question: Question, timeoutMs: number): Promise<Answered | GatewayRefusal> {
   const signal = AbortSignal.timeout(timeoutMs);
@@ -148,9 +152,38 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
     asked = unthinking;
     answered = await askOnce(env, gateway, asked, signal);
   }
+  const searching = asked.webTools?.filter((tool) => tool !== "read") ?? [];
+  if (isWrongFormat(answered) && asked.webTools?.includes("read") && toolsFor(gateway.format, searching).length > 0) {
+    console.error(`Asking ${gateway.model} to search again without reading pages, as AI Gateway didn't take that: ${answered.refusal}`);
+    asked = { ...asked, instructions: asked.instructionsWithoutReading ?? asked.instructions, webTools: searching };
+    answered = await askOnce(env, gateway, asked, signal);
+  }
   if (!isWrongFormat(answered) || toolsFor(gateway.format, asked.webTools).length === 0) return answered;
   console.error(`Asking ${gateway.model} again without the web, whose tools AI Gateway didn't take: ${answered.refusal}`);
   return askOnce(env, gateway, { ...asked, instructions: asked.instructionsWithoutWeb ?? asked.instructions, webTools: [] }, signal);
+}
+
+/**
+ * What the model `gateway` names answers in the first of `formats` it takes the question in, as
+ * `questionIn` asks it in each, waiting at most `timeoutMs` in each (`ask`), with the format it took it
+ * in, or why it didn't answer: the first format's refusal, unless another's says more, as one that isn't
+ * about the format does.
+ */
+export async function askInTurn(
+  env: Env,
+  gateway: Omit<Gateway, "format">,
+  formats: readonly ModelFormat[],
+  questionIn: (format: ModelFormat) => Question,
+  timeoutMs: number,
+): Promise<(Answered & { format: ModelFormat }) | GatewayRefusal> {
+  let first: GatewayRefusal | null = null;
+  for (const format of formats) {
+    const answered = await ask(env, { ...gateway, format }, questionIn(format), timeoutMs);
+    if (!("refusal" in answered)) return { ...answered, format };
+    if (!answered.wrongFormat) return answered;
+    first ??= answered;
+  }
+  return first!;
 }
 
 /**
@@ -210,7 +243,7 @@ async function send(env: Env, gateway: Gateway, question: Question, request: Rec
         Authorization: `Bearer ${gateway.apiToken}`,
         "Content-Type": "application/json",
         "cf-aig-gateway-id": GATEWAY_ID,
-        ...(question.askerId !== undefined && { "cf-aig-metadata": JSON.stringify({ user_id: question.askerId }) }),
+        ...metadataOf(question),
       },
       body: JSON.stringify(request),
       signal,
@@ -221,6 +254,12 @@ async function send(env: Env, gateway: Gateway, question: Question, request: Rec
   }
   const body: unknown = await response.json().catch(() => null);
   return response.ok ? { body } : refusalOf(response.status, body);
+}
+
+/** The custom metadata AI Gateway keeps of a request asking `question`: who asked and who answers, of those it names, if it names either. */
+function metadataOf({ askerId, agentId }: Question): Record<string, string> {
+  const metadata = { ...(askerId !== undefined && { user_id: askerId }), ...(agentId !== undefined && { agent_id: agentId }) };
+  return Object.keys(metadata).length > 0 ? { "cf-aig-metadata": JSON.stringify(metadata) } : {};
 }
 
 /** The answer `body` gives in `format`, or why it's none: the model said nothing, or took every token it could first. */

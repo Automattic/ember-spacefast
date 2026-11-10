@@ -315,6 +315,10 @@ const isAskedAs = (saved: SavedAssistant, asked: AskedAs) => saved.accountId ===
 const webToolsKept = (saved: SavedAssistant | null, asked: AskedAs, changedAt: string): Pick<SavedAssistant, "webTools" | "webToolsAskedAt"> =>
   saved && isAskedAs(saved, asked) ? { webTools: saved.webTools, webToolsAskedAt: saved.webToolsAskedAt } : { webTools: [], webToolsAskedAt: changedAt };
 
+/** The hosts Ember knows reach it, as `account` keeps them: its custom domain, where a deploy puts it, and the domains it moved away from. */
+const addressesOf = (account: Pick<JoinableAccount, "customDomain" | "deployedAddress" | "otherAddresses">): string[] =>
+  [account.customDomain, account.deployedAddress, ...account.otherAddresses].filter((address) => address !== null);
+
 /** The levels someone who `picked` them has of @ember's dials, where each starts for one they haven't picked, no higher than `most`. */
 const levelsOf = (picked: AssistantPicks | null, most: AnswerLevels): AnswerLevels =>
   withinMost({ thinking: picked?.thinking ?? DEFAULT_LEVELS.thinking, length: picked?.length ?? DEFAULT_LEVELS.length }, most);
@@ -462,15 +466,17 @@ export interface BotAccess {
 }
 
 /**
- * @ember as a room asks Ember AI to answer a question there (`Workspace.assistantIn`): how Ember AI asks AI
- * Gateway, or null while its API token doesn't open, the community's name, which @ember is told, how
- * much it thinks and how long it answers whoever asked, what it may do on the web, and Ember's own
- * addresses, whose pages its answers don't preview.
+ * @ember or an AI agent as a room asks Ember AI to answer a question there (`Workspace.answererIn`): how
+ * Ember AI asks AI Gateway with its model, or null while its API token doesn't open, its instructions,
+ * the community's name, which it's told, how much it thinks and how long it answers, what it may do on
+ * the web, and Ember's own addresses, whose pages its answers don't preview.
  */
 export interface AssistantAccess extends BotAccess {
   gateway: Gateway | null;
   /** Whether the gateway's model is one whoever asked picked, rather than the one @ember answers everyone else with. */
   picked: boolean;
+  /** An agent's instructions, or those administrators added to @ember's. */
+  instructions: string;
   community: string;
   levels: AnswerLevels;
   /** What the gateway's model may do on the web: what Search the web lets @ember do, of what that model's format has tools for. */
@@ -479,6 +485,20 @@ export interface AssistantAccess extends BotAccess {
   webSearchOn: boolean;
   /** The hosts Ember knows reach it, as `location.host` writes them: its custom domain, where a deploy puts it, and the domains it moved away from. */
   addresses: string[];
+}
+
+/**
+ * What Try it asks an agent with (`Workspace.agentTrial`): the administrator who asks, the account and
+ * API token Ember AI asks AI Gateway through, the community's name and Ember's addresses, as a question
+ * for an agent has them, and the agent as it's saved, if it is, by its id, with its model and that
+ * model's name, the format that took its test question and what it may do on the web.
+ */
+export interface AgentTrialAccess {
+  asker: User;
+  through: Pick<Gateway, "accountId" | "apiToken">;
+  community: string;
+  addresses: string[];
+  saved: Pick<StoredAgentSettings, "id" | "model" | "modelName" | "format" | "webTools"> | null;
 }
 
 /** How Set up Ember AI has Ember AI ask AI Gateway (`Gateway`), with the name of its model, if it was given one. */
@@ -2799,6 +2819,26 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
+   * What the person `credentials` signs in asks agent `agentId` with, as it's saved, or an agent not saved
+   * yet, for null, as they try it (`AgentTrialAccess`): "off" while Ember AI is off, or its API token
+   * doesn't open, "not found" unless `agentId` is an agent's, "forbidden" unless that's an administrator,
+   * or null without a valid session.
+   */
+  async agentTrial(credentials: Credentials, agentId: UserId | null): Promise<AgentTrialAccess | "off" | "not found" | "forbidden" | null> {
+    const user = await this.authenticate(credentials);
+    if (!user) return null;
+    if (!(await this.store.isAdministrator(user.id))) return "forbidden";
+    const account = await this.joinableAccount();
+    const opened = account && (await this.openedAssistant(account));
+    if (!account || !opened) return "off";
+    const agent = agentId === null ? null : await this.store.activeAgent(agentId);
+    if (agentId !== null && !agent) return "not found";
+    const through = { accountId: opened.accountId, apiToken: opened.apiToken };
+    const saved = agent && { id: agent.id, model: agent.model, modelName: agent.modelName, format: agent.format, webTools: agent.webTools };
+    return { asker: { id: user.id, name: user.name }, through, community: account.name, addresses: addressesOf(account), saved };
+  }
+
+  /**
    * Makes `agent` as the person `credentials` signs in, with its model as asking it found it (`asked`),
    * and `avatar`, which R2 has stored under a key `reservePicture` reserved, if it's given one: a bot
    * without a key, in every open room or the ones `agent` picks, and everyone's workspace sockets hear of
@@ -3461,14 +3501,23 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * @ember in room `roomId`, as a question for it finds it when its turn comes and again before its answer
-   * is posted, with when this checked, how it asks AI Gateway, or null while its API token doesn't open
-   * (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can pick it, the
-   * community's name, what @ember may do on the web, with whichever model answers, of what its format
-   * has tools for, and Ember's addresses: null once Ember AI is off or @ember isn't in the room, so that
-   * turning Ember AI off, or taking @ember out of a room, stops what's on its way there.
+   * The bot `botId` that answers a question in room `roomId` that `askerId` asked, @ember or an AI agent,
+   * as the question finds it when its turn comes and again before its answer is posted (`assistantIn`,
+   * `agentIn`): null once Ember AI is off, or the bot isn't in the room, so that what's on its way stops.
    */
-  async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
+  async answererIn(roomId: RoomId, botId: UserId, askerId: UserId): Promise<AssistantAccess | null> {
+    return botId === ASSISTANT_ID ? this.assistantIn(roomId, askerId) : this.agentIn(roomId, botId);
+  }
+
+  /**
+   * @ember in room `roomId`, with when this checked, how it asks AI Gateway, or null while its API token
+   * doesn't open (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can
+   * pick it, the instructions administrators added, the community's name, what @ember may do on the web,
+   * with whichever model answers, of what its format has tools for, and Ember's addresses: null once
+   * Ember AI is off or @ember isn't in the room, so that turning Ember AI off, or taking @ember out of a
+   * room, stops what's on its way there.
+   */
+  private async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
     // Before anything is read, as `roomAccess` takes it.
     const authorizedAt = Date.now();
     const [account, member, picks] = await Promise.all([this.joinableAccount(), this.store.isMember(roomId, ASSISTANT_ID), this.store.assistantPicks(askerId)]);
@@ -3480,8 +3529,26 @@ export class Workspace extends DurableObject<Env> {
     const { format } = picked ?? account.assistant;
     const webTools = account.assistant.webTools.filter((tool) => WEB_TOOLS_IN[format].includes(tool));
     const webSearchOn = account.assistant.webTools.includes("search");
-    const addresses = [account.customDomain, account.deployedAddress, ...account.otherAddresses].filter((address) => address !== null);
-    return { bot: { id: ASSISTANT_ID, name: ASSISTANT_NAME }, authorizedAt, gateway, picked: picked !== null, community: account.name, levels, webTools, webSearchOn, addresses };
+    const bot = { id: ASSISTANT_ID, name: ASSISTANT_NAME };
+    const { assistantInstructions: instructions } = account;
+    return { bot, authorizedAt, gateway, picked: picked !== null, instructions, community: account.name, levels, webTools, webSearchOn, addresses: addressesOf(account) };
+  }
+
+  /**
+   * Agent `agentId` in room `roomId`, as `assistantIn` finds @ember: asking AI Gateway through Ember AI's
+   * account and API token, with its own model, instructions and levels, and what it may do on the web,
+   * of what its model's format has tools for: null once Ember AI is off, or the agent is deleted or taken
+   * out of the room.
+   */
+  private async agentIn(roomId: RoomId, agentId: UserId): Promise<AssistantAccess | null> {
+    const authorizedAt = Date.now();
+    const [account, agent] = await Promise.all([this.joinableAccount(), this.store.answeringAgent(roomId, agentId)]);
+    if (!account?.assistant || !agent) return null;
+    const opened = await this.openedAssistant(account);
+    const gateway = opened && { ...opened, model: agent.model, format: agent.format };
+    const webTools = agent.webTools.filter((tool) => WEB_TOOLS_IN[agent.format].includes(tool));
+    const bot = { id: agentId, name: agent.name };
+    return { bot, authorizedAt, gateway, picked: false, instructions: agent.instructions, community: account.name, levels: agent.levels, webTools, webSearchOn: webTools.includes("search"), addresses: addressesOf(account) };
   }
 
   /**

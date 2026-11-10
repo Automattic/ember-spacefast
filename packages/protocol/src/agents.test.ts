@@ -6,13 +6,16 @@ import {
   MAX_AGENT_DESCRIPTION_LENGTH,
   NAME_REFUSED,
   parseAgentChanges,
+  parseAgentTrial,
   parseNewAgent,
+  QUESTION_NEEDED,
   ROOMS_REFUSED,
   WEB_SEARCH_UNSAID,
+  type AgentTrial,
   type NewAgent,
 } from "./agents";
 import { INSTRUCTIONS_TOO_LONG, LEVELS_REFUSED, MAX_INSTRUCTIONS_LENGTH, MODEL_REFUSED } from "./assistant";
-import { MAX_SHARED_ORDER, MAX_USER_NAME_LENGTH, NAME_RESERVED } from "./index";
+import { MAX_MESSAGE_LENGTH, MAX_SHARED_ORDER, MAX_USER_NAME_LENGTH, MESSAGE_TOO_LONG, NAME_RESERVED } from "./index";
 
 /** An agent as New agent sends it, in every open room. */
 const RECAP: NewAgent = {
@@ -107,5 +110,41 @@ describe("An agent's page", () => {
 
   it("says a name is an agent's in the words it was given", () => {
     expect(agentsName(" Recap ")).toBe("Recap is an AI agent's name. Choose another.");
+  });
+});
+
+describe("Try it", () => {
+  /** Recap as Try it sends it, with a question. */
+  const TRIAL: AgentTrial = { name: "Recap", instructions: RECAP.instructions, model: RECAP.model, thinking: "off", length: "short", webSearch: false, question: "Sum up this week." };
+
+  it("takes the agent as its page sets it up, and the question, leaving out what it does and its rooms, which it doesn't answer by", () => {
+    expect(parseAgentTrial(TRIAL)).toEqual(TRIAL);
+    expect(parseAgentTrial({ ...TRIAL, modelName: "Claude Haiku 5.5", question: "\n Sum up this week. \n" })).toEqual({ ...TRIAL, modelName: "Claude Haiku 5.5" });
+    // What it does and its rooms may be anything while they're unsaved.
+    expect(parseAgentTrial({ ...TRIAL, description: "", rooms: "Launch!" })).toEqual(TRIAL);
+    const longest = "x".repeat(MAX_MESSAGE_LENGTH);
+    expect(parseAgentTrial({ ...TRIAL, question: longest })).toEqual({ ...TRIAL, question: longest });
+  });
+
+  it.each([
+    ["name", NAME_REFUSED],
+    ["instructions", INSTRUCTIONS_NEEDED],
+    ["model", MODEL_REFUSED],
+    ["thinking", LEVELS_REFUSED],
+    ["length", LEVELS_REFUSED],
+    ["webSearch", WEB_SEARCH_UNSAID],
+    ["question", QUESTION_NEEDED],
+  ] as const)("refuses one without its %s, on its field", (field, error) => {
+    const { [field]: _, ...rest } = TRIAL;
+    expect(parseAgentTrial(rest)).toEqual({ error, field: field === "thinking" || field === "length" ? "levels" : field });
+  });
+
+  it("refuses a field that can't be what it's for, and a question that's blank, not text, or longer than a message", () => {
+    expect(parseAgentTrial({ ...TRIAL, name: "Ember" })).toEqual({ error: NAME_RESERVED, field: "name" });
+    expect(parseAgentTrial({ ...TRIAL, model: "claude haiku" })).toEqual({ error: MODEL_REFUSED, field: "model" });
+    expect(parseAgentTrial({ ...TRIAL, question: " \t\n" })).toEqual({ error: QUESTION_NEEDED, field: "question" });
+    expect(parseAgentTrial({ ...TRIAL, question: ["Sum up."] })).toEqual({ error: QUESTION_NEEDED, field: "question" });
+    expect(parseAgentTrial({ ...TRIAL, question: "x".repeat(MAX_MESSAGE_LENGTH + 1) })).toEqual({ error: MESSAGE_TOO_LONG, field: "question" });
+    for (const data of [null, "Recap", [TRIAL]]) expect(parseAgentTrial(data)).toEqual({ error: NAME_REFUSED, field: "name" });
   });
 });

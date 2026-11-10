@@ -14,6 +14,7 @@ import {
   UNTHINKING_TOKENS,
   waitFor,
   writtenBy,
+  type Answerer,
 } from "../src/assistant/answers";
 import { markdownHtml } from "../src/bots/markdown";
 import { api, apiWith, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
@@ -206,8 +207,8 @@ describe("@ember", () => {
     expect(questions).toHaveLength(1);
     const [{ url, metadata, body }] = questions as [Asked];
     expect(url).toBe(`https://api.cloudflare.com/client/v4/accounts/${SETUP.accountId}/ai/v1/chat/completions`);
-    // AI Gateway's logs and spend limits know each request by who asked.
-    expect(JSON.parse(metadata!)).toEqual({ user_id: ada.user.id });
+    // AI Gateway's logs and spend limits know each request by who asked, and who answers.
+    expect(JSON.parse(metadata!)).toEqual({ user_id: ada.user.id, agent_id: ASSISTANT_ID });
     // At the levels everyone starts with: a little thinking, and a Medium answer.
     expect(body).toMatchObject({ model: MODEL, max_completion_tokens: maxTokensAt(DEFAULT_LEVELS), reasoning_effort: "low" });
     const [instructions, ...turns] = body.messages;
@@ -571,6 +572,10 @@ function message(id: string, plainText: string, changes: Partial<Message> = {}):
 const ADA: User = { id: "ada", name: "Ada Lovelace" };
 const IN_GENERAL = { community: "Fernwood", roomName: "general", inThread: false };
 const NOW = new Date("2026-10-31T12:00:00Z");
+/** @ember as it answers, without instructions administrators added. */
+const ASSISTANT: Answerer = { ...EMBER, instructions: "" };
+/** An agent as it answers. */
+const SCOUT: Answerer = { id: "scout", name: "Scout", instructions: "Find what's current on the web, and say where it's from." };
 
 describe("What people wrote in what @ember read", () => {
   it("is the plain text of each message it read that one of them wrote, not its own answers, bots', or what's deleted", () => {
@@ -592,7 +597,7 @@ describe("What people wrote in what @ember read", () => {
 
 describe("What @ember asks its model", () => {
   it("says who it is, where it's asked, by whom, and today's date, and labels the question with who asked", () => {
-    const { instructions, maxTokens, thinking, askerId } = questionFor([message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW);
+    const { instructions, maxTokens, thinking, askerId } = questionFor(ASSISTANT, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW);
     expect(instructions).toContain(`You are Ember, the AI assistant in the team chat "Fernwood".`);
     expect(instructions).toContain(`You're asked in the room "general".`);
     expect(instructions).toContain("Answer the last one, which Ada Lovelace wrote");
@@ -600,11 +605,11 @@ describe("What @ember asks its model", () => {
     expect(instructions).toContain("in at most about 400 words.");
     expect([thinking, maxTokens]).toEqual(["low", 4_000 + 2_000]);
     expect(askerId).toBe("ada");
-    expect(questionFor([message("1", "Hi")], ADA, { ...IN_GENERAL, roomName: null }, DEFAULT_LEVELS, NOW).instructions).toContain("You're asked in a direct message.");
+    expect(questionFor(ASSISTANT, [message("1", "Hi")], ADA, { ...IN_GENERAL, roomName: null }, DEFAULT_LEVELS, NOW).instructions).toContain("You're asked in a direct message.");
   });
 
   it("waits two minutes for an answer, or longer the more it may think and write, never as long as a pending request keeps a room in memory", () => {
-    const waiting = (levels: typeof DEFAULT_LEVELS) => waitFor(questionFor([message("1", "Hi")], ADA, IN_GENERAL, levels, NOW));
+    const waiting = (levels: typeof DEFAULT_LEVELS) => waitFor(questionFor(ASSISTANT, [message("1", "Hi")], ADA, IN_GENERAL, levels, NOW));
     expect(waiting(DEFAULT_LEVELS)).toBe(120_000);
     expect(waiting({ thinking: "off", length: "short" })).toBe(120_000);
     expect(waiting({ thinking: "medium", length: "medium" })).toBe(18_000 * 20);
@@ -622,7 +627,7 @@ describe("What @ember asks its model", () => {
       message("6", "  "),
       message("7", "@Ember thanks!"),
     ];
-    expect(questionFor(conversation, ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).turns).toEqual([
+    expect(questionFor(ASSISTANT, conversation, ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).turns).toEqual([
       { role: "user", text: "Ada Lovelace: Who's in?" },
       { role: "user", text: "Grace Hopper: Me" },
       { role: "assistant", text: "Ada and Grace are." },
@@ -631,12 +636,61 @@ describe("What @ember asks its model", () => {
     ]);
   });
 
+  it("follows who it is with the instructions administrators added, and labels the question with who answers", () => {
+    const told = questionFor({ ...ASSISTANT, instructions: "Answer in British English." }, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW);
+    expect(told.instructions).toContain(`You are Ember, the AI assistant in the team chat "Fernwood". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.\n\nAnswer in British English.\n\nYou're asked in the room "general".`);
+    expect(told.instructions).toContain("as a helpful teammate would: plainly, and in at most about 400 words.");
+    expect(told.agentId).toBe(ASSISTANT_ID);
+    expect(questionFor(ASSISTANT, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).instructions).toContain(`directly.\n\nYou're asked in the room "general".`);
+  });
+
   it("reads the newest messages that fit, the question always, and a thread's first message first", () => {
     const long = "x".repeat(MAX_CONVERSATION_LENGTH / 4);
     const conversation = ["1", "2", "3", "4", "5"].map((id) => message(id, `${id}${long}`)).concat(message("6", "@Ember what now?"));
-    const texts = (inThread: boolean) => questionFor(conversation, ADA, { ...IN_GENERAL, inThread }, DEFAULT_LEVELS, NOW).turns.map(({ text }) => text.slice(14, 15));
+    const texts = (inThread: boolean) => questionFor(ASSISTANT, conversation, ADA, { ...IN_GENERAL, inThread }, DEFAULT_LEVELS, NOW).turns.map(({ text }) => text.slice(14, 15));
     expect(texts(false)).toEqual(["3", "4", "5", "@"]);
     expect(texts(true)).toEqual(["1", "4", "5", "@"]);
+  });
+});
+
+describe("What an agent asks its model", () => {
+  it("says it's the agent, then its instructions, and answers as they say, labeled with who asked and which agent answers", () => {
+    const { instructions, askerId, agentId } = questionFor(SCOUT, [message("1", "Hi")], ADA, { ...IN_GENERAL, inThread: true }, { thinking: "off", length: "short" }, NOW);
+    expect(instructions).toBe(
+      [
+        `You are Scout, an AI agent in the team chat "Fernwood". People ask you things by mentioning @Scout in a room or a thread, or by writing to you directly.`,
+        SCOUT.instructions,
+        `You're asked in a thread in the room "general". Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, in at most about 150 words.`,
+        "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.",
+        "You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web under AI assistant in community settings.",
+        "Today is Saturday, October 31, 2026, in UTC.",
+      ].join("\n\n"),
+    );
+    expect([askerId, agentId]).toEqual(["ada", "scout"]);
+  });
+
+  it("reads its own answers as its own, and @ember's and other agents' as anyone's", () => {
+    const conversation = [
+      message("1", "@Scout who won?"),
+      message("2", "The Hawks did.", { creator: { id: "scout", name: "Scout" } }),
+      message("3", "By two goals.", { creator: EMBER }),
+      message("4", "In overtime.", { creator: { id: "recap", name: "Recap" } }),
+      message("5", "@Scout when?"),
+    ];
+    expect(questionFor(SCOUT, conversation, ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).turns).toEqual([
+      { role: "user", text: "Ada Lovelace: @Scout who won?" },
+      { role: "assistant", text: "The Hawks did." },
+      { role: "user", text: "Ember: By two goals." },
+      { role: "user", text: "Recap: In overtime." },
+      { role: "user", text: "Ada Lovelace: @Scout when?" },
+    ]);
+  });
+
+  it("isn't labeled with an agent that isn't saved yet, as one an administrator tries", () => {
+    const told = questionFor({ ...SCOUT, id: null }, [message("1", "Hi")], ADA, { ...IN_GENERAL, roomName: null }, DEFAULT_LEVELS, NOW);
+    expect(told.askerId).toBe("ada");
+    expect(told).not.toHaveProperty("agentId");
+    expect(told.instructions).toContain("You're asked in a direct message.");
   });
 });
 
@@ -645,6 +699,11 @@ describe("@ember's answer", () => {
     expect(answerOf("Ember: **Yes**, and _soon_.").markup).toBe("<p><strong>Yes</strong>, and <em>soon</em>.</p>");
     expect(answerOf("**Ember:** Done.").markup).toBe("<p>Done.</p>");
     expect(answerOf("Embers glow.").markup).toBe("<p>Embers glow.</p>");
+    expect(answerOf("**Scout:** Found it.", [], [], [], "Scout").markup).toBe("<p>Found it.</p>");
+    expect(answerOf("Ember: Not mine.", [], [], [], "Scout").markup).toBe("<p>Ember: Not mine.</p>");
+    // A name is matched as it's written, whatever characters it has.
+    expect(answerOf("c++ (beta): Done.", [], [], [], "C++ (Beta)").markup).toBe("<p>Done.</p>");
+    expect(answerOf("C (Beta): Done.", [], [], [], "C++ (Beta)").markup).toBe("<p>C (Beta): Done.</p>");
   });
 
   it("shows the web pictures it shows in a card, and has its first web link for a preview, at addresses people wrote", () => {
