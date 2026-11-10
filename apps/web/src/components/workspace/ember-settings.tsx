@@ -2,6 +2,7 @@ import { useContext, useEffect, useEffectEvent, useLayoutEffect, useState, type 
 import { ASSISTANT_ID, ASSISTANT_NAME, AVATAR_TOO_LARGE, MAX_AVATAR_SIZE, type Me, type WorkspaceSettings } from "@ember/protocol";
 import {
   ANSWER_WORDS,
+  ASSISTANT_OFF,
   cannotSearchWith,
   DEFAULT_LEVELS,
   MAX_ASSISTANT_MODELS,
@@ -295,8 +296,9 @@ export function EmberSettings({ me, assistant, onSetUp, onStopped, onChanged, on
       (error: unknown) => {
         if (!mounted.current && !isSignedOut(error)) return;
         setTurningWeb(null);
-        // What AI Gateway or the model made of searching, or that Ember AI changed meanwhile, which the page says itself.
-        if (error instanceof ApiError && [409, 422, 429, 502].includes(error.status)) return setWebTest({ refusal: error.message });
+        // What AI Gateway or the model made of searching, or that Ember AI changed meanwhile, which the page says itself,
+        // though not that it was turned off, which takes the page away.
+        if (error instanceof ApiError && ([422, 429, 502].includes(error.status) || (error.status === 409 && error.message !== ASSISTANT_OFF))) return setWebTest({ refusal: error.message });
         setWebTest(null);
         onFailed(error);
       },

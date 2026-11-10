@@ -12,6 +12,7 @@ import {
   MAX_ASSISTANT_MODELS,
   MODELS_FULL,
   TOP_LEVELS,
+  WEB_SEARCH_CHANGED,
   type AnswerLevels,
   type AssistantCatalog,
   type AssistantChanges,
@@ -241,6 +242,21 @@ describe("@ember's page", () => {
     const { user, onFailed } = showPage();
     await screen.findByRole("region", { name: "@ember" });
     await user.click(within(card()).getByRole("radio", { name: "Low" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(ASSISTANT_OFF);
+    expect(location.pathname + location.hash).toBe(AGENTS_PATH);
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("goes to the AI assistant tab once turning Search the web on finds Ember AI turned off in another tab, saying so", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = `${init?.method ?? "GET"} ${String(input)}`;
+      if (request === "GET /api/account") return readAs(SONNET)();
+      if (request === "PUT /api/account/assistant/web_search") return Response.json({ error: ASSISTANT_OFF }, { status: 409 });
+      throw new Error(`Unexpected request for ${request}`);
+    });
+    const { user, onFailed } = showPage();
+    await screen.findByRole("region", { name: "@ember" });
+    await user.click(webSwitch());
     expect(await screen.findByRole("alert")).toHaveTextContent(ASSISTANT_OFF);
     expect(location.pathname + location.hash).toBe(AGENTS_PATH);
     expect(onFailed).not.toHaveBeenCalled();
@@ -849,6 +865,15 @@ describe("Search the web", () => {
     await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(refusal));
     expect(webSwitch()).not.toBeChecked();
     expect(webSwitch()).toBeEnabled();
+    expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it("says Ember AI changed while its model searched, its switch back off", async () => {
+    serveWebSearch(() => Response.json({ error: WEB_SEARCH_CHANGED }, { status: 409 }));
+    const { user, onFailed } = showLiveCard(on(SONNET));
+    await user.click(webSwitch());
+    await waitFor(() => expect(within(card()).getByRole("status")).toHaveTextContent(WEB_SEARCH_CHANGED));
+    expect(webSwitch()).not.toBeChecked();
     expect(onFailed).not.toHaveBeenCalled();
   });
 
