@@ -40,6 +40,7 @@ describe("Keyboard shortcuts dialog", () => {
     expect(keysOf("Move a starred room up or down")).toEqual(["⌥", "↑ ↓"]);
     expect(keysOf("Start, join or leave a huddle")).toEqual(["⌘", "⌥", "⇧", "H"]);
     expect(keysOf("Edit your last message, with nothing written")).toEqual(["↑"]);
+    expect(keysOf("Send with the formatting toolbar open, or on a touch screen")).toEqual(["⌘", "Enter"]);
   });
 
   it("shows Ctrl and Alt on other keyboards", () => {
@@ -47,6 +48,8 @@ describe("Keyboard shortcuts dialog", () => {
     render(<Shortcuts />);
     expect(keysOf("Search")).toEqual(["Ctrl", "F"]);
     expect(keysOf("Move a starred room up or down")).toEqual(["Alt", "↑ ↓"]);
+    expect(keysOf("Send")).toEqual(["Enter"]);
+    expect(keysOf("Send with the formatting toolbar open, or on a touch screen")).toEqual(["Ctrl", "Enter"]);
     expect(keysOf("Save")).toEqual(["Ctrl", "Enter"]);
   });
 

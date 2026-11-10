@@ -127,6 +127,7 @@ export const SHORTCUTS: { group: string; rows: ShortcutRow[] }[] = [
     group: "Write a message",
     rows: [
       { action: "Send", keys: () => ["Enter"] },
+      { action: "Send with the formatting toolbar open, or on a touch screen", keys: (apple) => [command(apple), "Enter"] },
       { action: "Start a new line", keys: (apple) => [shift(apple), "Enter"] },
       { action: "Add a link", keys: (apple) => [command(apple), "K"] },
       { action: "Edit your last message, with nothing written", keys: () => ["↑"] },
