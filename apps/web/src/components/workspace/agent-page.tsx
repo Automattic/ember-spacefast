@@ -162,6 +162,17 @@ const roomsChosen = ({ everyOpenRoom, chosenRooms }: Pick<Fields, "everyOpenRoom
 const sameRooms = (a: readonly RoomId[] | null, b: readonly AgentRoom[] | null) =>
   a === null || b === null ? a === b : a.length === b.length && b.every(({ id }) => a.includes(id));
 
+/**
+ * The open rooms an agent can be kept to, by name: those in the sidebar's `rooms`, once it has them, and those
+ * it's kept to already, `kept`, which the administrator may not be in, such as one made while they were banned.
+ */
+function roomsToPick(rooms: readonly SidebarRoom[] | null, kept: readonly AgentRoom[]): AgentRoom[] {
+  const open = rooms?.flatMap((room) => (room.kind === "open" ? [{ id: room.id, name: room.name }] : [])) ?? [];
+  // The sidebar's last, as its names follow renames.
+  const byId = new Map([...kept, ...open].map((room) => [room.id, room]));
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** The name of model `model` in `models`, as the Worker keeps it, if they list it. */
 const listedName = (model: string, models: readonly AssistantModel[]) => models.find(({ id }) => id === model)?.name;
 
@@ -335,9 +346,7 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
   const changes = saved && changesOf(saved, fields, models);
   const asksModel = !saved || changes?.model !== undefined || (changes?.webSearch === true && saved.webTools.length === 0);
   const changed = busy === null && (photo.preview !== null || (saved ? removingAvatar || Object.keys(changes ?? {}).length > 0 : touched));
-  const openRooms: AgentRoom[] = (rooms?.flatMap((room) => (room.kind === "open" ? [{ id: room.id, name: room.name }] : [])) ?? saved?.rooms ?? []).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  const openRooms = roomsToPick(rooms, saved?.rooms ?? []);
 
   /** Changes `field`'s part of the page, forgetting why it, or the page, was refused, as what's changed may not be. */
   const change = (field: AgentField, changes: Partial<Fields>) => {

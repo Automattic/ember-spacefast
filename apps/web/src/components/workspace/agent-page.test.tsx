@@ -134,8 +134,8 @@ function showAt(path: string, page: (props: { onMissing: () => void; onFailed: (
 }
 
 const showNewAgent = (me = ada, rooms: SidebarRoom[] | null = ROOMS) => showAt(NEW_AGENT_PATH, ({ onFailed }) => <NewAgentPage me={me} rooms={rooms} onFailed={onFailed} />);
-const showSettings = (me = ada) =>
-  showAt(agentSettingsPath(RECAP.id), ({ onMissing, onFailed }) => <AgentSettingsPage agentId={RECAP.id} me={me} rooms={ROOMS} onMissing={onMissing} onFailed={onFailed} />);
+const showSettings = (me = ada, rooms: SidebarRoom[] = ROOMS) =>
+  showAt(agentSettingsPath(RECAP.id), ({ onMissing, onFailed }) => <AgentSettingsPage agentId={RECAP.id} me={me} rooms={rooms} onMissing={onMissing} onFailed={onFailed} />);
 
 const nameField = () => screen.getByRole("textbox", { name: "Name" });
 const descriptionField = () => screen.getByRole("textbox", { name: "What it does" });
@@ -583,6 +583,25 @@ describe("An agent's settings", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await wentBack();
     expect(sent()).toEqual([[`PATCH /api/account/agents/${RECAP.id}`, { rooms: null }]]);
+  });
+
+  it("lists a room the agent's kept to that the administrator isn't in, so they can take it out of it", async () => {
+    // Someone banned as a room is made isn't put in it, then or once their ban is lifted.
+    const { user } = showSettings(ada, [RESEARCH]);
+    await loaded();
+    expect(screen.getByRole("checkbox", { name: "design" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "design" }));
+    await user.click(screen.getByRole("checkbox", { name: "research" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await wentBack();
+    expect(sent()).toEqual([[`PATCH /api/account/agents/${RECAP.id}`, { rooms: [RESEARCH.id] }]]);
+  });
+
+  it("names a room as the sidebar does, which follows renames, once", async () => {
+    showSettings(ada, [RESEARCH, room(DESIGN.id, "design studio")]);
+    await loaded();
+    expect(screen.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent)).toEqual(["design studio", "research"]);
+    expect(screen.getByRole("checkbox", { name: "design studio" })).toBeChecked();
   });
 
   it("keeps the rooms chosen once every open room is chosen and then not", async () => {
