@@ -656,20 +656,48 @@ describe("Hearing the others in a huddle", () => {
     }
   });
 
-  it("plays once the person touches the page, in a browser that won't until then", async () => {
-    const play = vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new DOMException("play() failed", "NotAllowedError"));
-    const room = await joined([person(grace)]);
+  it("plays at the person's next click or key, in a browser that won't until they've touched the page", async () => {
+    const started = new WeakSet<HTMLMediaElement>();
+    let refusing = true;
+    const play = vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(async function (this: HTMLMediaElement) {
+      if (refusing) throw new DOMException("play() failed", "NotAllowedError");
+      started.add(this);
+    });
+    vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(function (this: HTMLMediaElement) {
+      return !started.has(this);
+    });
+    const room = await joined([person(grace), person(linus)]);
     room.receive(offer(["0", grace]));
     await settled();
     expect(play).toHaveBeenCalledTimes(1);
 
-    play.mockResolvedValue();
-    document.dispatchEvent(new Event("pointerdown"));
+    // A finger landing isn't yet a touch to the browser, which would refuse again.
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(play).toHaveBeenCalledTimes(1);
+    // A key the browser doesn't count leaves the next touch to try.
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settled();
     expect(play).toHaveBeenCalledTimes(2);
-    expect(play.mock.contexts[1]).toBe(voiceOf(grace));
-    // Once.
-    document.dispatchEvent(new Event("pointerdown"));
-    expect(play).toHaveBeenCalledTimes(2);
+
+    // A click plays it, even one that what was clicked keeps to itself.
+    refusing = false;
+    const button = document.body.appendChild(document.createElement("button"));
+    button.addEventListener("click", (event) => event.stopPropagation());
+    button.click();
+    button.remove();
+    expect(play).toHaveBeenCalledTimes(3);
+    expect(play.mock.contexts[2]).toBe(voiceOf(grace));
+
+    // Whoever plays is left playing, and whoever the browser refuses next waits for the next touch.
+    refusing = true;
+    await offeredRound(["1", linus]);
+    expect(play).toHaveBeenCalledTimes(4);
+    refusing = false;
+    document.body.click();
+    expect(play).toHaveBeenCalledTimes(5);
+    expect(play.mock.contexts[4]).toBe(voiceOf(linus));
+    document.body.click();
+    expect(play).toHaveBeenCalledTimes(5);
   });
 });
 

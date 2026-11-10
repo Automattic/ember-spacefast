@@ -67,22 +67,25 @@ function growingWait([least, most]: readonly [number, number]) {
   };
 }
 
+/** What a browser takes for the person's touch, and lets a voice play from. A tap is one at its click, and not as the finger lands. */
+const TOUCHES = ["click", "keydown"] as const;
+
 /**
  * The others' voices: an `<audio>` each, kept in the page, hidden, which plays its person's track from
  * when the tab is offered it until they leave. A browser that won't play one until the person has
- * touched the page plays them all once they have.
+ * touched the page plays it at their next click or key.
  */
 function voicesThrough(speakerId: string) {
   const playing = new Map<UserId, HTMLAudioElement>();
   const box = document.createElement("div");
   box.hidden = true;
   box.dataset.huddleVoices = "";
-  const playAll = () => {
-    for (const audio of playing.values()) void audio.play().catch(() => {});
+  const playRefused = () => {
+    for (const audio of playing.values()) if (audio.paused) void audio.play().catch(() => {});
   };
+  // In the capture phase, which hears a click that whatever it lands on keeps to itself.
   const playOnceTouched = () => {
-    document.addEventListener("pointerdown", playAll, { once: true });
-    document.addEventListener("keydown", playAll, { once: true });
+    for (const touch of TOUCHES) document.addEventListener(touch, playRefused, true);
   };
   const stop = (userId: UserId) => {
     const audio = playing.get(userId);
@@ -107,8 +110,7 @@ function voicesThrough(speakerId: string) {
     stop,
     stopAll() {
       for (const userId of [...playing.keys()]) stop(userId);
-      document.removeEventListener("pointerdown", playAll);
-      document.removeEventListener("keydown", playAll);
+      for (const touch of TOUCHES) document.removeEventListener(touch, playRefused, true);
       box.remove();
     },
   };
