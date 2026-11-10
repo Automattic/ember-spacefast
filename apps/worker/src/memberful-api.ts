@@ -31,7 +31,7 @@ export interface MemberfulMember {
   /**
    * What someone new can be called here, the one they'd rather first: their full name, then their email
    * address's local part, passing over @ember's (`namesOf`). They're called the first that isn't an AI
-   * agent's, else "Member" (`NAMELESS_MEMBER`).
+   * agent's, else "Member", or "Member 2" and on while an agent is called that (`namelessMember`).
    */
   names: string[];
   /** Their email address, or null when they have none Ember can keep. */
@@ -184,7 +184,17 @@ function isSubscribed({ unrestrictedAccess, subscriptions }: Record<string, unkn
 }
 
 /** What someone new is called here when Memberful gives no name they can have. */
-export const NAMELESS_MEMBER = "Member";
+const NAMELESS_MEMBER = "Member";
+
+/**
+ * What someone new is called when none of their names is free, as `free` says: "Member", or else
+ * "Member 2", "Member 3" and on, while AI agents are called those. There are only so many agents.
+ */
+export function namelessMember(free: (name: string) => boolean): string {
+  let name = NAMELESS_MEMBER;
+  for (let n = 2; !free(name); n++) name = `${NAMELESS_MEMBER} ${n}`;
+  return name;
+}
 
 /**
  * What someone new can be called here: `fullName`, then their email address's local part, cut to the

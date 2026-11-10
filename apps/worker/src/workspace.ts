@@ -96,7 +96,7 @@ import { pictureObjects, type StoredPicture } from "./files/pictures";
 import type { SfuApp } from "./huddles/sfu";
 import { alphanumeric, sortableId } from "./ids";
 import { sendEmail, sendEmails, senderOf, type Sender } from "./mail";
-import { memberfulApiOf, membershipsOf, NAMELESS_MEMBER, type MemberfulMember } from "./memberful-api";
+import { memberfulApiOf, membershipsOf, namelessMember, type MemberfulMember } from "./memberful-api";
 import { webPush } from "./push/keys";
 import { FixedWindowLimit } from "./rate-limit";
 import { sessionTag } from "./revocations";
@@ -1825,8 +1825,8 @@ export class Workspace extends DurableObject<Env> {
    * Signs in `member`, who signed in to the Memberful site `issuer`, with the session their cookie's
    * token opens: as the person their Memberful account is linked to, whether Memberful is on or not, or
    * else, while it's on, as someone new, a member in every open room, linked to it, as joining adds
-   * someone, called by the first of their names that isn't an agent's, else "Member". Accounts are
-   * linked by the site and the member's id there, never matched by email address.
+   * someone, called by the first of their names that isn't an agent's, else "Member" (`namelessMember`).
+   * Accounts are linked by the site and the member's id there, never matched by email address.
    * What Memberful said of their membership, as of `readAt`, is gone by as a check's is
    * (`settleMembership`), unless the Workspace has gone by a newer read: a member whose membership has
    * lapsed is suspended, their sessions elsewhere ending, and one whose membership is renewed is let back.
@@ -1855,7 +1855,8 @@ export class Workspace extends DurableObject<Env> {
       if (!member.subscribed) return "membership";
       // Nobody can take an agent's name, which Memberful knows nothing of.
       const agents = await this.store.agentEntries();
-      const name = member.names.find((name) => !agents.some((agent) => sameName(agent.name, name))) ?? NAMELESS_MEMBER;
+      const free = (name: string) => !agents.some((agent) => sameName(agent.name, name));
+      const name = member.names.find(free) ?? namelessMember(free);
       const session: StoredSession = { id: sortableId(), user: { id: sortableId(), name }, administrator: false, guest: false, lastActiveAt: Date.now() };
       const person = { ...session.user, emailAddress: member.emailAddress };
       try {
@@ -2763,7 +2764,7 @@ export class Workspace extends DurableObject<Env> {
     if (allowed !== true) return allowed;
     if (agentId === null && (await this.store.agentEntries()).length >= MAX_AGENTS) return "full";
     if (agentId !== null && !(await this.store.isAgent(agentId))) return "not found";
-    if ((await this.store.activeNames(agentId)).some((other) => sameName(other, name))) return "name taken";
+    if ((await this.store.namesInUse(agentId)).some((other) => sameName(other, name))) return "name taken";
     return (await this.assistantGateway()) ?? "off";
   }
 
@@ -2773,7 +2774,7 @@ export class Workspace extends DurableObject<Env> {
    * without a key, in every open room or the ones `agent` picks, and everyone's workspace sockets hear of
    * it. Answers it as its page shows it: "off" while Ember AI is off, "set up again" once Ember AI asks AI
    * Gateway through another account or API token than the model was asked through, "full" when there
-   * are as many agents as there can be, "name taken" for a name someone active has (`sameName`),
+   * are as many agents as there can be, "name taken" for a name in use (`namesInUse`, `sameName`),
    * "forbidden" unless that's an administrator, or null without a valid session.
    */
   async createAgent(
@@ -2785,7 +2786,7 @@ export class Workspace extends DurableObject<Env> {
     return this.administerAgents(credentials, async (user, account) => {
       if (!(await this.asksThrough(account, asked.through))) return "set up again";
       if ((await this.store.agentEntries()).length >= MAX_AGENTS) return "full";
-      if ((await this.store.activeNames(null)).some((name) => sameName(name, agent.name))) return "name taken";
+      if ((await this.store.namesInUse(null)).some((name) => sameName(name, agent.name))) return "name taken";
       const id = sortableId();
       const setup = setupOf({ ...agent, levels: { thinking: agent.thinking, length: agent.length } }, asked);
       await this.store.createAgent({ id, name: agent.name, rooms: agent.rooms, avatar, createdBy: user.id, ...setup }, new Date().toISOString());
@@ -2803,8 +2804,8 @@ export class Workspace extends DurableObject<Env> {
    * sockets hear of a new name or avatar. Answers it as its page then shows it: "off" while Ember AI is
    * off, "changed" once the agent was changed since its model was asked, or it needs asking now, "set up
    * again" once Ember AI asks AI Gateway through another account or API token than the model was asked
-   * through, "name taken" for a name someone else active has, "not found" unless `agentId` is an
-   * agent's, "forbidden" unless that's an administrator, or null without a valid session.
+   * through, "name taken" for a name someone else uses (`namesInUse`), "not found" unless `agentId` is
+   * an agent's, "forbidden" unless that's an administrator, or null without a valid session.
    */
   async changeAgent(
     credentials: Credentials,
@@ -2820,8 +2821,9 @@ export class Workspace extends DurableObject<Env> {
         if (asked ? asked.changedAt !== agent.changedAt : asksModel(agent, changes)) return "changed";
         if (asked && !(await this.asksThrough(account, asked.through))) return "set up again";
         const name = changes.name === undefined || changes.name === agent.name ? undefined : changes.name;
-        if (name !== undefined && (await this.store.activeNames(agentId)).some((other) => sameName(other, name))) return "name taken";
-        const model = asked ?? { ...agent, webTools: changes.webSearch === false ? [] : agent.webTools };
+        if (name !== undefined && (await this.store.namesInUse(agentId)).some((other) => sameName(other, name))) return "name taken";
+        // What Cloudflare's catalog calls a model can change while the model doesn't.
+        const model = asked ?? { ...agent, modelName: changes.modelName ?? agent.modelName, webTools: changes.webSearch === false ? [] : agent.webTools };
         const levels = { thinking: changes.thinking ?? agent.levels.thinking, length: changes.length ?? agent.levels.length };
         const setup = setupOf({ description: changes.description ?? agent.description, instructions: changes.instructions ?? agent.instructions, levels }, model);
         const rooms = changes.rooms === undefined || sameRooms(agent.rooms, changes.rooms) ? undefined : changes.rooms;

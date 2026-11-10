@@ -386,6 +386,20 @@ describe("AI agents", () => {
       expect(asked).toEqual([]);
     });
 
+    it("refuses the name of someone banned, or suspended till their membership's renewed, who'd come back with it, but not someone removed", async () => {
+      const administrator = await setUp();
+      const member = await joinAsGrace();
+      const taken = async () => expect(await refusalOf(await makeAgent(administrator, { ...RECAP, name: grace.name }))).toEqual([422, { error: NAME_TAKEN, field: "name" }]);
+      expect((await api(`/api/users/${member.user.id}/ban`, { method: "POST", headers: as(administrator) })).status).toBe(200);
+      await taken();
+      expect((await api(`/api/users/${member.user.id}/ban`, { method: "DELETE", headers: as(administrator) })).status).toBe(200);
+      // As their Memberful membership's lapsing leaves them.
+      await workspaceSql("UPDATE users SET status = 3 WHERE id = ?", member.user.id);
+      await taken();
+      expect((await api(`/api/account/users/${member.user.id}`, { method: "DELETE", headers: as(administrator) })).status).toBe(200);
+      expect(await made(administrator, { name: grace.name })).toMatchObject({ name: grace.name });
+    });
+
     it(`makes at most ${MAX_AGENTS}, refusing more before the model is asked`, async () => {
       const administrator = await setUp();
       for (let n = 1; n <= MAX_AGENTS; n++) await made(administrator, { name: `Agent ${n}` });
@@ -453,6 +467,17 @@ describe("AI agents", () => {
       expect(await agentOf(await changeAgent(administrator, recap.id, RECAP))).toEqual(recap);
       expect(await agentOf(await changeAgent(administrator, recap.id, {}))).toEqual(recap);
       expect(asked).toEqual([]);
+    });
+
+    it("takes the name Cloudflare's catalog gives its model now, without asking the model again", async () => {
+      const administrator = await setUp();
+      const recap = await made(administrator);
+      asked.length = 0;
+      expect(await agentOf(await changeAgent(administrator, recap.id, { model: HAIKU, modelName: "Claude Haiku" }))).toMatchObject({ model: HAIKU, modelName: "Claude Haiku" });
+      expect(asked).toEqual([]);
+      // Nor is it lost while turning Search the web on has the model search.
+      expect(await agentOf(await changeAgent(administrator, recap.id, { model: HAIKU, modelName: "Haiku", webSearch: true }))).toMatchObject({ modelName: "Haiku", webTools: ["search", "read"] });
+      expect(asked.map(searches)).toEqual([true]);
     });
 
     it("refuses a name someone else has, and @ember's", async () => {

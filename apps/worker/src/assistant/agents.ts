@@ -112,7 +112,10 @@ export async function changeAgent(request: Request, env: Env, agentId: UserId): 
   if (asksModel(found, changes)) {
     const gateway = await ember.agentGateway(credentials, changes.name ?? found.name, agentId);
     if (!gateway || typeof gateway === "string") return agentAnswer(gateway);
-    const model = changes.model === undefined || changes.model === found.model ? found : { model: changes.model, modelName: changes.modelName ?? modelName(changes.model) };
+    const model =
+      changes.model === undefined || changes.model === found.model
+        ? { ...found, modelName: changes.modelName ?? found.modelName }
+        : { model: changes.model, modelName: changes.modelName ?? modelName(changes.model) };
     const answered = await askedModel(env, gateway, changes.name ?? found.name, model, changes.webSearch ?? found.webTools.length > 0);
     if (answered instanceof Response) return answered;
     asked = answered;

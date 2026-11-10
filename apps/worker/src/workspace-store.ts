@@ -3379,9 +3379,13 @@ export class WorkspaceStore {
     return (await this.db.all(`SELECT 1 FROM agents WHERE user_id = ?`, userId)).length > 0;
   }
 
-  /** The names of everyone active but `userId`: people, bots and agents. */
-  async activeNames(userId: UserId | null): Promise<string[]> {
-    const rows = await this.db.all<{ name: string }>(`SELECT name FROM users WHERE status = ${ACTIVE} AND id IS NOT ?`, userId);
+  /**
+   * The names of everyone but `userId` who's active, or can be again with the name they have: people,
+   * bots and agents active, and people banned, whom lifting the ban lets back, or suspended for their
+   * membership's lapsing, whom renewing it does.
+   */
+  async namesInUse(userId: UserId | null): Promise<string[]> {
+    const rows = await this.db.all<{ name: string }>(`SELECT name FROM users WHERE status IN (${ACTIVE}, ${BANNED}, ${SUSPENDED}) AND id IS NOT ?`, userId);
     return rows.map((row) => row.name);
   }
 
