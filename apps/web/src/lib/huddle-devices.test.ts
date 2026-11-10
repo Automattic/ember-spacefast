@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeMicrophone, listDevices, microphoneOf, NO_DEVICES, openMicrophone, rememberDevice, rememberedDevice, watchDevices } from "./huddle-devices";
+import { closeMicrophone, listDevices, listsSpeaker, microphoneOf, NO_DEVICES, openMicrophone, rememberDevice, rememberedDevice, watchDevices } from "./huddle-devices";
 
 /** A stream from the microphone `deviceId`, as much of one as the code reads. */
 function streamFrom(deviceId: string) {
@@ -144,6 +144,18 @@ describe("Listing a huddle's devices", () => {
     expect(await listDevices()).toEqual(NO_DEVICES);
     vi.stubGlobal("navigator", {});
     expect(await listDevices()).toEqual(NO_DEVICES);
+  });
+
+  it("says whether a speaker is still listed, and counts one the browser can't say of as there", async () => {
+    withMedia({ enumerateDevices: vi.fn().mockResolvedValue(DEVICES) });
+    expect(await listsSpeaker("speaker-1")).toBe(true);
+    expect(await listsSpeaker("speaker-2")).toBe(false);
+    // A microphone of that id isn't a speaker.
+    expect(await listsSpeaker("mic-1")).toBe(false);
+    withMedia({ enumerateDevices: vi.fn().mockRejectedValue(new Error("refused")) });
+    expect(await listsSpeaker("speaker-2")).toBe(true);
+    vi.stubGlobal("navigator", {});
+    expect(await listsSpeaker("speaker-2")).toBe(true);
   });
 
   it("hears of devices plugged in and taken away until it's told to stop", () => {

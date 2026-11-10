@@ -80,6 +80,18 @@ export async function listDevices(): Promise<HuddleDevices> {
   }
 }
 
+/**
+ * Whether the browser still lists the speaker `deviceId`, which it stops doing once that's unplugged. One
+ * a browser can't say of counts as there.
+ */
+export async function listsSpeaker(deviceId: string): Promise<boolean> {
+  try {
+    return (await navigator.mediaDevices.enumerateDevices()).some((device) => device.kind === "audiooutput" && device.deviceId === deviceId);
+  } catch {
+    return true;
+  }
+}
+
 /** Has `changed` hear whenever a device is plugged in or taken away, until the function returned is called. */
 export function watchDevices(changed: () => void): () => void {
   const media = navigator.mediaDevices as MediaDevices | undefined;

@@ -656,6 +656,60 @@ describe("Hearing the others in a huddle", () => {
     }
   });
 
+  it("plays through the system's speaker for as long as the one chosen is unplugged, which would play nothing", async () => {
+    const setSinkId = vi.fn(async () => {});
+    Object.defineProperty(HTMLMediaElement.prototype, "setSinkId", { configurable: true, value: setSinkId });
+    const speakers = (...ids: string[]) => ids.map((deviceId) => ({ kind: "audiooutput", deviceId }));
+    const enumerateDevices = vi.fn(async () => speakers("default", "headphones"));
+    const media = Object.assign(new EventTarget(), { enumerateDevices });
+    vi.stubGlobal("navigator", { mediaDevices: media });
+    const changes = async (to: ReturnType<typeof speakers>) => {
+      setSinkId.mockClear();
+      enumerateDevices.mockResolvedValue(to);
+      media.dispatchEvent(new Event("devicechange"));
+      await settled();
+    };
+    try {
+      const room = await joined([person(grace), person(linus)], { speakerId: "headphones" });
+      room.receive(offer(["0", grace]));
+      await settled();
+
+      // Something else is plugged in, and the voices stay where they play.
+      await changes(speakers("default", "headphones", "monitor"));
+      expect(setSinkId.mock.calls).toEqual([["headphones"]]);
+
+      await changes(speakers("default", "monitor"));
+      expect(setSinkId).toHaveBeenCalledExactlyOnceWith("");
+      expect(setSinkId.mock.contexts[0]).toBe(voiceOf(grace));
+      // Whoever is offered meanwhile plays there too, as an `<audio>` does until it's told otherwise.
+      setSinkId.mockClear();
+      await offeredRound(["1", linus]);
+      expect(setSinkId).not.toHaveBeenCalled();
+
+      await changes(speakers("default", "monitor", "headphones"));
+      expect(setSinkId.mock.calls).toEqual([["headphones"], ["headphones"]]);
+      expect(setSinkId.mock.contexts).toEqual([voiceOf(grace), voiceOf(linus)]);
+
+      // Out of the huddle, it has stopped asking.
+      leaveHuddle();
+      enumerateDevices.mockClear();
+      media.dispatchEvent(new Event("devicechange"));
+      expect(enumerateDevices).not.toHaveBeenCalled();
+    } finally {
+      delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
+    }
+  });
+
+  it("asks nothing of the browser's speakers when it plays through the system's", async () => {
+    const enumerateDevices = vi.fn(async () => []);
+    const media = Object.assign(new EventTarget(), { enumerateDevices });
+    vi.stubGlobal("navigator", { mediaDevices: media });
+    await joined([person(grace)]);
+    media.dispatchEvent(new Event("devicechange"));
+    await settled();
+    expect(enumerateDevices).not.toHaveBeenCalled();
+  });
+
   it("plays at the person's next click or key, in a browser that won't until they've touched the page", async () => {
     const started = new WeakSet<HTMLMediaElement>();
     let refusing = true;

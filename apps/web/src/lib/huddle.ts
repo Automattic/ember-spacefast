@@ -1,6 +1,7 @@
 import { CloseCode, parseServerFrame, type RoomId, type UserId } from "@ember/protocol";
 import { HuddleCloseCode, huddleSocketQuery, MAX_HUDDLE_PEOPLE, type HuddleClientFrame, type HuddlePerson, type HuddleServerFrame, type OfferedHuddleTrack } from "@ember/protocol/huddles";
 import { socketUrl } from "./api";
+import { listsSpeaker, watchDevices } from "./huddle-devices";
 import { endHuddle, leaveHuddle, showHuddle, type HuddleControls, type JoinedHuddle } from "./huddle-store";
 import { reconnectingSocket } from "./reconnecting-socket";
 
@@ -70,16 +71,31 @@ function growingWait([least, most]: readonly [number, number]) {
 /** What a browser takes for the person's touch, and lets a voice play from. A tap is one at its click, and not as the finger lands. */
 const TOUCHES = ["click", "keydown"] as const;
 
+/** Plays `audio` through the speaker `deviceId`, or the system's for none. Safari has no way to choose one, and plays through the system's. */
+function playThrough(audio: HTMLAudioElement, deviceId: string): void {
+  if (typeof audio.setSinkId === "function") void audio.setSinkId(deviceId).catch(() => {});
+}
+
 /**
  * The others' voices: an `<audio>` each, kept in the page, hidden, which plays its person's track from
  * when the tab is offered it until they leave. A browser that won't play one until the person has
- * touched the page plays it at their next click or key.
+ * touched the page plays it at their next click or key. They play through the speaker `speakerId`, or
+ * through the system's when that's empty, and for as long as that speaker is unplugged, when it would
+ * play nothing.
  */
 function voicesThrough(speakerId: string) {
   const playing = new Map<UserId, HTMLAudioElement>();
   const box = document.createElement("div");
   box.hidden = true;
   box.dataset.huddleVoices = "";
+  /** The speaker they play through now, by its device's id, or empty for the system's. */
+  let speaker = speakerId;
+  const followSpeaker = async () => {
+    if (!speakerId) return;
+    speaker = (await listsSpeaker(speakerId)) ? speakerId : "";
+    for (const audio of playing.values()) playThrough(audio, speaker);
+  };
+  const stopWatching = watchDevices(() => void followSpeaker());
   const playRefused = () => {
     for (const audio of playing.values()) if (audio.paused) void audio.play().catch(() => {});
   };
@@ -100,8 +116,7 @@ function voicesThrough(speakerId: string) {
       audio.dataset.userId = userId;
       audio.autoplay = true;
       audio.srcObject = new MediaStream([track]);
-      // Safari has no way to choose a speaker, and plays through the system's.
-      if (speakerId && typeof audio.setSinkId === "function") void audio.setSinkId(speakerId).catch(() => {});
+      if (speaker) playThrough(audio, speaker);
       playing.set(userId, audio);
       if (!box.isConnected) document.body.append(box);
       box.append(audio);
@@ -111,6 +126,7 @@ function voicesThrough(speakerId: string) {
     stopAll() {
       for (const userId of [...playing.keys()]) stop(userId);
       for (const touch of TOUCHES) document.removeEventListener(touch, playRefused, true);
+      stopWatching();
       box.remove();
     },
   };
