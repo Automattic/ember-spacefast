@@ -887,6 +887,9 @@ test.describe("Edit a message", () => {
     const archivist = await participant("Archivist");
     for (let n = 1; n <= 40; n++) await archivist.say(`Entry #${String(n).padStart(2, "0")}`);
     const ada = await members.signIn("Ada", { administrator: true });
+    // The composer loads the editor's code. An editor opened before then is centred while it's a loading line,
+    // then grows, leaving its middle below the timeline's.
+    await expect(ada.composer()).toBeVisible();
     // The room opens at its newest messages. The editor's message is near the top of the view, so the editor
     // would go up out of it by however much taller than the message it is, if the timeline stayed at the end.
     const [, entry] = await ada.inView(/Entry #\d+/);
