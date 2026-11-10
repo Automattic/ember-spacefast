@@ -287,7 +287,7 @@ Objects, D1 or speed call for something else.
   alone knows who's in it, and Campfire has nothing like one. For everyone in the room to see it, in
   the huddle or not, the Workspace keeps who's in it, a JSON list of their ids in the order they
   joined, and when it started, in `rooms.huddle_user_ids` and `rooms.huddle_started_at` (workspace
-  migration 0050), so the sidebar's statement reads each room's huddle with the room, and listing
+  migration 0051), so the sidebar's statement reads each room's huddle with the room, and listing
   them costs nothing more. The room tells the Workspace whenever who's in its huddle changes, one
   call at a time, so the changes made while a call is out go together in the next, and the Workspace
   tells everyone in the room on their workspace sockets. Each report carries the room's own time for
