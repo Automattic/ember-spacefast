@@ -6,7 +6,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { leave, navigate, useRoute } from "@/hooks/use-route";
 import { ApiError } from "@/lib/api";
 import type { RoomAnswer } from "@/lib/room-list";
-import { CONFIRM_DELETE, RoomSettingsPage } from "./room-settings-page";
+import { CONFIRM_DELETE, CONFIRM_LEAVE, RoomSettingsPage } from "./room-settings-page";
 
 const ada = { id: "u1", name: "Ada Lovelace" };
 const grace = { id: "u2", name: "Grace Hopper" };
@@ -460,6 +460,76 @@ describe("Delete a room", () => {
     await answer(deleted());
     expect(onLeft).toHaveBeenCalledWith(design.id);
     expect(location.pathname).toBe("/rooms/random");
+  });
+});
+
+describe("Leave a private room", () => {
+  const leaveButton = () => screen.findByRole("button", { name: "Leave Leads" });
+  const confirmed = (answer: boolean) => vi.spyOn(window, "confirm").mockReturnValue(answer);
+  const asMember: RoomSettings = { ...closedSettings, canAdminister: false };
+
+  it("offers Leave to someone in a private room they can't change, in its own panel", async () => {
+    serve(asMember);
+    showPage(leads);
+    const button = await leaveButton();
+    expect(button.querySelector("svg")).toHaveClass("iconoir-log-out");
+    expect(button.closest("section")).not.toBe(screen.getByRole("heading", { level: 2, name: "Leads" }).closest("section"));
+  });
+
+  it("leaves once you confirm, taking the room out of the sidebar and going home", async () => {
+    const confirm = confirmed(true);
+    const answer = holdChange(asMember, "DELETE");
+    const { onLeft, onMissing, user } = showPage(leads);
+    await user.click(await leaveButton());
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(CONFIRM_LEAVE);
+    expect(vi.mocked(fetch).mock.calls.at(-1)).toEqual(["/api/rooms/leads/membership", expect.objectContaining({ method: "DELETE" })]);
+    expect(await leaveButton()).toBeDisabled();
+
+    await answer(new Response(null, { status: 204 }));
+    expect(onLeft).toHaveBeenCalledExactlyOnceWith(leads.id);
+    expect(location.pathname).toBe("/");
+    expect(onMissing).not.toHaveBeenCalled();
+  });
+
+  it("leaves nothing unless you confirm", async () => {
+    confirmed(false);
+    serve(asMember);
+    const { onLeft, user } = showPage(leads);
+    await user.click(await leaveButton());
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(await leaveButton()).toBeEnabled();
+  });
+
+  it("says why the room wasn't left, and lets you try again", async () => {
+    confirmed(true);
+    const answer = holdChange(asMember, "DELETE");
+    const { onLeft, onFailed, user } = showPage(leads);
+    await user.click(await leaveButton());
+    await answer(Response.json({ error: "Nobody else could open this room, so you can't leave it" }, { status: 403 }));
+    expect(onFailed).toHaveBeenCalledOnce();
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(await leaveButton()).toBeEnabled();
+  });
+
+  it("offers no Leave to whoever can change the room, whose switches take them out", async () => {
+    serve(closedSettings);
+    showPage(leads);
+    await screen.findByRole("button", { name: "Delete Leads" });
+    expect(screen.queryByRole("button", { name: /^Leave/ })).not.toBeInTheDocument();
+  });
+
+  it("offers no Leave in an open room", async () => {
+    serve(openSettings(false));
+    showPage(design);
+    await screen.findByRole("heading", { level: 2, name: "Design" });
+    expect(screen.queryByRole("button", { name: /^Leave/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Leave when it lists nobody else in the room, leaving it to the server to count someone suspended", async () => {
+    serve({ ...asMember, people: asMember.people.map((person) => ({ ...person, member: person.id === ada.id })) });
+    showPage(leads);
+    expect(await leaveButton()).toBeEnabled();
   });
 });
 

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoomChanges, RoomIconName, RoomId, RoomSettings, User, UserId } from "@ember/protocol";
+import { Button } from "@/components/ui/button";
 import { useMounted } from "@/hooks/use-mounted";
 import { navigate, roomPath, roomSettingsPath, type Access } from "@/hooks/use-route";
 import { useTitle } from "@/hooks/use-title";
-import { Trash } from "@/components/icons/iconoir";
-import { ApiError, changeRoom, deleteRoom, fetchRoomSettings, isSignedOut } from "@/lib/api";
+import { LogOut, Trash } from "@/components/icons/iconoir";
+import { ApiError, changeRoom, deleteRoom, fetchRoomSettings, isSignedOut, leaveRoom } from "@/lib/api";
 import type { RoomAnswer } from "@/lib/room-list";
 import { AccessSwitch, CheckMark, RoomForm, withChoice } from "./room-form";
 import { workspaceSectionPath } from "./settings-navigation";
@@ -16,6 +17,9 @@ export const isMissing = (error: unknown) => error instanceof ApiError && error.
 
 /** What Delete asks first, in the browser's own dialog. */
 export const CONFIRM_DELETE = "Are you sure you want to delete this room and all messages in it? This can’t be undone.";
+
+/** What Leave asks first, in the browser's own dialog. */
+export const CONFIRM_LEAVE = "Are you sure you want to leave this room? Only someone in it who can change it can add you back.";
 
 const membersOf = (settings: RoomSettings) => new Set(settings.people.flatMap((person) => (person.member ? [person.id] : [])));
 
@@ -42,7 +46,9 @@ interface Props {
  * A room's settings. Whoever can change the room renames it, and with the Everyone switch, which swaps
  * one form for the other in place, opens it to everyone or makes it private to the people whose switches
  * are on; under the form, they can delete it. Leaving with changes asks first. Everyone else sees its
- * name and people, in the form for the room's kind.
+ * name and people, in the form for the room's kind, and can leave a private room. The server refuses
+ * the last of its people who could open it, saying why: the page can't tell who they are, as it lists
+ * active people, bots among them, and none who are suspended.
  */
 export function RoomSettingsPage({ roomId, access, me, askForRoom, onMissing, onFailed }: Props) {
   const [settings, setSettings] = useState<RoomSettings | null>(null);
@@ -122,13 +128,14 @@ export function RoomSettingsPage({ roomId, access, me, askForRoom, onMissing, on
     }, failed);
   };
 
-  const remove = () => {
-    if (!confirm(CONFIRM_DELETE)) return;
+  /** Once `question` is confirmed, has `go` take the room from this person, then from the sidebar. */
+  const goOnceConfirmed = (question: string, go: (roomId: RoomId) => Promise<void>) => {
+    if (!confirm(question)) return;
     setBusy(true);
     const answered = askForRoom();
-    deleteRoom(roomId).then(() => {
+    go(roomId).then(() => {
       answered({ type: "gone", roomId });
-      // Deleted, it goes home, with no alert.
+      // Gone, it goes home, with no alert.
       if (mounted.current) navigate("/");
     }, failed);
   };
@@ -173,9 +180,17 @@ export function RoomSettingsPage({ roomId, access, me, askForRoom, onMissing, on
           />
         )}
       </Panel>
+      {settings && !settings.canAdminister && settings.room.kind === "closed" && (
+        <Panel>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => goOnceConfirmed(CONFIRM_LEAVE, leaveRoom)} className="max-w-full touch:h-11">
+            <LogOut className="size-[1.3em] shrink-0" />
+            <span className="truncate">Leave {settings.room.name}</span>
+          </Button>
+        </Panel>
+      )}
       {settings?.canAdminister && (
         <Panel>
-          <DeleteButton label={`Delete ${settings.room.name}`} text={settings.room.name} disabled={busy} onClick={remove} />
+          <DeleteButton label={`Delete ${settings.room.name}`} text={settings.room.name} disabled={busy} onClick={() => goOnceConfirmed(CONFIRM_DELETE, deleteRoom)} />
         </Panel>
       )}
       <UnsavedChanges changed={changed} stays={stays} onSave={send} form={roomForm} />

@@ -786,6 +786,11 @@ export async function deleteRoom(roomId: RoomId): Promise<void> {
   await request(`/api/rooms/${encodeURIComponent(roomId)}`, { method: "DELETE" });
 }
 
+/** Takes this person out of a private room they can't change, as Leave on its settings page does. */
+export async function leaveRoom(roomId: RoomId): Promise<void> {
+  await request(`/api/rooms/${encodeURIComponent(roomId)}/membership`, { method: "DELETE" });
+}
+
 /**
  * The preview of the page `url` goes to, for a link pasted in the composer, or null when it has none, as
  * Campfire's unfurl_controller.js asks for it. The page has none when it answers 204.

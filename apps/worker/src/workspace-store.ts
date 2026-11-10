@@ -1866,6 +1866,13 @@ export const ROOM_TO_CHANGE = `SELECT rooms.id, rooms.kind, rooms.name, rooms.ic
   FROM memberships JOIN rooms ON rooms.id = memberships.room_id JOIN users ON users.id = memberships.user_id
   WHERE memberships.room_id = ? AND memberships.user_id = ? AND rooms.kind <> 'direct'`;
 
+/**
+ * Whether anyone but ?2 who could open room ?1 is in it: no bot can, nor can someone banned, whose
+ * membership stays, and someone suspended can again once their membership is renewed.
+ */
+const ANOTHER_PERSON_IN_ROOM = `SELECT EXISTS (SELECT 1 FROM memberships JOIN users ON users.id = memberships.user_id
+  WHERE memberships.room_id = ?1 AND memberships.user_id <> ?2 AND users.role <> ${BOT} AND users.status IN (${ACTIVE}, ${SUSPENDED})) AS found`;
+
 /** A room someone is in, DMs included, by its kind, and whether they can change it. */
 const ROOM_TO_DELETE = `SELECT rooms.kind, ${CAN_ADMINISTER}
   FROM memberships JOIN rooms ON rooms.id = memberships.room_id JOIN users ON users.id = memberships.user_id
@@ -3353,6 +3360,20 @@ export class WorkspaceStore {
       removedIds: userIdsOf(removed!),
       ranked: isRanked(rank!),
     };
+  }
+
+  /** Whether anyone but `userId` who could open room `roomId` is in it. */
+  async anotherPersonInRoom(roomId: RoomId, userId: UserId): Promise<boolean> {
+    const [row] = await this.db.all<{ found: number }>(ANOTHER_PERSON_IN_ROOM, roomId, userId);
+    return row!.found === 1;
+  }
+
+  /** Takes someone out of a room, and in the same transaction queues closing their sockets there with `code`, due at `dueAt`. */
+  async leaveRoom(roomId: RoomId, userId: UserId, code: CloseCode, dueAt: number): Promise<void> {
+    await this.db.batch([
+      statement(`INSERT INTO pending_revocations (room_id, tag, code, due_at) VALUES (?, ?, ?, ?)`, roomId, userId, code, dueAt),
+      statement(`DELETE FROM memberships WHERE room_id = ? AND user_id = ?`, roomId, userId),
+    ]);
   }
 
   /** The kind of room `roomId`, DMs included, and whether someone can change it, unless they aren't in it. */

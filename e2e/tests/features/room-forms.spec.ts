@@ -171,6 +171,29 @@ test.describe("Add and remove private room members", () => {
   });
 });
 
+test.describe("Leave a private room", () => {
+  test("leaves a private room you can't change from its settings once you confirm, which then leaves your sidebar", async ({ members, request, rooms }) => {
+    const ada = await members.signIn(unique("Ada"), { serverRooms: true });
+    const linus = await members.signIn(unique("Linus"), { serverRooms: true });
+    const leads = await createPrivateRoom(request, linus.session, unique("Leads"), [linus.session, ada.session]);
+    await ada.page.goto(`/rooms/closeds/${leads.id}/edit`);
+
+    const asked = new Promise<string>((resolve) =>
+      ada.page.once("dialog", (dialog) => {
+        resolve(dialog.message());
+        void dialog.accept();
+      }),
+    );
+    await ada.page.getByRole("button", { name: `Leave ${leads.name}` }).click();
+    expect(await asked).toBe("Are you sure you want to leave this room? Only someone in it who can change it can add you back.");
+    await expect(ada.page).toHaveURL(new RegExp(`/rooms/${rooms.general.id}$`));
+    await expect(ada.page.getByRole("region", { name: "Rooms" }).getByRole("link", { name: leads.name })).toHaveCount(0);
+    await expect(ada.page.getByRole("alert")).toHaveCount(0);
+    expect(await canSee(request, ada.session, leads.id)).toBe(false);
+    expect(await canSee(request, linus.session, leads.id)).toBe(true);
+  });
+});
+
 test.describe("Switch a room between open and private", () => {
   test("opens a private room to everyone with the Everyone switch", async ({ members, request }) => {
     const linus = await members.signIn(unique("Linus"), { serverRooms: true });

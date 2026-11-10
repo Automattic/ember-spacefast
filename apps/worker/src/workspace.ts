@@ -2949,6 +2949,34 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
+   * Takes the person `credentials` signs in out of private room `roomId`, by their own choice: "not
+   * found" as for its settings, "open" for an open room, which takes in everyone, "can change" for whoever
+   * can change it, whose settings take them out, and who may be the last who can, "last" when nobody else
+   * could open it then, or null without a valid session. Their sockets there are told to reconnect, and
+   * find it gone, and it leaves their sidebars.
+   */
+  async leaveRoom(credentials: Credentials, roomId: RoomId): Promise<"left" | "not found" | "open" | "can change" | "last" | null> {
+    const user = await this.authenticate(credentials);
+    if (!user) return null;
+    return this.closingSockets(async () => {
+      const found = await this.store.roomToChange(roomId, user.id);
+      if (!found) return "not found";
+      if (found.room.kind !== "closed") return "open";
+      if (found.canAdminister) return "can change";
+      if (!(await this.store.anotherPersonInRoom(roomId, user.id))) return "last";
+      const now = Date.now();
+      try {
+        await this.store.leaveRoom(roomId, user.id, CloseCode.Reconnect, now);
+      } finally {
+        // As when signing out: the database may have saved it, and so queued it, though its answer was lost.
+        await this.revocationsQueued(now);
+      }
+      this.tell([user.id], { type: "room.gone", roomId });
+      return "left";
+    });
+  }
+
+  /**
    * Makes changes to rooms and to the workspace one at a time, each once the one before has finished.
    * Each reads who may make it before it writes, and on D1 other requests run in between: without
    * this, someone another change had just taken out of a room could still open it to everyone, a
