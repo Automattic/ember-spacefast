@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloseCode, startingInvolvement, type Account, type Bot, type DirectoryUser, type DirectRoom, type Me, type Message, type Room, type RoomId, type RoomSettings, type SharedRoom, type SidebarRoom, type TimelinePage, type WorkspaceServerFrame, type WorkspaceSettings } from "@ember/protocol";
+import type { AgentSettings } from "@ember/protocol/agents";
+import type { AssistantSettings } from "@ember/protocol/assistant";
 import { FlashProvider } from "@/components/flash";
 import { AccountContext } from "@/hooks/use-account";
 import { PushContext } from "@/hooks/use-push";
@@ -1926,6 +1928,90 @@ describe("Chat bots page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Only administrators can manage bots");
     expect(location.pathname).toBe("/account/edit");
     expect(await communitySettings()).toBeInTheDocument();
+  });
+});
+
+describe("Agent pages", () => {
+  const asAdministrator: Me = { ...ada, administrator: true };
+  /** Ember AI on GLM-4.7 Flash. */
+  const assistant: AssistantSettings = {
+    accountId: "0123456789abcdef0123456789abcdef",
+    model: "@cf/zai-org/glm-4.7-flash",
+    models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
+    most: { thinking: "high", length: "long" },
+    webTools: null,
+    instructions: "",
+    avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
+    avatar: false,
+  };
+  const recap: AgentSettings = {
+    id: "a1",
+    name: "Recap",
+    bio: null,
+    role: "bot",
+    status: "active",
+    avatarUrl: "/users/a1/avatar?v=1",
+    description: "Sums up threads into decisions and to-dos.",
+    model: assistant.model,
+    modelName: "GLM-4.7 Flash",
+    webTools: [],
+    rooms: null,
+    instructions: "Sum up the conversation so far.",
+    format: "chat",
+    levels: { thinking: "low", length: "medium" },
+    avatar: false,
+    changedBy: { id: ada.id, name: ada.name },
+    changedAt: "2026-11-09T12:00:00.000Z",
+  };
+  /** What an administrator's workspace answers while Ember AI is on. */
+  const withAgents = (responses: Parameters<typeof serve>[0] = {}) =>
+    serve({
+      "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true, assistant }),
+      "GET /api/account/agents": () => Response.json({ agents: [recap] }),
+      "POST /api/account/assistant/catalog": () => Response.json({ models: assistant.models, refusal: null }),
+      ...responses,
+    });
+  const sectionMarked = () => within(screen.getByRole("navigation", { name: "Community settings" })).getByRole("link", { current: "page" });
+
+  it("shows the agents' pages at their addresses from the AI assistant tab, marking it, and Admin on the rail, with Go Back to it", async () => {
+    withAgents({ "GET /api/account/agents/a1": () => Response.json({ agent: recap }) });
+    const { user } = showWorkspace("/account/edit#assistant-settings", asAdministrator);
+    await user.click(await screen.findByRole("link", { name: "Edit Recap" }));
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Recap");
+    expect(document.title).toBe("Edit agent");
+    expect(railCurrent()).toEqual(["Admin"]);
+    expect(sectionMarked()).toHaveTextContent("AI assistant");
+
+    await user.click(screen.getByRole("link", { name: "Go Back" }));
+    await user.click(await screen.findByRole("link", { name: "Edit Ember" }));
+    expect(await screen.findByRole("region", { name: "@ember" })).toBeInTheDocument();
+    expect(railCurrent()).toEqual(["Admin"]);
+    expect(sectionMarked()).toHaveTextContent("AI assistant");
+
+    await user.click(screen.getByRole("link", { name: "Go Back" }));
+    await user.click(await screen.findByRole("link", { name: "New agent" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "New agent" })).toBeInTheDocument();
+    expect(document.title).toBe("New agent");
+    await user.click(screen.getByRole("link", { name: "Go Back" }));
+    expect(await screen.findByRole("region", { name: "Agents" })).toBeInTheDocument();
+  });
+
+  it("loads an agent's settings again when no agent has the id, for the Worker to answer the 404 page", async () => {
+    vi.mocked(loadPage).mockClear();
+    withAgents({ "GET /api/account/agents/nobody": () => Response.json({ error: "Not found" }, { status: 404 }) });
+    showWorkspace("/account/agents/nobody/edit", asAdministrator);
+    await waitFor(() => expect(loadPage).toHaveBeenCalledExactlyOnceWith("/account/agents/nobody/edit"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("sends a member from New agent, or @ember's page, to workspace settings, saying why", async () => {
+    for (const path of ["/account/agents/new", "/account/agents/ember/edit"]) {
+      const { unmount } = showWorkspace(path);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Only administrators can set up agents");
+      expect(location.pathname).toBe("/account/edit");
+      expect(await communitySettings()).toBeInTheDocument();
+      unmount();
+    }
   });
 });
 

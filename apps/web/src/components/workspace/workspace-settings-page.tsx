@@ -33,6 +33,7 @@ import { changeAccount, changeLogo, changeRole, fetchWorkspaceSettings, isSigned
 import { logoVariantsOf } from "@/lib/previews";
 import { apart } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
+import { AgentList } from "./agent-list";
 import { AssistantSettings } from "./assistant-settings";
 import { AssistantSetup } from "./assistant-setup";
 import { CustomDomainSettings } from "./custom-domain-settings";
@@ -100,8 +101,9 @@ interface Props {
  *   or for members, the links that let people in, then the administrators and members, whom
  *   administrators can make administrators or members and remove.
  * - Domain settings: for administrators, the custom domain Ember answers at.
- * - AI assistant: for administrators, whether @ember runs on a model through Cloudflare AI Gateway, which
- *   Set up Ember AI chooses.
+ * - AI assistant: for administrators, whether Ember's AI agents run on models through Cloudflare AI
+ *   Gateway, which Set up Ember AI connects, and while they do, the agents, @ember first, each linking to
+ *   its page, and New agent.
  */
 export function WorkspaceSettingsPage({
   me,
@@ -571,7 +573,7 @@ export function WorkspaceSettingsPage({
       </Panel>
       <Panel id="assistant-settings" hidden={section !== "assistant-settings"} aria-labelledby="assistant-settings-heading" className="flex flex-col gap-6">
         <PageHeading id="assistant-settings-heading" title="AI assistant" className={SECTION_HEADING}>
-          Add an AI assistant people can ask in the chat.
+          Add AI agents people can ask in the chat.
         </PageHeading>
         {settings &&
           (settings.canAdminister ? (
@@ -580,9 +582,9 @@ export function WorkspaceSettingsPage({
                 assistant={settings.assistant}
                 onSetUp={() => setSettingUpAssistant(true)}
                 onStopped={() => showAssistant(null)}
-                onChanged={showAssistant}
                 onFailed={onFailed}
               />
+              {settings.assistant && <AgentList assistant={settings.assistant} onFailed={onFailed} />}
               {settingUpAssistant && (
                 <AssistantSetup
                   assistant={settings.assistant}

@@ -77,6 +77,7 @@ import {
   MAX_ASSISTANT_MODELS,
   modelName,
   TOP_LEVELS,
+  WEB_TOOLS_IN,
   withinMost,
   type AnswerLevels,
   type AssistantChanges,
@@ -85,7 +86,7 @@ import {
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
 import { MAX_AGENTS, type Agent, type AgentChanges, type AgentRoom, type AgentSettings, type NewAgent } from "@ember/protocol/agents";
-import { WEB_TOOLS_IN, type Gateway } from "./assistant/gateway";
+import type { Gateway } from "./assistant/gateway";
 import { eachAtMost, ROOMS_AT_ONCE } from "./at-once";
 import { directoryOf, TooSoon, tooSoonAfter, versionOf } from "./avatar-tokens";
 import { banProblem, type BanProblem } from "./bans";

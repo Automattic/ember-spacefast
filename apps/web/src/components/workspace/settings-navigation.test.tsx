@@ -62,7 +62,7 @@ describe("Community settings page", () => {
     expect(scrolled).not.toHaveBeenCalled();
   });
 
-  it("puts workspace settings, the room forms, the bot pages and Custom styles in their sections, and no other page", () => {
+  it("puts workspace settings, the room forms, the bot and agent pages and Custom styles in their sections, and no other page", () => {
     const sections: [string, SettingsSection | null][] = [
       ["/account/edit", "community-settings"],
       ["/account/edit#community-settings", "community-settings"],
@@ -78,6 +78,9 @@ describe("Community settings page", () => {
       ["/account/bots", "chat-bots"],
       ["/account/bots/new", "chat-bots"],
       ["/account/bots/b1/edit", "chat-bots"],
+      ["/account/agents/new", "assistant-settings"],
+      ["/account/agents/a1/edit", "assistant-settings"],
+      ["/account/agents/ember/edit", "assistant-settings"],
       ["/account/custom_styles/edit", "custom-styles"],
       ["/rooms/general", null],
       ["/rooms/directs/d1/edit", null],

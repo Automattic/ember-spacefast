@@ -1,4 +1,4 @@
-import type { UserId } from "@ember/protocol";
+import { ASSISTANT_ID, type UserId } from "@ember/protocol";
 import {
   AGENT_CHANGED,
   AGENT_SET_UP_AGAIN,
@@ -15,17 +15,18 @@ import {
   type AgentTrial,
   type AgentTrialAnswer,
 } from "@ember/protocol/agents";
-import { ASSISTANT_OFF, modelName, type ModelFormat } from "@ember/protocol/assistant";
+import { ASSISTANT_OFF, modelName, WEB_TOOLS_IN, type ModelFormat } from "@ember/protocol/assistant";
 import { prepareBody } from "@ember/richtext";
 import { credentialsOf } from "../auth";
 import { userFormOf, userFormPhoto } from "../avatars";
 import { jsonBodyOf } from "../bodies";
 import { keptCards } from "../cards";
 import type { Env } from "../env";
-import { formAnswer } from "../pages";
+import { notFound } from "../error-pages";
+import { anyOtherPage, formAnswer } from "../pages";
 import { asksModel, workspace, type AgentTrialAccess, type AskedModel } from "../workspace";
 import { answerOf, questionFor, waitFor } from "./answers";
-import { askInTurn, formatsFor, WEB_TOOLS_IN, type Answered, type Gateway, type GatewayRefusal } from "./gateway";
+import { askInTurn, formatsFor, type Answered, type Gateway, type GatewayRefusal } from "./gateway";
 import { administratorOf, greetingFrom, searchedBy, TEST_QUESTION, WEB_TEST_QUESTION } from "./settings";
 
 // AI agents, as administrators make, change and delete them beside @ember on the AI assistant tab of
@@ -53,6 +54,18 @@ const webTestQuestionFor = (name: string) => ({
   ...WEB_TEST_QUESTION,
   instructions: `You are ${name}, an AI agent in a team's chat. An administrator has just let you search the web.`,
 });
+
+/**
+ * An agent's settings page, `/account/agents/<id>/edit`: Campfire's 404 page for an administrator when
+ * `id` isn't an active agent's, or @ember's, whose page is always there, and otherwise the app's page,
+ * which sends anyone signed out to sign in, anyone else to workspace settings, and anyone while Ember AI
+ * is off to the AI assistant tab.
+ */
+export async function agentPage(request: Request, env: Env, pathname: string, agentId: UserId): Promise<Response> {
+  const credentials = agentId === ASSISTANT_ID ? null : await credentialsOf(request, env);
+  const found = credentials && (await workspace(env).agent(credentials, agentId));
+  return found === "not found" ? notFound(request) : anyOtherPage(request, env, pathname);
+}
 
 /** `GET /api/account/agents`: the agents, by name, as the AI assistant tab lists them while Ember AI is on. */
 export async function listAgents(request: Request, env: Env): Promise<Response> {

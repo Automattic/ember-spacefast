@@ -1,5 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import type { BotAnswer, Bots, BotSettings } from "@ember/protocol";
+import type { AgentAnswer, Agents, AgentSettings, AgentTrialAnswer } from "@ember/protocol/agents";
+import { TOP_LEVELS, type AssistantCatalog, type AssistantSettings } from "@ember/protocol/assistant";
 import { changeTheWorkspace, fakeTurnstile, isolateRoom, listing, openRoom, signInAs, signInAsAdministrator, TURNSTILE_WIDGET, useOwnAddress, type Passes } from "../../fixtures";
 import { auditScreen, settle } from "./audits";
 import { expect, hasDrawerLayout, SWITCHES, test } from "./fixtures";
@@ -255,6 +257,136 @@ test("a bot's settings fit the phone", async ({ page, screenIsFine }) => {
   for (const name of ["Incoming", "Outgoing"]) {
     await page.getByRole("region", { name }).scrollIntoViewIfNeeded();
     await screenIsFine();
+  }
+});
+
+/** Ember AI on Claude Sonnet 5.5, with Ember's flame as @ember's avatar. */
+const ASSISTANT: AssistantSettings = {
+  accountId: "0123456789abcdef0123456789abcdef",
+  model: "anthropic/claude-sonnet-5.5",
+  models: [{ id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages" }],
+  most: TOP_LEVELS,
+  webTools: [],
+  instructions: "",
+  avatarUrl: "/assistant-avatar.svg",
+  avatar: false,
+};
+
+/** Cloudflare's catalog, as the Worker lists it, with what other companies' models cost. */
+const CATALOG: AssistantCatalog = {
+  models: [
+    { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
+    { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages", price: { input: 3, output: 15 } },
+    { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses", price: { input: 2, output: 10 } },
+  ],
+  refusal: null,
+};
+
+/**
+ * An agent named as long as names go, saying as much as it can of what it does, kept to rooms named as
+ * long, and last changed by someone named so, as the AI assistant tab lists it and its page shows it.
+ */
+const AGENT: AgentSettings = {
+  id: "0mgk3x2a9b4c60",
+  name: LONG_NAME,
+  bio: null,
+  role: "bot",
+  status: "active",
+  avatarUrl: "/assistant-avatar.svg",
+  description: "Sums up every thread into the decisions made, the questions still open and the to-dos people took on",
+  model: "anthropic/claude-sonnet-5.5",
+  modelName: "Claude Sonnet 5.5",
+  webTools: ["search", "read"],
+  rooms: [1, 2, 3, 4].map((n) => ({ id: `0mgk3x2a9b4c5${n}`, name: `${LONG_NAME}-${n}` })),
+  instructions: "You sum up conversations for the team.\n\nList the decisions made, then the questions still open, then the to-dos, each with who took it on.",
+  format: "messages",
+  levels: { thinking: "medium", length: "long" },
+  avatar: true,
+  changedBy: { id: "0mgk3x2a9b4c5d", name: LONG_NAME },
+  changedAt: "2026-11-09T12:00:00.000Z",
+};
+
+/** What Try it's model says. */
+const TRIED: AgentTrialAnswer = { body: `<p>Two decisions so far, and one to-do for ${LONG_NAME}.</p>`, cards: [], ms: 2345 };
+
+/** Shows `page` Ember AI on, with `AGENT` its only agent, without turning on the test server's, which would put @ember in every other test's rooms. */
+async function showTheAgents(page: Page): Promise<void> {
+  await page.route("**/api/account", async (route) => {
+    const response = await route.fetch();
+    if (!response.ok()) return route.fulfill({ response });
+    await route.fulfill({ response, json: { ...(await response.json()), assistant: ASSISTANT } });
+  });
+  await page.route("**/api/account/agents", (route) => route.fulfill({ json: { agents: [AGENT] } satisfies Agents }));
+  await page.route(`**/api/account/agents/${AGENT.id}`, (route) => route.fulfill({ json: { agent: AGENT } satisfies AgentAnswer }));
+  await page.route("**/api/account/assistant/catalog", (route) => route.fulfill({ json: CATALOG }));
+  await page.route("**/api/account/agents/trials", (route) => route.fulfill({ json: TRIED }));
+}
+
+/** Scrolls to each of the agent's page's cards in turn, which fit the phone. */
+async function eachCardFits(page: Page, screenIsFine: (options?: { denseTargets?: string[] }) => Promise<void>) {
+  for (const name of ["Instructions", "How it answers", "Search the web", "Rooms", "Try it"]) {
+    await page.getByRole("region", { name, exact: true }).scrollIntoViewIfNeeded();
+    await screenIsFine({ denseTargets: [SWITCHES] });
+  }
+}
+
+test("an administrator's AI assistant tab, listing an agent named as long as names go, fits the phone", async ({ page, screenIsFine }) => {
+  await useOwnAddress(page);
+  await showTheAgents(page);
+  await page.goto("/account/edit#assistant-settings");
+  await signInAsAdministrator(page);
+  const edit = page.getByRole("region", { name: "Agents", exact: true }).getByRole("link", { name: `Edit ${LONG_NAME}` });
+  await expect(edit).toBeVisible();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+  await edit.scrollIntoViewIfNeeded();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+});
+
+test("New agent fits the phone, card by card, with what Ember adds around the instructions and Try it's answer", async ({ page, screenIsFine }) => {
+  await useOwnAddress(page);
+  await showTheAgents(page);
+  await page.goto("/account/agents/new");
+  await signInAsAdministrator(page);
+  await expect(page.getByRole("textbox", { name: "Name" })).toBeVisible();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+  await page.getByText("What Ember adds around them").tap();
+  await page.getByRole("radio", { name: "Only the rooms I choose" }).tap();
+  const tryIt = page.getByRole("region", { name: "Try it", exact: true });
+  await tryIt.getByRole("textbox", { name: "Question" }).fill("What did we decide?");
+  await tryIt.getByRole("button", { name: "Ask" }).tap();
+  await expect(tryIt).toContainText("Answered in 2.3 seconds.");
+  await eachCardFits(page, screenIsFine);
+  await page.getByRole("button", { name: "Create agent" }).scrollIntoViewIfNeeded();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+});
+
+test("an agent's settings fit the phone, with who last changed it and Delete agent", async ({ page, screenIsFine }) => {
+  await useOwnAddress(page);
+  await showTheAgents(page);
+  await page.goto("/account/edit#assistant-settings");
+  await signInAsAdministrator(page);
+  // From the tab, as the Worker answers its 404 page for an agent it doesn't have.
+  await page.getByRole("link", { name: `Edit ${LONG_NAME}` }).click();
+  await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue(LONG_NAME);
+  await expect(page.getByRole("button", { name: "Remove avatar" })).toBeVisible();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+  await eachCardFits(page, screenIsFine);
+  await page.getByRole("button", { name: `Delete ${LONG_NAME}` }).scrollIntoViewIfNeeded();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+});
+
+test("@ember's page fits the phone", async ({ page, screenIsFine }) => {
+  await useOwnAddress(page);
+  await showTheAgents(page);
+  await page.goto("/account/agents/ember/edit");
+  await signInAsAdministrator(page);
+  const ember = page.getByRole("region", { name: "@ember", exact: true });
+  await expect(ember.getByRole("textbox", { name: "Instructions" })).toBeVisible();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+  await ember.getByText("What Ember adds around them").tap();
+  for (const heading of ["Instructions", "Models", "Search the web", "Limits"]) {
+    await ember.getByRole("heading", { name: heading, exact: true }).scrollIntoViewIfNeeded();
+    await screenIsFine({ denseTargets: [SWITCHES] });
   }
 });
 

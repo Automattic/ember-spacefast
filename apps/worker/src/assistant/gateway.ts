@@ -1,8 +1,9 @@
 import {
-  ASSISTANT_MODELS,
+  formatOf,
   MODEL_FORMATS,
   PAGES_READ_PER_ANSWER,
   WEB_SEARCHES_PER_ANSWER,
+  WEB_TOOLS_IN,
   type AssistantField,
   type ModelFormat,
   type ThinkingLevel,
@@ -30,9 +31,6 @@ const PATHS: Record<ModelFormat, string> = { messages: "messages", responses: "r
 
 /** The most of Cloudflare's own words about a refusal that Ember passes on. */
 const MAX_QUOTED_LENGTH = 200;
-
-/** What a model may do on the web in each format, with the tools AI Gateway passes on in it. */
-export const WEB_TOOLS_IN: Record<ModelFormat, readonly WebTool[]> = { messages: ["search", "read"], responses: ["search"], chat: [] };
 
 /** The most of a page a model reads, in tokens, about as many as the longest conversation @ember reads. */
 const PAGE_TOKENS = 10_000;
@@ -272,13 +270,12 @@ function answeredIn(format: ModelFormat, body: unknown): Answered | GatewayRefus
 }
 
 /**
- * The formats to ask `model` in, the one it's likeliest to take first: a listed model's, else Messages
- * for Anthropic's, which take nothing else, Responses for OpenAI's, some of which take only that, and
- * Chat Completions for the rest.
+ * The formats to ask `model` in, the one it's likeliest to take first (`formatOf`): a listed model's,
+ * else Messages for Anthropic's, which take nothing else, Responses for OpenAI's, some of which take only
+ * that, and Chat Completions for the rest.
  */
 export function formatsFor(model: string): ModelFormat[] {
-  const listed = ASSISTANT_MODELS.find(({ id }) => id === model)?.format;
-  const first = listed ?? (model.startsWith("anthropic/") ? "messages" : model.startsWith("openai/") ? "responses" : "chat");
+  const first = formatOf(model);
   return [first, ...MODEL_FORMATS.filter((format) => format !== first)];
 }
 

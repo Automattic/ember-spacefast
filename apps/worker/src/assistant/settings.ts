@@ -18,6 +18,7 @@ import {
   parseNewAssistantModel,
   parseWebSearchChange,
   parseYourAssistantChanges,
+  WEB_TOOLS_IN,
   type AssistantCatalog,
   type AssistantChanged,
   type AssistantForgotten,
@@ -36,7 +37,7 @@ import { NO_STORAGE } from "../files/uploads";
 import { formAnswer } from "../pages";
 import { workspace, type Credentials } from "../workspace";
 import { catalogOf } from "./catalog";
-import { askInTurn, askOnce, formatsFor, WEB_TOOLS_IN, type Gateway, type GatewayRefusal, type Question } from "./gateway";
+import { askInTurn, askOnce, formatsFor, type Gateway, type GatewayRefusal, type Question } from "./gateway";
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
 // workspace settings, the models people can pick, which administrators add there from Cloudflare's
