@@ -17,11 +17,17 @@ const HELP = "Hold a starred room to drag it, or press Alt and the up or down ar
 
 type Props = ComponentProps<typeof Sidebar>;
 
+/** An AI agent, as the people directory lists it. */
+const agent = (id: string, name: string): DirectoryUser => ({ id, name, bio: null, role: "bot", status: "active", avatarUrl: `/users/${id}/avatar`, agent: true });
+
 /** The workspace, as it's set up. */
 const EMBER: Account = { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {} };
 
-/** The sidebar, with `props` in place of an unstarred one listing `rooms` with none open, in `account`'s workspace. */
-function renderSidebar(props: Partial<Props> = {}, account = EMBER) {
+/**
+ * The sidebar, with `props` in place of an unstarred one listing `rooms` with none open, in `account`'s
+ * workspace, with the people directory listing `people`.
+ */
+function renderSidebar(props: Partial<Props> = {}, account = EMBER, people: readonly DirectoryUser[] = []) {
   const all: Props = {
     workspaceName: "Ember",
     meId: "u1",
@@ -39,10 +45,13 @@ function renderSidebar(props: Partial<Props> = {}, account = EMBER) {
     onSessionChanged: vi.fn(),
     ...props,
   };
+  const listed = new Map(people.map((person) => [person.id, person]));
   const sidebar = (changes: Partial<Props>, shown: Account) => (
-    <AccountContext value={shown}>
-      <Sidebar {...all} {...changes} />
-    </AccountContext>
+    <PeopleContext value={listed}>
+      <AccountContext value={shown}>
+        <Sidebar {...all} {...changes} />
+      </AccountContext>
+    </PeopleContext>
   );
   const view = render(sidebar({}, account));
   return { ...view, ...all, rerender: (changes: Partial<Props>, changed = account) => view.rerender(sidebar(changes, changed)) };
@@ -512,6 +521,16 @@ describe("Group DMs and DM names", () => {
     expect(within(alone!).getByText("Agent")).toHaveAttribute("data-slot", "badge");
     expect(group).toHaveAccessibleName("Direct message with Ember, Grace");
   });
+
+  it("badges a DM with any agent alone, as the people directory lists it, but not one with another bot", () => {
+    const recap = agent("u8", "Recap");
+    const bot: DirectoryUser = { id: "u9", name: "Build Bot", bio: null, role: "bot", status: "active", avatarUrl: "/users/u9/avatar" };
+    renderSidebar({ rooms: [direct("d1", [ada!, recap], false, at(2)), direct("d2", [ada!, bot], false, at(1))] }, EMBER, [recap, bot]);
+    const [withAgent, withBot] = directRows();
+    expect(withAgent).toHaveAccessibleName("Direct message with Recap Agent");
+    expect(within(withAgent!).getByText("Agent")).toHaveAttribute("data-slot", "badge");
+    expect(withBot).toHaveAccessibleName("Direct message with Build Bot");
+  });
 });
 
 describe("Conversations sidebar", () => {
@@ -558,6 +577,12 @@ describe("Suggested people", () => {
   it("badges @ember as an agent where it's suggested", () => {
     renderSidebar({ suggestions: [{ id: "ember", name: "Ember" }, linus!] });
     expect(suggestionRows().map((row) => row.textContent)).toEqual(["Start a direct message with Ember Agent", "Start a direct message with Linus"]);
+  });
+
+  it("badges any agent where it's suggested, as the people directory lists it", () => {
+    const recap = agent("u8", "Recap");
+    renderSidebar({ suggestions: [{ id: recap.id, name: recap.name }, linus!] }, EMBER, [recap]);
+    expect(suggestionRows().map((row) => row.textContent)).toEqual(["Start a direct message with Recap Agent", "Start a direct message with Linus"]);
   });
 
   it("leaves out the people in your DMs, suggesting one fewer for each, as soon as a DM lists them", () => {

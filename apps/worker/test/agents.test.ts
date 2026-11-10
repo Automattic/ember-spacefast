@@ -1,4 +1,15 @@
-import { ASSISTANT_ID, NAME_RESERVED, type Directory, type DirectoryUser, type Me, type NewWorkspace, type RoomId, type UserId, type WorkspaceSettings } from "@ember/protocol";
+import {
+  ASSISTANT_ID,
+  NAME_RESERVED,
+  type Directory,
+  type DirectoryUser,
+  type Me,
+  type NewWorkspace,
+  type PersonAnswer,
+  type RoomId,
+  type UserId,
+  type WorkspaceSettings,
+} from "@ember/protocol";
 import {
   AGENT_CHANGED,
   AGENT_SET_UP_AGAIN,
@@ -15,6 +26,7 @@ import {
 } from "@ember/protocol/agents";
 import { ASSISTANT_FORBIDDEN, ASSISTANT_OFF, type AssistantChanged } from "@ember/protocol/assistant";
 import type { BotAnswer, Bots } from "@ember/protocol/bots";
+import { mentionPromptItem } from "@ember/richtext";
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentAnsweredUnsearched } from "../src/assistant/agents";
@@ -185,6 +197,13 @@ async function inDirectory(viewer: Session, userId: UserId): Promise<DirectoryUs
   return users.find((user) => user.id === userId);
 }
 
+/** Someone's page, as it shows them to `viewer`. */
+async function pageOf(viewer: Session, userId: UserId): Promise<PersonAnswer> {
+  const response = await api(`/api/users/${userId}`, { headers: as(viewer) });
+  expect(response.status, await response.clone().text()).toBe(200);
+  return (await response.json()) as PersonAnswer;
+}
+
 /** The next `count` people a workspace socket hears of, by ID, past what else it hears of, such as rooms. */
 async function heardOf(socket: WorkspaceSocket, count: number): Promise<DirectoryUser[]> {
   const heard: DirectoryUser[] = [];
@@ -318,6 +337,7 @@ describe("AI agents", () => {
         role: "bot",
         status: "active",
         avatarUrl: expect.stringMatching(/^\/users\/[^/]+\/avatar\?v=\d{14}$/) as string,
+        agent: true,
         description: RECAP.description,
         model: HAIKU,
         modelName: "Claude Haiku 5.5",
@@ -341,10 +361,10 @@ describe("AI agents", () => {
       expect(await workspaceSql("SELECT role, bot_token, email_address, password_digest FROM users WHERE id = ?", recap.id)).toEqual([
         { role: 2, bot_token: null, email_address: null, password_digest: null },
       ]);
-      const { id, name, bio, role, status, avatarUrl, description, model, modelName, webTools, rooms } = recap;
-      expect(await listed(administrator)).toEqual([{ id, name, bio, role, status, avatarUrl, description, model, modelName, webTools, rooms }]);
+      const { id, name, bio, role, status, avatarUrl, agent, description, model, modelName, webTools, rooms } = recap;
+      expect(await listed(administrator)).toEqual([{ id, name, bio, role, status, avatarUrl, agent, description, model, modelName, webTools, rooms }]);
       expect(await shownAgent(administrator, recap.id)).toEqual(recap);
-      const asListed = { id, name, bio, role, status, avatarUrl };
+      const asListed = { id, name, bio, role, status, avatarUrl, agent };
       expect(await inDirectory(administrator, recap.id)).toEqual(asListed);
       expect(await tab.next()).toEqual({ type: "user.updated", user: asListed });
     });
@@ -642,14 +662,14 @@ describe("AI agents", () => {
       for (const { id } of [recap, juniper]) expect((await api(`/api/users/${id}/ban`, { method: "DELETE", headers: as(administrator) })).status).toBe(404);
       expect(await roomsOf(recap.id)).toEqual([]);
       expect(await roomsOf(juniper.id)).toEqual([]);
-      expect((await inDirectory(administrator, recap.id))?.status).toBe("deactivated");
+      expect(await inDirectory(administrator, recap.id)).toMatchObject({ status: "deactivated", agent: true });
 
       // Meanwhile, an open room is made, and one Juniper was in is closed.
       const later = await createRoom("Later", { as: administrator });
       await changeRoom(administrator, support.id, { kind: "closed", memberIds: [administrator.user.id] });
 
       await turnOn(administrator);
-      expect((await heardOf(tab, 3)).map(({ id, status }) => [id, status])).toEqual(everyone.map((id) => [id, "active"]));
+      expect((await heardOf(tab, 3)).map(({ id, status, agent }) => [id, status, agent])).toEqual(everyone.map((id) => [id, "active", true]));
       expect(await roomsOf(recap.id)).toEqual(await openRooms());
       expect(await roomsOf(recap.id)).toContain(later.id);
       expect(await roomsOf(recap.id)).not.toContain(leads.id);
@@ -706,6 +726,66 @@ describe("AI agents", () => {
       }
       expect(await shownAgent(administrator, recap.id)).toEqual(recap);
       expect(await roomsOf(recap.id)).toEqual([support.id]);
+    });
+  });
+
+  describe("across the chat", () => {
+    it("are agents to the people directory, as @ember is and no bot or person, and stay agents once deleted, as their answers stay", async () => {
+      const administrator = await setUp();
+      const member = await joinAsGrace();
+      const bot = await addBot(administrator, "Build Bot");
+      const tab = await openWorkspaceSocket(member);
+      const recap = await made(administrator);
+      expect(await heardOf(tab, 1)).toEqual([expect.objectContaining({ id: recap.id, status: "active", agent: true })]);
+      for (const id of [recap.id, ASSISTANT_ID]) expect(await inDirectory(member, id)).toHaveProperty("agent", true);
+      for (const id of [administrator.user.id, member.user.id, bot.id]) expect(await inDirectory(member, id)).not.toHaveProperty("agent");
+
+      expect((await deleteAgent(administrator, recap.id)).status).toBe(204);
+      expect(await heardOf(tab, 1)).toEqual([expect.objectContaining({ id: recap.id, status: "deactivated", agent: true })]);
+      expect(await inDirectory(member, recap.id)).toMatchObject({ status: "deactivated", agent: true });
+      expect((await api(`/api/account/bots/${bot.id}`, { method: "DELETE", headers: as(administrator) })).status).toBe(204);
+      expect(await inDirectory(member, bot.id)).toMatchObject({ status: "deactivated" });
+      expect(await inDirectory(member, bot.id)).not.toHaveProperty("agent");
+    });
+
+    it("are offered in the mentions prompt badged as agents, as @ember is, and no bot or person", async () => {
+      const administrator = await setUp();
+      const recap = await made(administrator);
+      const bot = await addBot(administrator, "Build Bot");
+      const response = await api("/api/autocompletable/users", { headers: as(administrator) });
+      expect(response.status, await response.clone().text()).toBe(200);
+      const card = async (userId: UserId) => {
+        const { id, name, avatarUrl } = (await inDirectory(administrator, userId))!;
+        return { id, name, avatarUrl };
+      };
+      expect(await response.text()).toBe(
+        mentionPromptItem(await card(administrator.user.id)) +
+          mentionPromptItem(await card(bot.id)) +
+          mentionPromptItem({ ...(await card(ASSISTANT_ID)), agent: true }) +
+          mentionPromptItem({ ...(await card(recap.id)), agent: true }),
+      );
+    });
+
+    it("show everyone what they do, the model they answer with and who set them up on their pages, but not their instructions", async () => {
+      const administrator = await setUp();
+      const member = await joinAsGrace();
+      const recap = await made(administrator);
+      const profile = { description: RECAP.description, model: HAIKU, modelName: recap.modelName, setUpBy: { id: administrator.user.id, name: ada.name } };
+      expect(await pageOf(member, recap.id)).toEqual({ person: await inDirectory(member, recap.id), agent: profile });
+      expect(JSON.stringify(await pageOf(member, recap.id))).not.toContain(RECAP.instructions);
+      expect(await pageOf(administrator, recap.id)).toMatchObject({ agent: profile });
+
+      // Another administrator changing it doesn't make them the one who set it up.
+      await promote(administrator, member);
+      await agentOf(await changeAgent(member, recap.id, { description: "Sums up threads" }));
+      expect((await pageOf(member, recap.id)).agent).toEqual({ ...profile, description: "Sums up threads" });
+
+      const bot = await addBot(administrator, "Build Bot");
+      for (const id of [ASSISTANT_ID, bot.id, administrator.user.id]) expect(await pageOf(member, id)).not.toHaveProperty("agent");
+      expect((await deleteAgent(administrator, recap.id)).status).toBe(204);
+      const deleted = await pageOf(member, recap.id);
+      expect(deleted.person).toMatchObject({ status: "deactivated", agent: true });
+      expect(deleted).not.toHaveProperty("agent");
     });
   });
 

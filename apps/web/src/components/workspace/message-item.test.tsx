@@ -1,4 +1,4 @@
-import type { Boost, Card, Message, StoredFile, User } from "@ember/protocol";
+import type { Boost, Card, DirectoryUser, Message, StoredFile, User } from "@ember/protocol";
 import { bodyFromPlainText } from "@ember/richtext/dom";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
@@ -379,6 +379,28 @@ describe("Message rows", () => {
     expect(within(show(message({ creator: { id: "ember", name: "Ember" } }), { threaded: true }).article).queryByText("Agent")).not.toBeInTheDocument();
     cleanup();
     expect(within(show(message()).article).queryByText("Agent")).not.toBeInTheDocument();
+  });
+
+  it("follows the name of every agent the people directory lists with the badge, deleted ones too, and no other bot's", () => {
+    const bot = (id: string, name: string, changes: Partial<DirectoryUser> = {}): DirectoryUser => ({ id, name, bio: null, role: "bot", status: "active", avatarUrl: "", ...changes });
+    const authors = [bot("u4", "Recap", { agent: true }), bot("u5", "Scout", { agent: true, status: "deactivated" }), bot("u6", "Build Bot")];
+    const actions = { boost: vi.fn(), unboost: vi.fn(), edit: vi.fn(), remove: vi.fn() };
+    const editors = { open: vi.fn(), close: vi.fn(), returnFocus: vi.fn(), attach: vi.fn(), reply: vi.fn() };
+    render(
+      <PeopleContext value={new Map(authors.map((author) => [author.id, author]))}>
+        {authors.map(({ id, name }) => (
+          <MessageItem
+            key={id}
+            message={message({ id, clientMessageId: id, creator: { id, name }, createdAt: "2026-10-12T15:04:00" })}
+            me={{ ...ada, administrator: false }}
+            {...{ threaded: false, editing: false, actions, editors }}
+          />
+        ))}
+      </PeopleContext>,
+    );
+    const headings = screen.getAllByRole("heading", { level: 3 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(["Recap Agent3:04 PM", "Scout Agent3:04 PM", "Build Bot3:04 PM"]);
+    expect(within(headings[0]!).getByText("Agent")).toHaveAttribute("data-slot", "badge");
   });
 
   it("titles the author with their bio as the people directory lists it, or with just their name", () => {

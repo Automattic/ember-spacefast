@@ -72,6 +72,17 @@ export interface AgentSettings extends Agent {
   changedAt: string;
 }
 
+/**
+ * An agent as its page at `/users/<id>` shows it to everyone, but its instructions: what it does, the
+ * model it answers with and what that's called, and the administrator who made it.
+ */
+export interface AgentProfile {
+  description: string;
+  model: string;
+  modelName: string;
+  setUpBy: User;
+}
+
 /** What `GET /api/account/agents` answers: the agents, by name. */
 export interface Agents {
   agents: Agent[];

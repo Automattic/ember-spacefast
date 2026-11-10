@@ -4,9 +4,10 @@ import { administratorSession, cookieHeader, editorField, expect, SAME_ORIGIN, s
 import { AI_GATEWAY_ACCOUNT } from "../../projects/workspace-settings";
 import { HELLO, startFakeGateway, type FakeGateway } from "./fake-gateway";
 
-// The AI assistant tab's Agents card, New agent and an agent's page, with Try it, and an agent answering
-// a mention, on the second test server, through the AI Gateway this spec fakes. Each test starts with
-// Ember AI on Claude Sonnet 5.5, and leaves the workspace as a new one is: no agents, and Ember AI off.
+// The AI assistant tab's Agents card, New agent and an agent's page, with Try it, an agent answering a
+// mention, and its badge and profile, on the second test server, through the AI Gateway this spec fakes.
+// Each test starts with Ember AI on Claude Sonnet 5.5, and leaves the workspace as a new one is: no
+// agents, and Ember AI off.
 
 const SONNET = "anthropic/claude-sonnet-5.5";
 
@@ -158,5 +159,37 @@ test.describe("Agents", () => {
     // Its page is gone.
     const gone = await page.goto(`/account/agents/${scout.id}/edit`);
     expect(gone!.status()).toBe(404);
+  });
+
+  test("an agent's name has the Agent badge in the mention prompt and on its answers, and its profile says what it does and runs on", async ({ page, request }) => {
+    const recap = await makeAgent(request, "Recap");
+    await useOwnAddress(page);
+    await page.goto("/");
+    await signInAsAdministrator(page);
+    await page.getByRole("complementary", { name: "Conversations" }).getByRole("link", { name: "general" }).click();
+    const composer = editorField(page, "Write a message");
+    await composer.pressSequentially("@Reca");
+    await expect(page.getByRole("listbox").getByRole("option")).toHaveText([/^Recap\s*Agent$/]);
+    await composer.press("Tab");
+    await composer.pressSequentially(`What did we decide? ${crypto.randomUUID().slice(0, 8)}`);
+    const answering = gateway.hold();
+    await composer.press("Enter");
+    await expect(page.locator(".spinner")).toHaveText("Recap");
+    answering();
+    const answer = page.getByRole("article").last();
+    await expect(answer).toContainText(HELLO);
+    await expect(answer.getByRole("heading", { level: 3 })).toHaveText(/^Recap Agent/);
+
+    await page.goto(`/users/${recap.id}`);
+    const profile = page.getByRole("main");
+    await expect(profile.getByRole("heading", { level: 1 })).toHaveText("Recap");
+    await expect(profile.getByText("Agent", { exact: true })).toBeVisible();
+    await expect(profile.getByText(recap.description)).toBeVisible();
+    await expect(profile.getByText(/^An AI agent running on /)).toHaveText(
+      "An AI agent running on Claude Sonnet 5.5 through Cloudflare AI Gateway, which sends the conversation you ask it in to Anthropic. You set it up.",
+    );
+    await expect(profile.getByRole("button", { name: "Ping Recap" })).toBeVisible();
+    // Its instructions are for administrators, on its settings page.
+    await expect(profile).not.toContainText("Sum up the conversation so far");
   });
 });

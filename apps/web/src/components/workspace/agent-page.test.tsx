@@ -586,7 +586,7 @@ describe("An agent's settings", () => {
   });
 
   it("lists a room the agent's kept to that the administrator isn't in, so they can take it out of it", async () => {
-    // Someone banned as a room is made isn't put in it, then or once their ban is lifted.
+    // Such as one made while they were banned.
     const { user } = showSettings(ada, [RESEARCH]);
     await loaded();
     expect(screen.getByRole("checkbox", { name: "design" })).toBeChecked();

@@ -20,6 +20,7 @@ account, as [Deploying](#deploying) describes.
   - [Push notifications](#push-notifications)
   - [Files](#files)
   - [Ember AI](#ember-ai)
+  - [AI agents](#ai-agents)
   - [Huddles](#huddles)
   - [A preview from GitHub Actions](#a-preview-from-github-actions)
   - [A demo from GitHub Actions](#a-demo-from-github-actions)
@@ -505,16 +506,25 @@ show up as Cloudflare adds them: Workers AI's first, then other companies', with
 million tokens costs where the catalog says. When the catalog can't be read, the menu has the models
 Ember knows and says why, and Another model takes any model by its ID. The Worker asks the model a
 test question before keeping the setup. @ember then joins every room open to everyone, and turning the
-card off takes it out again and forgets the token. Nobody else can take the name Ember, though anyone
-who had it keeps it.
+card off takes it and the [AI agents](#ai-agents) out again and forgets the token. Nobody else can take
+the name Ember, though anyone who had it keeps it.
 
-@ember's avatar is Ember's flame until an administrator picks a picture in the Avatar section of the
-Ember AI card, which R2 keeps as it does people's avatars, and Use Ember's flame brings the flame back.
+While Ember AI is on, the Agents card under it lists @ember, marked Built in, then the agents, each
+linking to its page. @ember's page, headed Ember, has the settings below: its avatar, its instructions,
+the models people can pick, Search the web and the limits.
+
+@ember's avatar is Ember's flame until an administrator picks a picture in the Avatar section of
+@ember's page, which R2 keeps as it does people's avatars, and Use Ember's flame brings the flame back.
 The picture stays while Ember AI is off, as @ember's messages do. Each change gives the avatar a new
 address, even two changes in the same second, and every open page hears of it at once, so nobody's
 browser goes on showing the old picture it keeps for half an hour.
 
-The Models list on the Ember AI card has the models people can pick, at most 20, starting with the one
+@ember follows Ember's own instructions, and Instructions, on its page, adds an administrator's to
+them, up to 10,000 characters, such as how the team likes answers written or what to leave to people.
+What Ember adds around them shows the whole prompt @ember is given, from the Worker's own code. They're
+kept while Ember AI is off.
+
+The Models list on @ember's page has the models people can pick, at most 20, starting with the one
 Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another, Add
 a model offers the catalog's text models nobody can pick yet, asking the one chosen a test question
 before adding it, and Remove takes one out. Each person picks theirs from the Model menu under Ember
@@ -551,22 +561,23 @@ its model thinks before it answers, up to about 4,000, 16,000 or 32,000 tokens, 
 takes it: a Workers AI or OpenAI model's reasoning effort, or Anthropic's adaptive thinking, at its
 lowest effort for Off, since Anthropic's newest models don't turn thinking off. Answer length, Short,
 Medium or Long, is about 150, 400 or 1,500 words, which @ember's instructions ask for and its token
-limit allows, with room for code and tables. The Limits on the Ember AI card set the most of each for
+limit allows, with room for code and tables. The Limits on @ember's page set the most of each for
 anyone's questions, the top of each until an administrator lowers them, and each person picks their
 own levels under Ember AI on their profile, up to those, starting at Low thinking and a Medium answer.
+An agent's levels are its own, set on its page.
 A model that refuses a thinking level is asked again without one. @ember waits for its model as long
 as the levels may take, 2 minutes at the least and about 13 at High and Long. An answer its token limit
 cuts short ends with an ellipsis, and when the model thinks for all it may before writing anything,
 @ember says so and suggests less thinking.
 
-Search the web, on the Ember AI card, lets @ember search the web and read pages with its model's own
+Search the web, on @ember's page, lets @ember search the web and read pages with its model's own
 tools, which AI Gateway passes on and the model's provider runs
 ([Cloudflare's guide](https://developers.cloudflare.com/ai-gateway/usage/web-search/)): Anthropic's
 [web search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) and
 [web fetch](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) for a model
 that takes Messages, and OpenAI's [web search](https://platform.openai.com/docs/guides/tools-web-search)
 for one that takes Responses. Chat Completions has no such tools, so a Workers AI or Google model
-can't search, which the card says, its switch opening Set up Ember AI to choose another model.
+can't search, which the page says, its switch opening Set up Ember AI to choose another model.
 Turning it on asks the model that answers everyone a question it has to search the web for, and keeps
 the tools AI Gateway took, reading pages only if it took that tool too, and says what the model found;
 a model that answers without searching leaves it off. Choosing another model to answer everyone, under
@@ -581,6 +592,52 @@ at most 10, leaving out those the answer links to itself. A model that stops tak
 again without them, told it can't search this time. Its searches are written from the conversation, so
 the provider's search sees what the room was asking about. While it's off, @ember is told it can't
 search, and that an administrator can turn Search the web on.
+
+### AI agents
+
+Beside @ember, administrators can make AI agents of their own, each a bot that answers with its own
+instructions and model, for a task such as summing up threads or drafting replies in a support room.
+While Ember AI is on, New agent, on the Agents card, makes one, up to 20, and the card links to each
+agent's page, which changes it. The page sets up:
+
+- **Name and avatar.** An agent's name is unique among everyone, in any capitals, so no person or bot
+  can pose as it, nor take its name while it exists, whether Ember AI is on or off. Its avatar is its
+  initials until an administrator uploads a picture.
+- **What it does**, in a line of at most 100 characters, which the Agents card and the agent's profile
+  show, so people know when to ask it.
+- **Instructions**, its system prompt, up to 10,000 characters: its task, how to go about it, and what to
+  leave alone. What Ember adds around them shows the prompt the Worker writes around them, from the
+  same code. They aren't secret, as anyone who can ask the agent could get it to repeat them, so leave
+  out keys, passwords and private links. Nor are they a boundary: someone in the conversation can talk
+  an agent out of them, so what an agent reads and does is up to Ember's code, as it is for @ember.
+- **How it answers**: its model, from the catalog's text models, or Another model by its ID, and its
+  own Thinking and Answer length, the dials @ember has, which people can't change on their profile as
+  they can for @ember. For a model outside Workers AI, the page says the most an answer at those
+  levels costs at the model's prices.
+- **Search the web**, as @ember's does, for Anthropic's and OpenAI's models. Turned on for another
+  model, it says in red that the model can't search, until the model or the switch changes.
+- **Rooms**: every room open to everyone, new ones too, as @ember is, or only the open rooms chosen.
+  People can still add it to a closed room or DM it, as they can anyone.
+
+Try it asks the agent a question as the page sets it up, before anyone saves, and shows the answer as
+the agent's message would, with how long it took, to nobody else. Create agent, and Save changes when
+the model changes or Search the web goes on, first ask the model a test question, or one it has to
+search the web for, as Set up Ember AI does. The page says who last changed the agent, and when, and
+Delete agent, which asks first, takes it out of every room for good and frees its name, while its
+answers stay.
+
+An agent answers as @ember does: when it's mentioned in a room or a thread it's in, or written to in a
+DM, it reads the same conversation and sends it through AI Gateway to its own model, whose provider
+reads it, with its own instructions. Like @ember, it never answers a bot, so agents and @ember don't
+answer each other. AI Gateway's logs and spend limits tell the agents apart by `agent_id`, as
+[Ember AI](#ember-ai) says. Turning Ember AI off takes every agent out of its rooms, as it does
+@ember, and keeps them, to come back as they were when it's on again, in the open rooms there are then.
+
+The Agent badge follows an agent's name wherever it shows, so nobody takes it for a person: on its
+messages, deleted agents' too, on a DM with it alone in the sidebar and the room's header, in the
+mention prompt and New direct message, and on its profile. The profile shows everyone what the agent
+does, the model it answers with, where that runs (Cloudflare's Workers AI, or the company that makes
+the model, which AI Gateway sends what it's asked to), and who set it up, but not its instructions.
 
 ### Huddles
 
@@ -777,7 +834,8 @@ pages had them in October 2026:
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
   Each person's questions cost what the model they pick does, so add to the Models list only the
-  models you're happy to pay for. While Search the web is on, an answer can also search up to 5 times,
+  models you're happy to pay for, and each [agent's](#ai-agents) what its own model does at its own
+  dials, whose most its page says. While Search the web is on, an answer can also search up to 5 times,
   which Anthropic charges $10 per 1,000 searches for and OpenAI its own price per search, and the
   results and pages it reads count as input, up to about 10,000 tokens a page.
 - **Huddles**, if they're on: Cloudflare's Realtime SFU charges for what it sends to the people in a

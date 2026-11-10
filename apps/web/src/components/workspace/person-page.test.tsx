@@ -1,4 +1,5 @@
 import type { DirectoryUser, Me, Person, PersonAnswer, User } from "@ember/protocol";
+import type { AgentProfile } from "@ember/protocol/agents";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -280,6 +281,77 @@ describe("A bot's profile", () => {
     showPage(bender);
     expect(await avatar()).toBeVisible();
     expect(screen.queryByText("Agent")).toBeNull();
+  });
+
+  describe("an agent's", () => {
+    const recap: Person = { ...bender, id: "u4", name: "Recap", agent: true };
+    const HAIKU: AgentProfile = { description: "Sums up long threads", model: "anthropic/claude-haiku-5.5", modelName: "Claude Haiku 5.5", setUpBy: { id: grace.id, name: grace.name } };
+    const showAgent = (agent: AgentProfile, shown: Shown = {}, person = recap) => {
+      serve(() => Response.json({ person, agent } satisfies PersonAnswer));
+      return showPage(person, shown);
+    };
+    const runsOn = () => screen.getByText(/^An AI agent running on /);
+
+    it("shows its name, what it does, the model it answers with, whom that sends what's asked to, and who set it up, under the badge", async () => {
+      const { onStartDirect, user } = showAgent(HAIKU);
+      expect(await heading()).toHaveTextContent(/^Recap$/);
+      expect(screen.getByText("Agent").previousElementSibling).toContainElement(await avatar());
+      expect(screen.getByText("Sums up long threads")).toBeVisible();
+      expect(runsOn()).toHaveTextContent(
+        /^An AI agent running on Claude Haiku 5\.5 through Cloudflare AI Gateway, which sends the conversation you ask it in to Anthropic\. Grace Hopper set it up\.$/,
+      );
+      // Its instructions are only on its settings page.
+      expect(screen.queryByRole("textbox")).toBeNull();
+      await user.click(directButton("Recap")!);
+      expect(onStartDirect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: recap.id, name: "Recap" }));
+    });
+
+    it("says a Workers AI model runs on Cloudflare, and names each other model's maker it knows", async () => {
+      const models: Array<[Pick<AgentProfile, "model" | "modelName">, RegExp]> = [
+        [{ model: "@cf/zai-org/glm-4.7-flash", modelName: "GLM-4.7 Flash" }, /^An AI agent running on GLM-4\.7 Flash, on Cloudflare’s Workers AI\. /],
+        [{ model: "openai/gpt-6.1-sol", modelName: "GPT-6.1 Sol" }, /, which sends the conversation you ask it in to OpenAI\. /],
+        [{ model: "google/gemini-4-argon", modelName: "Gemini 4 Argon" }, /, which sends the conversation you ask it in to Google\. /],
+        [{ model: "moonshotai/kimi-k3", modelName: "Kimi K3" }, /, which sends the conversation you ask it in to Moonshot AI\. /],
+        [{ model: "xai/grok-5", modelName: "Grok 5" }, /^An AI agent running on Grok 5 through Cloudflare AI Gateway, which sends the conversation you ask it in to the model’s maker\. /],
+      ];
+      for (const [model, said] of models) {
+        showAgent({ ...HAIKU, ...model });
+        expect(await heading()).toBeVisible();
+        expect(runsOn()).toHaveTextContent(said);
+        cleanup();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("says you set it up, if you did, and names whoever else did as the people directory lists them now", async () => {
+      showAgent({ ...HAIKU, setUpBy: { id: ada.id, name: ada.name } });
+      expect(await heading()).toBeVisible();
+      expect(runsOn()).toHaveTextContent(/ You set it up\.$/);
+      cleanup();
+
+      const renamed: DirectoryUser = { ...grace, name: "Grace Brewster Hopper" };
+      showAgent(HAIKU, { people: new Map([[renamed.id, renamed]]) });
+      expect(await heading()).toBeVisible();
+      expect(runsOn()).toHaveTextContent(/ Grace Brewster Hopper set it up\.$/);
+    });
+
+    it("says what it does while Ember AI is off, but that it's no longer on this account, without the DM button", async () => {
+      showAgent(HAIKU, {}, { ...recap, status: "deactivated" });
+      expect(await heading()).toHaveTextContent(/^Recap$/);
+      expect(screen.getByText("Sums up long threads")).toBeVisible();
+      expect(screen.getByText("Recap is no longer on this account")).toBeVisible();
+      expect(directButton("Recap")).toBeNull();
+    });
+
+    it("badges an agent the people directory lists, deleted ones too, with only their avatar, as a bot's page", async () => {
+      const deleted = { ...recap, status: "deactivated" as const };
+      serve(found(deleted));
+      showPage(deleted, { people: new Map([[deleted.id, deleted]]) });
+      expect(await avatar()).toBeVisible();
+      expect(screen.getByText("Agent")).toHaveAttribute("data-slot", "badge");
+      expect(screen.queryByRole("heading")).toBeNull();
+      expect(screen.getByText("Recap is no longer on this account")).toBeVisible();
+    });
   });
 
   it("shows only a deleted bot's avatar and that it's no longer on this account", async () => {

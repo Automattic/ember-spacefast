@@ -9,7 +9,7 @@ import { isSignedOut, startDirect } from "@/lib/api";
 import { PEOPLE_PAGE, peopleMatching, soughtName } from "@/lib/directs";
 import type { RoomAnswer } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
-import { AgentBadge, isAssistant } from "./agent-badge";
+import { AgentBadge, useIsAgent } from "./agent-badge";
 import { UserAvatar } from "./user-avatar";
 
 // The New direct message dialog. It lists the people directory the page already has, so it searches as
@@ -71,6 +71,7 @@ interface Props {
 export function NewDirectDialog({ opener, meId, reloadPeople, askForRoom, onClose, onFailed }: Props) {
   const people = useContext(PeopleContext);
   const nameOf = useNameOf();
+  const isAgent = useIsAgent();
   const mounted = useMounted();
   const listId = useId();
   const search = useRef<HTMLInputElement>(null);
@@ -302,7 +303,7 @@ export function NewDirectDialog({ opener, meId, reloadPeople, askForRoom, onClos
                   <UserAvatar user={person} />
                   <span className="min-w-0 wrap-anywhere">
                     {nameOf(person)}
-                    {isAssistant(person) && <AgentBadge className="ms-0.5" />}
+                    {isAgent(person) && <AgentBadge className="ms-0.5" />}
                   </span>
                 </button>
               ))}
