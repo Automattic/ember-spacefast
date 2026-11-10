@@ -187,8 +187,8 @@ To try a beta:
   [Deploying](#deploying) describes, with a Worker, bucket and database of its own, so it's a new
   community, apart from any you run.
 - On your computer: in a clone of Ember, `git checkout v0.5.0-beta.1`, then `pnpm install`,
-  `pnpm dev`, and `pnpm seed` for a community to try it in, as
-  [Development](development.md#getting-started) says.
+  `pnpm build`, which `pnpm dev` serves the app from, `pnpm dev`, and `pnpm seed` for a community
+  to try it in, as [Development](development.md#getting-started) says.
 - On a copy you have: run Update Ember from the Actions tab with **Take Ember's newest beta** ticked,
   and merge the pull request it opens. The box comes with the workflow Ember has now, and an update's
   pull request says when yours is older, for you to copy Ember's over it. Where the copy's update
