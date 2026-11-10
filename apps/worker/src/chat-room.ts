@@ -512,6 +512,17 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   /**
+   * The thread of the message `parentId` names, for a bot reading the room: the message and its newest
+   * replies, oldest first, or null when the room has no such message or it's a reply, which has no thread.
+   */
+  async botThread(roomId: RoomId, parentId: string): Promise<Message[] | null> {
+    return this.serially(async () => {
+      const { parent, messages } = await this.storeFor(roomId).thread(parentId, HISTORY_PAGE_SIZE);
+      return parent && [parent, ...messages];
+    });
+  }
+
+  /**
    * Replaces the text of the bot's message `messageId` with `markup`: as a socket's message.update does,
    * answering the message as it is now. Answers `NOT_FOUND` when the room turns the bot away, as
    * `createBotMessage` does, or has no such message, `FORBIDDEN` when it's someone else's, then why the
