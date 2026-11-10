@@ -93,6 +93,7 @@ import {
   ROOM_ICON_NAMES,
   ROOM_PROTOCOL,
   roomSocketQuery,
+  sameName,
   signInSaying,
   signsUpOpenly,
   signsUpWithEmailDomain,
@@ -1196,6 +1197,11 @@ describe("Set up the workspace", () => {
     for (const name of ["Ember", "ember", "EMBER", " eMbEr ", "@ember", "@ Ember", "Ｅｍｂｅｒ", "Em\u200Bber", "\u00A0Ember\u00A0"]) expect(isReservedName(name), name).toBe(true);
     for (const name of ["Embers", "Ember Lee", "Amber", "Emb er", "ember@example.com", ""]) expect(isReservedName(name), name).toBe(false);
     expect(ASSISTANT_NAME).toBe("Ember");
+  });
+
+  it("tells names that look the same apart from names that don't, as an agent's is kept for it", () => {
+    for (const name of ["Recap", "recap", " RECAP ", "@Recap", "Ｒｅｃａｐ", "Re\u200Bcap"]) expect(sameName(name, "Recap"), name).toBe(true);
+    for (const name of ["Recaps", "Re cap", "Recap Bot", ""]) expect(sameName(name, "Recap"), name).toBe(false);
   });
 
   it("takes a name and an email address as long as Ember keeps, counting the name once trimmed", () => {

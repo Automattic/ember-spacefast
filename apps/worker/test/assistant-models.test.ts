@@ -200,6 +200,7 @@ const settingsWith = (models: AssistantModel[], model = models[0]!.id): Assistan
   models,
   most: TOP_LEVELS,
   webTools: models.find(({ id }) => id === model)?.format === "chat" ? null : [],
+  instructions: "",
   ...WITH_THE_FLAME,
 });
 

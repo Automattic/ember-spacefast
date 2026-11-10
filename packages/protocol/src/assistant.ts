@@ -111,10 +111,12 @@ export type AnswerLevelChanges = Partial<AnswerLevels>;
 
 /**
  * What `PATCH /api/account/assistant` changes: the most one dial or both go to for anyone's questions,
- * or which of the models people can pick @ember answers everyone else with.
+ * which of the models people can pick @ember answers everyone else with, or the instructions Ember adds
+ * to @ember's own, "" for none.
  */
 export interface AssistantChanges extends AnswerLevelChanges {
   model?: string;
+  instructions?: string;
 }
 
 /**
@@ -132,21 +134,37 @@ export const LEVELS_REFUSED = "Choose a level the dial has.";
 export const MODEL_NOT_LISTED = "Choose one of the models an administrator added.";
 
 /**
+ * The longest instructions Ember takes, for @ember to add to its own or for an agent: about 2,500 tokens,
+ * a quarter of the longest conversation it reads.
+ */
+export const MAX_INSTRUCTIONS_LENGTH = 10_000;
+
+/** Why instructions are refused before anything's saved. */
+export const INSTRUCTIONS_TOO_LONG = `Instructions can be at most ${MAX_INSTRUCTIONS_LENGTH.toLocaleString("en-US")} characters.`;
+
+/**
  * The changes `data` gives, as the Ember AI card sends them, or why they can't be changes: they change
- * nothing, or give a level a dial doesn't have, or a model that can't be one.
+ * nothing, or give a level a dial doesn't have, a model that can't be one, or instructions that aren't
+ * text or are longer than Ember takes. Instructions are saved without the spaces around them.
  */
 export function parseAssistantChanges(data: unknown): AssistantChanges | { error: string } {
   const given = objectIn(data);
   const levels = levelChangesIn(given);
   if ("error" in levels) return levels;
-  if (given.model === undefined) return Object.keys(levels).length > 0 ? levels : { error: LEVELS_REFUSED };
+  const { instructions } = given;
+  if (instructions !== undefined && (typeof instructions !== "string" || instructions.trim().length > MAX_INSTRUCTIONS_LENGTH)) return { error: INSTRUCTIONS_TOO_LONG };
+  const changes: AssistantChanges = { ...levels, ...(typeof instructions === "string" && { instructions: instructions.trim() }) };
+  if (given.model === undefined) return Object.keys(changes).length > 0 ? changes : { error: LEVELS_REFUSED };
   const model = typeof given.model === "string" ? modelOf(given.model) : null;
-  return model === null ? { error: MODEL_NOT_LISTED } : { ...levels, model };
+  return model === null ? { error: MODEL_NOT_LISTED } : { ...changes, model };
 }
 
-/** Your changes `data` gives, as your profile sends them, or why they can't be changes, as `parseAssistantChanges` says, where a null model leaves yours to administrators. */
+/**
+ * Your changes `data` gives, as your profile sends them, or why they can't be changes, as `parseAssistantChanges`
+ * says, where a null model leaves yours to administrators. @ember's instructions aren't yours to change.
+ */
 export function parseYourAssistantChanges(data: unknown): YourAssistantChanges | { error: string } {
-  const given = objectIn(data);
+  const { instructions: _, ...given } = objectIn(data);
   if (given.model !== null) return parseAssistantChanges(given);
   const levels = levelChangesIn(given);
   return "error" in levels ? levels : { ...levels, model: null };
@@ -182,7 +200,8 @@ export const PAGES_READ_PER_ANSWER = 3;
  * from, that one among them, in the order they were added, the most each dial goes to for anyone's
  * questions, and what @ember does on the web: what it may while Search the web is on, nothing while it's
  * off, or null when the model that answers everyone can't, as only Anthropic's and OpenAI's models have
- * tools for it that AI Gateway passes on. Then @ember's avatar.
+ * tools for it that AI Gateway passes on. Then the instructions Ember adds to @ember's own, and @ember's
+ * avatar.
  */
 export interface AssistantSettings {
   accountId: string;
@@ -190,6 +209,8 @@ export interface AssistantSettings {
   models: AssistantModel[];
   most: AnswerLevels;
   webTools: WebTool[] | null;
+  /** What Ember adds to @ember's own instructions, as administrators write them, or "" for nothing, which stays while Ember AI is off. */
+  instructions: string;
   /** @ember's avatar, as the people directory gives it (`DirectoryUser.avatarUrl`): the picture an administrator uploaded, or Ember's flame. */
   avatarUrl: string;
   /** Whether an administrator uploaded @ember's avatar, which Use Ember's flame takes away, though one that can't be resized shows the flame. */

@@ -78,6 +78,7 @@ import {
   type UserId,
   type WorkspaceSettings,
 } from "@ember/protocol";
+import { agentsName } from "@ember/protocol/agents";
 import { mentionPromptItem } from "@ember/richtext";
 import { isAccountLogoPath, showAccountLogo, storeLogo } from "./account-logo";
 import {
@@ -95,6 +96,7 @@ import {
   tokenDigest,
 } from "./auth";
 import { directoryOf } from "./avatar-tokens";
+import { changeAgent, createAgent, deleteAgent, listAgents, removeAgentAvatar, showAgent } from "./assistant/agents";
 import {
   addAssistantModel,
   changeAssistantAvatar,
@@ -221,7 +223,7 @@ async function signInWithPassword({ emailAddress, password, returnTo }: Record<s
 
 /**
  * Signs someone in with just a name, as someone new every time, when EMBER_GUEST_SIGN_IN allows it,
- * unless Memberful is members only, or the name is @ember's.
+ * unless Memberful is members only, or the name is @ember's or an agent's.
  */
 async function signInGuest(given: unknown, request: Request, env: Env): Promise<Response> {
   if (!guestSignIn(env)) return problem(403, "Signing in with just a name is turned off");
@@ -232,6 +234,7 @@ async function signInGuest(given: unknown, request: Request, env: Env): Promise<
   const token = newSessionToken();
   const user = await workspace(env).signInGuest(name, await tokenDigest(token, env.SESSION_SECRET), clientOf(request));
   if (user === "memberful") return problem(403, MEMBERFUL_SIGN_IN_NEEDED);
+  if (user === "agent's name") return problem(422, agentsName(name));
   return json({ user }, { status: 201, headers: { "Set-Cookie": sessionCookie(request, token) } });
 }
 
@@ -651,6 +654,7 @@ async function changeProfile(request: Request, env: Env): Promise<Response> {
   if (!yours) return problem(401, "Not signed in");
   if (yours === "email address taken") return problem(422, "That email address has an account already");
   if (yours === "name reserved") return problem(422, NAME_RESERVED);
+  if (yours === "agent's name") return problem(422, agentsName(rest.name!));
   if (yours === "password needed") return problem(422, currentPassword ? CURRENT_PASSWORD_WRONG : CURRENT_PASSWORD_NEEDED);
   return profileAnswer(yours, env);
 }
@@ -1077,6 +1081,15 @@ function apiAction(request: Request, env: Env, pathname: string): (() => Respons
   if (pathname === "/api/account/assistant/web_search" && request.method === "PUT") return () => changeWebSearch(request, env);
   if (pathname === "/api/account/assistant/avatar" && request.method === "PUT") return () => changeAssistantAvatar(request, env);
   if (pathname === "/api/account/assistant/avatar" && request.method === "DELETE") return () => removeAssistantAvatar(request, env);
+  if (pathname === "/api/account/agents" && request.method === "GET") return () => listAgents(request, env);
+  if (pathname === "/api/account/agents" && request.method === "POST") return () => createAgent(request, env);
+  // As with people and bots, agents' ids never need percent-encoding, so an encoded segment names none.
+  const agent = pathname.match(/^\/api\/account\/agents\/([^/]+)$/);
+  if (agent && request.method === "GET") return () => showAgent(request, env, agent[1]!);
+  if (agent && request.method === "PATCH") return () => changeAgent(request, env, agent[1]!);
+  if (agent && request.method === "DELETE") return () => deleteAgent(request, env, agent[1]!);
+  const agentAvatar = pathname.match(/^\/api\/account\/agents\/([^/]+)\/avatar$/);
+  if (agentAvatar && request.method === "DELETE") return () => removeAgentAvatar(request, env, agentAvatar[1]!);
   if (pathname === "/api/account/huddles" && request.method === "PUT") return () => saveHuddles(request, env);
   if (pathname === "/api/account/huddles" && request.method === "DELETE") return () => forgetHuddles(request, env);
   if (pathname === "/api/account/custom_domain_checks" && request.method === "POST") return () => checkCustomDomain(request, env);

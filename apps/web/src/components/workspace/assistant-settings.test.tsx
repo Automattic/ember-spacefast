@@ -63,6 +63,7 @@ const on = (model: string, most: AnswerLevels = TOP_LEVELS, others: string[] = [
   models: [model, ...others].map(known),
   most,
   webTools,
+  instructions: "",
   avatarUrl: FLAME,
   avatar: false,
 });
