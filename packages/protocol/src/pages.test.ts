@@ -131,6 +131,18 @@ describe("Add and edit a bot", () => {
   });
 });
 
+describe("New agent and an agent's settings", () => {
+  it("shows New agent at `/account/agents/new`, and an agent's settings, or @ember's, at `/account/agents/<id>/edit`", () => {
+    expect(workspacePageOf("/account/agents/new")).toEqual({ page: "new-agent" });
+    expect(workspacePageOf("/account/agents/0mgk3x2a9b4c5e/edit")).toEqual({ page: "agent-settings", agentId: "0mgk3x2a9b4c5e" });
+    expect(workspacePageOf("/account/agents/ember/edit")).toEqual({ page: "agent-settings", agentId: "ember" });
+    expect(workspacePageOf("/account/agents/caf%C3%A9/edit")).toEqual({ page: "agent-settings", agentId: "café" });
+    for (const path of ["/account/agents", "/account/agents/new/", "/account/agents/%FF/edit", "/account/agents/0mgk3x2a9b4c5e", "/account/agents/0mgk3x2a9b4c5e/edit/extra"]) {
+      expect(workspacePageOf(path), path).toBeNull();
+    }
+  });
+});
+
 describe("Private sign-in link", () => {
   it("puts a sign-in link's id in the fragment of /session/transfers", () => {
     expect(transferLink("0mgk3x2a9b4c5d.mgk3x2a9.Ab-_9z")).toBe("/session/transfers#token=0mgk3x2a9b4c5d.mgk3x2a9.Ab-_9z");

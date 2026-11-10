@@ -92,6 +92,7 @@ import {
   type YourAssistantChanged,
   type YourAssistantChanges,
 } from "@ember/protocol";
+import type { Agent, AgentAnswer, AgentChanges, Agents, AgentSettings, AgentTrial, AgentTrialAnswer, NewAgent } from "@ember/protocol/agents";
 import type { LogoVariants } from "@/lib/previews";
 
 // The session lives in an HttpOnly cookie, which the browser sends with every request and socket,
@@ -135,8 +136,8 @@ export interface ChosenPhoto {
   variant: Blob | null;
 }
 
-/** The fields of a form that can bring a photo with them: a sign-up form's, or a bot form's. */
-type UserFields = SignUp | EmailLinkSignUp | NewBot | BotChanges;
+/** The fields of a form that can bring a photo with them: a sign-up form's, a bot form's, or an agent's page's. */
+type UserFields = SignUp | EmailLinkSignUp | NewBot | BotChanges | NewAgent | AgentChanges;
 
 /**
  * A form bringing `photo` as its `avatar` and `variant`, as the Worker reads one, and with `fields` as
@@ -150,7 +151,7 @@ function photoForm({ file, variant }: ChosenPhoto, fields?: UserFields): FormDat
   return form;
 }
 
-/** What a sign-up or bot form sends: its fields as JSON, or with the photo chosen, a form. */
+/** What a sign-up form, a bot form or an agent's page sends: its fields as JSON, or with the photo chosen, a form. */
 const userBody = (fields: UserFields, photo: ChosenPhoto | null) => (photo ? photoForm(photo, fields) : JSON.stringify(fields));
 
 /** Whether Ember is set up yet, and who this browser is signed in as. */
@@ -626,6 +627,55 @@ export async function changeAssistantSettings(changes: AssistantChanges): Promis
  */
 export async function changeWebSearch(on: boolean): Promise<WebSearchChanged> {
   return request<WebSearchChanged>("/api/account/assistant/web_search", { method: "PUT", body: JSON.stringify({ on }) });
+}
+
+/** The agents, by name. Fails with a 409 ApiError while Ember AI is off, and a 403 one for anyone but an administrator. */
+export async function fetchAgents(): Promise<Agent[]> {
+  return (await request<Agents>("/api/account/agents")).agents;
+}
+
+/** Agent `agentId`, as its page shows it. Fails as `fetchAgents` does, and with a 404 ApiError for an id that isn't an agent's. */
+export async function fetchAgent(agentId: UserId): Promise<AgentSettings> {
+  return (await request<AgentAnswer>(`/api/account/agents/${encodeURIComponent(agentId)}`)).agent;
+}
+
+/**
+ * Makes an agent, with the avatar chosen for it, if any, once its model has answered a test question
+ * through Ember AI's account, and searched the web, if it's to, answering it as its page then shows it.
+ * Fails with a 422 ApiError on the field AI Gateway or the Worker refuses, a 429 one while AI Gateway
+ * turns requests away, a 502 one when the model didn't answer, a 409 one while Ember AI is off or once
+ * there are as many agents as there can be, and a 403 one for anyone but an administrator.
+ */
+export async function createAgent(agent: NewAgent, avatar: ChosenPhoto | null = null): Promise<AgentSettings> {
+  return (await request<AgentAnswer>("/api/account/agents", { method: "POST", body: userBody(agent, avatar) })).agent;
+}
+
+/**
+ * Changes agent `agentId`, leaving what `changes` leaves out, and gives it the avatar chosen, if any,
+ * answering it as its page then shows it. Fails as `fetchAgent` does, as `createAgent` does for what's
+ * refused, and with a 409 ApiError when it was changed while its model answered.
+ */
+export async function changeAgent(agentId: UserId, changes: AgentChanges, avatar: ChosenPhoto | null = null): Promise<AgentSettings> {
+  return (await request<AgentAnswer>(`/api/account/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: userBody(changes, avatar) })).agent;
+}
+
+/** Takes away the avatar agent `agentId` was given, answering it as its page then shows it. Fails as `fetchAgent` does. */
+export async function removeAgentAvatar(agentId: UserId): Promise<AgentSettings> {
+  return (await request<AgentAnswer>(`/api/account/agents/${encodeURIComponent(agentId)}/avatar`, { method: "DELETE" })).agent;
+}
+
+/** Deletes agent `agentId`. Fails as `fetchAgent` does. */
+export async function deleteAgent(agentId: UserId): Promise<void> {
+  await request(`/api/account/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
+}
+
+/**
+ * Asks the agent as `trial` sets it up, saved as `agentId` or not yet, its question, answering what it
+ * said and how long its model took. Nothing is saved. Fails as `createAgent` does.
+ */
+export async function tryAgent(trial: AgentTrial, agentId: UserId | null): Promise<AgentTrialAnswer> {
+  const path = agentId === null ? "/api/account/agents/trials" : `/api/account/agents/${encodeURIComponent(agentId)}/trials`;
+  return request<AgentTrialAnswer>(path, { method: "POST", body: JSON.stringify(trial) });
 }
 
 /**

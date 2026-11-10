@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { searchOfQuery, startingInvolvement, type Account, type DirectRoom, type Favorites, type Me, type Room, type RoomId, type SidebarRoom, type User } from "@ember/protocol";
+import { ASSISTANT_ID, searchOfQuery, startingInvolvement, type Account, type DirectRoom, type Favorites, type Me, type Room, type RoomId, type SidebarRoom, type User } from "@ember/protocol";
 import { useFlash } from "@/components/flash";
 import { Xmark } from "@/components/icons/iconoir";
 import { MainContent, SkipLink } from "@/components/main-content";
@@ -57,6 +57,8 @@ const RARE_PAGES = new Set<Route["page"]>([
   "bots",
   "new-bot",
   "bot-settings",
+  "new-agent",
+  "agent-settings",
   "profile",
   "push-subscriptions",
   "person",
@@ -74,7 +76,7 @@ export function loadPageAhead(pathname: string): Promise<unknown> {
 /**
  * What the rail marks on each page: the logo and Home at home, Home on a room's page and the pages that
  * go on to one, Search on search, Admin or Workspace on every page of community settings (a room's
- * forms, the bot pages and the Custom CSS page among them), your avatar on your profile, and nothing on
+ * forms, the bot and agent pages and the Custom CSS page among them), your avatar on your profile, and nothing on
  * a DM's settings or your push subscriptions, whose addresses none of its links have, nor on New direct
  * message's, which goes on to the last room visited at once.
  */
@@ -93,6 +95,8 @@ const RAIL_PAGES = {
   bots: "workspace",
   "new-bot": "workspace",
   "bot-settings": "workspace",
+  "new-agent": "workspace",
+  "agent-settings": "workspace",
   profile: "profile",
   "push-subscriptions": null,
   person: null,
@@ -596,6 +600,14 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
       case "bot-settings":
         return rarePage(({ BotSettingsPage }) => (
           <BotSettingsPage key={route.userId} botId={route.userId} onMissing={showNotFound} onFailed={failed} />
+        ));
+      case "new-agent":
+        return rarePage(({ NewAgentPage }) => <NewAgentPage me={me} rooms={rooms} onFailed={failed} />);
+      case "agent-settings":
+        // @ember's page is its own, with what the Ember AI card held before there were agents.
+        if (route.agentId === ASSISTANT_ID) return rarePage(({ EmberPage }) => <EmberPage me={me} onFailed={failed} />);
+        return rarePage(({ AgentSettingsPage }) => (
+          <AgentSettingsPage key={route.agentId} agentId={route.agentId} me={me} rooms={rooms} onMissing={showNotFound} onFailed={failed} />
         ));
       case "profile":
         return rarePage(({ ProfilePage }) => <ProfilePage me={me} rooms={rooms} askForRoom={askForRoom} onSignOut={onSignOut} onFailed={failed} />);

@@ -402,13 +402,15 @@ export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "model
 }
 
 /**
- * An agent as the AI assistant tab lists it: as the people directory lists it, with what it does and
- * its model, and the open rooms it's kept to, by name, or null while it's in every one.
+ * An agent as the AI assistant tab lists it: as the people directory lists it, with what it does, its
+ * model, what it may do on the web, and the open rooms it's kept to, by name, or null while it's in every
+ * one.
  */
 export interface StoredAgent extends DirectoryEntry {
   description: string;
   model: string;
   modelName: string;
+  webTools: WebTool[];
   rooms: AgentRoom[] | null;
 }
 
@@ -919,6 +921,7 @@ interface AgentRow extends DirectoryRow {
   description: string;
   model: string;
   model_name: string;
+  web_tools: string | null;
   every_open_room: number;
 }
 
@@ -928,7 +931,6 @@ interface AgentSettingsRow extends AgentRow, AvatarColumns {
   format: string;
   thinking: string;
   answer_length: string;
-  web_tools: string | null;
   changed_by: UserId;
   changed_by_name: string;
   changed_at: string;
@@ -940,6 +942,7 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
   description: row.description,
   model: row.model,
   modelName: row.model_name,
+  webTools: webToolsIn(row.web_tools),
   rooms: row.every_open_room === 1 ? null : rooms,
 });
 
@@ -1887,7 +1890,7 @@ const BOT_ROOMS = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON ro
 
 /** What the AI assistant tab lists of an agent, of its user and its row. */
 const AGENT_COLUMNS = `users.id, users.name, users.bio, users.role, users.status, users.updated_at,
-  agents.description, agents.model, agents.model_name, agents.every_open_room`;
+  agents.description, agents.model, agents.model_name, agents.web_tools, agents.every_open_room`;
 
 /** The active agents, by name, as the AI assistant tab lists them. */
 const ACTIVE_AGENTS = `SELECT ${AGENT_COLUMNS} FROM agents JOIN users ON users.id = agents.user_id
@@ -1900,7 +1903,7 @@ const KEPT_AGENTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
 
 /** An active agent as its page shows it, with its avatar and who last changed it. */
 const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_variant,
-    agents.instructions, agents.format, agents.thinking, agents.answer_length, agents.web_tools,
+    agents.instructions, agents.format, agents.thinking, agents.answer_length,
     agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
   FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
   WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;

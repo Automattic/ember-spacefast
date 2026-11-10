@@ -20,7 +20,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentAnsweredUnsearched } from "../src/assistant/agents";
 import type { Db, Statement } from "../src/db";
 import type { Workspace } from "../src/workspace";
-import { api, cookieOf, createRoom, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, workspaceSql, workspaceStub, type Session, type WorkspaceSocket } from "./support";
+import notFoundPage from "../../web/public/404.html";
+import { api, apiWith, builtPages, cookieOf, createRoom, freshDeploy, openWorkspaceSocket, origin, recordedImage, shown, workspaceSql, workspaceStub, type Session, type WorkspaceSocket } from "./support";
 
 // The AI agents administrators make beside @ember on the AI assistant tab, each a bot without a key that
 // answers with its own instructions and model, and the instructions administrators add to @ember's own.
@@ -267,6 +268,30 @@ describe("AI agents", () => {
       }
     });
 
+    it("answer Campfire's 404 page for the settings page of anyone but an active agent, or @ember", async () => {
+      const administrator = await setUp();
+      const member = await joinAsGrace();
+      const recap = await made(administrator);
+      /** The page at `path`, from a Worker whose built app answers each path with its own name. */
+      const page = (session: Session | null, path: string) => apiWith({ ASSETS: builtPages }, path, { headers: as(session), redirect: "manual" });
+      for (const id of [recap.id, ASSISTANT_ID]) {
+        const settings = await page(administrator, `/account/agents/${id}/edit`);
+        expect([settings.status, await settings.text()], id).toEqual([200, "page /"]);
+      }
+      expect(await (await page(administrator, "/account/agents/new")).text()).toBe("page /");
+
+      expect((await deleteAgent(administrator, recap.id)).status).toBe(204);
+      for (const id of [recap.id, member.user.id, "nobody"]) {
+        const missing = await page(administrator, `/account/agents/${id}/edit`);
+        expect(missing.status, id).toBe(404);
+        expect(await missing.text()).toBe(notFoundPage);
+      }
+      // The app sends a member to workspace settings, anyone signed out to sign in, and anyone while Ember AI is off to the AI assistant tab.
+      for (const viewer of [member, null]) expect(await (await page(viewer, "/account/agents/nobody/edit")).text()).toBe("page /");
+      await turnOff(administrator);
+      expect(await (await page(administrator, "/account/agents/nobody/edit")).text()).toBe("page /");
+    });
+
     it("don't find an agent there isn't, nor @ember, nor anyone else", async () => {
       const administrator = await setUp();
       for (const response of [
@@ -316,8 +341,8 @@ describe("AI agents", () => {
       expect(await workspaceSql("SELECT role, bot_token, email_address, password_digest FROM users WHERE id = ?", recap.id)).toEqual([
         { role: 2, bot_token: null, email_address: null, password_digest: null },
       ]);
-      const { id, name, bio, role, status, avatarUrl, description, model, modelName, rooms } = recap;
-      expect(await listed(administrator)).toEqual([{ id, name, bio, role, status, avatarUrl, description, model, modelName, rooms }]);
+      const { id, name, bio, role, status, avatarUrl, description, model, modelName, webTools, rooms } = recap;
+      expect(await listed(administrator)).toEqual([{ id, name, bio, role, status, avatarUrl, description, model, modelName, webTools, rooms }]);
       expect(await shownAgent(administrator, recap.id)).toEqual(recap);
       const asListed = { id, name, bio, role, status, avatarUrl };
       expect(await inDirectory(administrator, recap.id)).toEqual(asListed);
@@ -352,6 +377,8 @@ describe("AI agents", () => {
       expect(scout).toMatchObject({ format: "messages", webTools: ["search", "read"] });
       expect(asked.map(searches)).toEqual([false, true]);
       expect(asked[1]!.body.system).toContain("You are Scout, an AI agent");
+      // The AI assistant tab lists what it does on the web too.
+      expect(await listed(administrator)).toEqual([expect.objectContaining({ name: "Scout", webTools: ["search", "read"] })]);
     });
 
     it("refuses Search the web for a model that can't search, or that answered without searching, on its field", async () => {

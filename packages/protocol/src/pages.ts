@@ -44,6 +44,10 @@ export type WorkspacePage =
   | { page: "new-bot" }
   /** A bot's settings, at `/account/bots/<id>/edit`. */
   | { page: "bot-settings"; userId: UserId }
+  /** New agent, at `/account/agents/new`, which only administrators may open, as the next. */
+  | { page: "new-agent" }
+  /** An agent's settings, at `/account/agents/<id>/edit`, or @ember's, at its id's. */
+  | { page: "agent-settings"; agentId: UserId }
   /** Your profile, at `/users/me/profile`, or at any other person's id in its place. */
   | { page: "profile" }
   /**
@@ -64,6 +68,7 @@ export const WORKSPACE_SETTINGS_PATH = "/account/edit";
 export const CUSTOM_STYLES_PATH = "/account/custom_styles/edit";
 export const BOTS_PATH = "/account/bots";
 export const NEW_BOT_PATH = "/account/bots/new";
+export const NEW_AGENT_PATH = "/account/agents/new";
 export const NEW_DIRECT_PATH = "/rooms/directs/new";
 export const PROFILE_PATH = "/users/me/profile";
 export const PUSH_SUBSCRIPTIONS_PATH = "/users/me/push_subscriptions";
@@ -100,6 +105,10 @@ export function workspacePageOf(pathname: string): WorkspacePage | null {
   const bot = pathname.match(/^\/account\/bots\/([^/]+)\/edit$/);
   const botId = bot && decoded(bot[1]!);
   if (botId) return { page: "bot-settings", userId: botId };
+  if (pathname === NEW_AGENT_PATH) return { page: "new-agent" };
+  const agent = pathname.match(/^\/account\/agents\/([^/]+)\/edit$/);
+  const agentId = agent && decoded(agent[1]!);
+  if (agentId) return { page: "agent-settings", agentId };
   if (pathname === SEARCHES_PATH) return { page: "search" };
   if (/^\/users\/[^/]+\/profile$/.test(pathname)) return { page: "profile" };
   if (/^\/users\/[^/]+\/push_subscriptions$/.test(pathname)) return { page: "push-subscriptions" };

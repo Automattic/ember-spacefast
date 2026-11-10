@@ -6,6 +6,7 @@ import {
   API_TOKEN_REFUSED,
   ASSISTANT_MODELS,
   DEFAULT_LEVELS,
+  formatOf,
   INSTRUCTIONS_TOO_LONG,
   isWorkersAiModel,
   LEVELS_REFUSED,
@@ -26,6 +27,7 @@ import {
   THINKING_LEVELS,
   THINKING_TOKENS,
   TOP_LEVELS,
+  WEB_TOOLS_IN,
   withinMost,
 } from "./assistant";
 import { MAX_MESSAGE_LENGTH } from "./index";
@@ -111,6 +113,15 @@ describe("Set up Ember AI", () => {
     const models = [{ id: "openai/gpt-5.5", name: "GPT-5.5", format: "responses" as const }];
     expect(modelName("openai/gpt-5.5", models)).toBe("GPT-5.5");
     expect(modelName("anthropic/claude-sonnet-5.5", models)).toBe("Claude Sonnet 5.5");
+  });
+
+  it("guesses the format a model takes as the models it's given list it, or Ember's, or else by its company, and what it may do on the web in it", () => {
+    const models = [{ id: "google/gemini-5", name: "Gemini 5", format: "messages" as const }];
+    expect(formatOf("google/gemini-5", models)).toBe("messages");
+    expect(formatOf("google/gemini-5")).toBe("chat");
+    expect(formatOf("openai/gpt-6.1-sol")).toBe("responses");
+    expect([formatOf("anthropic/claude-mythos-6"), formatOf("openai/gpt-7"), formatOf("@cf/meta/llama-5")]).toEqual(["messages", "responses", "chat"]);
+    expect(WEB_TOOLS_IN).toEqual({ messages: ["search", "read"], responses: ["search"], chat: [] });
   });
 });
 

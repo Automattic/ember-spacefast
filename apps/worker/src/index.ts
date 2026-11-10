@@ -96,7 +96,7 @@ import {
   tokenDigest,
 } from "./auth";
 import { directoryOf } from "./avatar-tokens";
-import { changeAgent, createAgent, deleteAgent, listAgents, removeAgentAvatar, showAgent, tryAgent } from "./assistant/agents";
+import { agentPage, changeAgent, createAgent, deleteAgent, listAgents, removeAgentAvatar, showAgent, tryAgent } from "./assistant/agents";
 import {
   addAssistantModel,
   changeAssistantAvatar,
@@ -1261,6 +1261,7 @@ async function route(request: Request, env: Env, pathname: string): Promise<Resp
   const page = write ? null : workspacePageOf(pathname);
   if (page?.page === "person") return personPage(request, env, pathname, page.userId);
   if (page?.page === "bot-settings") return botPage(request, env, pathname, page.userId);
+  if (page?.page === "agent-settings") return agentPage(request, env, pathname, page.agentId);
   return anyOtherPage(request, env, pathname);
 }
 
