@@ -239,12 +239,13 @@ export class Huddle {
     const app = await this.appNow();
     if (!app) return closedAtOnce(HuddleCloseCode.Off);
     let members = this.members();
-    const startedAt = members[0]?.attachment.startedAt ?? new Date().toISOString();
-    // Whoever joined through an app huddles no longer run through connects again, through this one.
+    // Whoever joined through an app huddles no longer run through connects again, through this one, to
+    // a huddle that starts with whoever is first.
     if (members.some(({ attachment }) => attachment.appId !== app.appId)) {
       this.end(CloseCode.Reconnect);
       members = [];
     }
+    const startedAt = members[0]?.attachment.startedAt ?? new Date().toISOString();
     const earlier = members.filter(({ attachment }) => attachment.user.id === user.id);
     if (members.length - earlier.length >= MAX_HUDDLE_PEOPLE) return closedAtOnce(HuddleCloseCode.Full);
 
@@ -302,14 +303,34 @@ export class Huddle {
 
   /**
    * Ends the huddle for everyone in it, closing their sockets with `code`. Nobody is left to hear who
-   * went, and the SFU isn't asked to close anything: every tab closes its own connections as its
-   * socket closes, and with huddles off or their app changed there's no asking the SFU as the app
-   * those connections are with.
+   * went, and every tab closes its own connections as its socket closes. Unless `silence` says to, the
+   * SFU is asked nothing: with huddles off or their app changed there's no asking it as the app those
+   * connections are with. A room that's deleted can ask, and has it close what everyone published, so
+   * that a tab which kept its connections open is heard by nobody, and hears nobody.
    */
-  end(code: CloseCode | HuddleCloseCode): void {
+  end(code: CloseCode | HuddleCloseCode, silence = false): void {
     const members = this.members();
+    if (members.length === 0) return;
     for (const { socket } of members) this.close(socket, code, false);
-    if (members.length > 0) this.reportSoon();
+    if (silence) this.ctx.waitUntil(this.silence(members));
+    this.reportSoon();
+  }
+
+  /**
+   * Has the SFU close what each of `members` published, as it was when their sockets closed. That's a
+   * request each, so a full huddle's fit the 50 an event may make on Workers' free plan, which closing
+   * what each heard as well wouldn't, and it's all it takes for nobody to hear anything. The SFU is
+   * asked once: a deleted room's alarm erases the room, and checks no huddle.
+   */
+  private async silence(members: Member[]): Promise<void> {
+    const app = await this.appNow().catch(() => undefined);
+    if (!app) return;
+    for (const { socket, attachment } of members) {
+      // A tab publishing as its socket closed has what that made closed by the frame that made it.
+      await this.sending.get(socket)?.last;
+      if (attachment.appId !== app.appId) continue;
+      for (const session of sessionsOf({ publishing: attachment.publishing })) await this.closeOn(app, session);
+    }
   }
 
   /**
@@ -593,25 +614,31 @@ export class Huddle {
   /**
    * Asks the SFU again to close the tracks it didn't, a few sessions at a time, and answers whether
    * any are left to ask about. Those of an app huddles no longer run through are dropped, as are those
-   * it has been asked about for `UNCLOSED_KEPT_MS`.
+   * it has been asked about for `UNCLOSED_KEPT_MS`. A session stays among those kept until the SFU has
+   * answered for it, since tracks kept meanwhile store the list as it is then.
    */
   private async retry(now: number): Promise<boolean> {
     const kept = await this.unclosed();
     if (kept.length === 0) return false;
     const app = await this.appNow().catch(() => undefined);
     if (app === undefined) return true;
-    for (const session of kept.splice(0, RETRIED_PER_CHECK)) {
-      if (app?.appId !== session.appId) continue;
-      if (now - session.since > UNCLOSED_KEPT_MS) {
-        console.error("Gave up closing a huddle's tracks at the Realtime SFU.");
-        continue;
-      }
-      const mids = await this.closeOn(app, session);
+    for (const session of kept.slice(0, RETRIED_PER_CHECK)) {
+      const mids = app?.appId === session.appId && !this.givenUpOn(session, now) ? await this.closeOn(app, session) : [];
+      // Unless the list has dropped it meanwhile, as it does its oldest once it's full.
+      const at = kept.indexOf(session);
+      if (at >= 0) kept.splice(at, 1);
       if (mids.length > 0) kept.push({ ...session, mids });
     }
     if (kept.length > 0) await this.ctx.storage.put(UNCLOSED, kept);
     else await this.ctx.storage.delete(UNCLOSED);
     return kept.length > 0;
+  }
+
+  /** Whether the SFU has been asked to close `session`'s tracks for as long as the room goes on asking, which it says once. */
+  private givenUpOn(session: Unclosed, now: number): boolean {
+    if (now - session.since <= UNCLOSED_KEPT_MS) return false;
+    console.error("Gave up closing a huddle's tracks at the Realtime SFU.");
+    return true;
   }
 
   /** Tells the Workspace who's in the huddle now, which has changed, without anything waiting on it. */

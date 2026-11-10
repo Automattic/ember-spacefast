@@ -336,14 +336,15 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   /**
-   * Closes every socket in a room the Workspace has deleted, with `code`, and deletes its messages, with
-   * their files, and has the search index forget them, each `MESSAGES_DELETED_AT_ONCE` at a time. Nobody
-   * is left to hear who leaves. The record that the room was deleted stays, turning away sockets let
-   * through before then, until none of those could still arrive, when the alarm erases it. A failure has
-   * the Workspace ask again, which goes on from the batch that failed.
+   * Closes every socket in a room the Workspace has deleted, with `code`, its huddle's among them, which
+   * the SFU stops carrying, and deletes its messages, with their files, and has the search index forget
+   * them, each `MESSAGES_DELETED_AT_ONCE` at a time. Nobody is left to hear who leaves. The record that
+   * the room was deleted stays, turning away sockets let through before then, until none of those could
+   * still arrive, when the alarm erases it. A failure has the Workspace ask again, which goes on from
+   * the batch that failed.
    */
   private async destroy(roomId: RoomId, code: CloseCode): Promise<void> {
-    this.huddle.end(code);
+    this.huddle.end(code, true);
     for (const socket of this.roomSockets()) this.close(socket, code);
     while (await this.storeFor(roomId).deleteMessages(MESSAGES_DELETED_AT_ONCE));
     await this.logFor(roomId).forget();

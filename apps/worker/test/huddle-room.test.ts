@@ -159,6 +159,26 @@ describe("A room's huddle", () => {
     expect(await remembered(room)).toMatchObject([{ user: ada.user }, { user: grace.user }]);
   });
 
+  it("starts a huddle afresh for whoever joins once huddles run through another app", async () => {
+    const { ada } = await huddlesOn();
+    const room = await freshRoom("another-app");
+    const grace = await signIn("Grace");
+    const adas = await joinHuddle(room, ada);
+    const { startedAt } = await adas.next("huddle.welcome");
+
+    await giveKeys(ada, OTHER_APP);
+    // The room goes by what the Workspace last said of the app for half a minute, unless it has restarted since.
+    await evictDurableObject(roomStub(room));
+    await sleep(5);
+    const graces = await joinHuddle(room, grace);
+    const welcome = await graces.next("huddle.welcome");
+    // Ada's tab connects again, to a huddle that started when Grace joined it.
+    expect(await adas.closed).toMatchObject({ code: CloseCode.Reconnect, reason: "Reconnect" });
+    expect(welcome.people).toEqual([person(grace)]);
+    expect(Date.parse(welcome.startedAt)).toBeGreaterThan(Date.parse(startedAt));
+    expect((await remembered(room)).map(({ appId, startedAt }) => ({ appId, startedAt }))).toEqual([{ appId: OTHER_APP.appId, startedAt: welcome.startedAt }]);
+  });
+
   it("takes fifty people, and closes the socket of whoever comes next with the code that says it's full", async () => {
     await huddlesOn();
     const room = await freshRoom("full");
@@ -167,6 +187,15 @@ describe("A room's huddle", () => {
     const sockets: HuddleSocket[] = [];
     for (let n = 0; n < MAX_HUDDLE_PEOPLE; n++) sockets.push(await forwardHuddle(room, access(n)));
     expect((await sockets.at(-1)!.next("huddle.welcome")).people).toHaveLength(MAX_HUDDLE_PEOPLE);
+
+    // Everyone in a full huddle can be heard by everyone else: what a socket remembers of 49 others fits it.
+    for (const socket of sockets) await publishMicrophone(socket);
+    for (const socket of [sockets[0]!, sockets.at(-1)!]) {
+      const offer = await listen(socket, true);
+      expect(new Set(offer!.tracks.map(({ userId }) => userId)).size).toBe(MAX_HUDDLE_PEOPLE - 1);
+    }
+    expect((await remembered(room))[0]!.receiving!.heard).toHaveLength(MAX_HUDDLE_PEOPLE - 1);
+    expect(await listen(sockets[0]!)).toBeNull();
 
     const late = await forwardHuddle(room, access(MAX_HUDDLE_PEOPLE));
     expect(await late.closed).toMatchObject({ code: HuddleCloseCode.Full, reason: "Full" });
@@ -752,22 +781,44 @@ describe("Who a huddle is for", () => {
     expect(adas.pending("huddle.joined")).toEqual([]);
   });
 
-  it("ends a huddle with its room, asking the SFU nothing", async () => {
+  it("ends a huddle with its room, having the SFU close what its people published", async () => {
     const { ada, sfu } = await huddlesOn();
-    const grace = await signIn("Grace");
+    const [grace, linus] = [await signIn("Grace"), await signIn("Linus")];
     const room = (await createRoom("Short-lived", { as: ada })).id;
     const adas = await welcomed(room, ada);
     const graces = await welcomed(room, grace);
-    await publishing(sfu, adas);
+    const linuses = await welcomed(room, linus);
+    const fromAda = await publishing(sfu, adas);
+    const fromGrace = await publishing(sfu, graces);
     await listen(graces, true);
+    const toGrace = newest(sfu);
     const asked = sfu.asked.length;
 
     expect((await api(`/api/rooms/${room}`, { method: "DELETE", headers: { Cookie: ada.cookie } })).status).toBe(204);
-    for (const socket of [adas, graces]) expect(await socket.closed).toMatchObject({ code: CloseCode.NotFound, reason: "NotFound" });
+    for (const socket of [adas, graces, linuses]) expect(await socket.closed).toMatchObject({ code: CloseCode.NotFound, reason: "NotFound" });
     // Nobody was left to hear who went.
-    expect([...adas.pending("huddle.left"), ...graces.pending("huddle.left")]).toEqual([]);
+    expect([...adas.pending("huddle.left"), ...graces.pending("huddle.left"), ...linuses.pending("huddle.left")]).toEqual([]);
+    // A tab that kept its connections open is heard by nobody: a request for each of those who published, and none for what anyone heard.
+    await vi.waitFor(() => expect([closedOn(sfu, fromAda), closedOn(sfu, fromGrace)]).toEqual([["0"], ["0"]]));
     await sleep(20);
-    expect(sfu.asked).toHaveLength(asked);
+    expect(sfu.asked.slice(asked).map(({ path }) => path)).toEqual([`/sessions/${fromAda}/tracks/close`, `/sessions/${fromGrace}/tracks/close`]);
+    expect(closedOn(sfu, toGrace)).toEqual([]);
+  });
+
+  it("asks the SFU once to close what a deleted room's huddle published, and keeps nothing to ask about again", async () => {
+    const { ada, sfu } = await huddlesOn();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const room = (await createRoom("Refused", { as: ada })).id;
+    const adas = await welcomed(room, ada);
+    await publishing(sfu, adas);
+    const asked = sfu.asked.length;
+
+    sfu.refuse(/tracks\/close$/, 503, "temporarily_unavailable_error");
+    expect((await api(`/api/rooms/${room}`, { method: "DELETE", headers: { Cookie: ada.cookie } })).status).toBe(204);
+    await vi.waitFor(() => expect(sfu.asked).toHaveLength(asked + 1));
+    await sleep(20);
+    expect(sfu.asked).toHaveLength(asked + 1);
+    expect(await kept(room, "huddleUnclosed")).toBeUndefined();
   });
 });
 
@@ -887,6 +938,33 @@ describe("The room's check of its huddle", () => {
     expect(closedOn(sfu, fromAda)).toEqual(["0"]);
     expect(await kept(room, "huddleUnclosed")).toBeUndefined();
     expect(await alarmOf(room)).toBeNull();
+  });
+
+  it("keeps the tracks it's asking the SFU about again until it has answered, whatever else is kept meanwhile", async () => {
+    const { ada, sfu } = await huddlesOn();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const room = await freshRoom("asked-again");
+    const grace = await signIn("Grace");
+    const adas = await welcomed(room, ada);
+    const graces = await welcomed(room, grace);
+    const fromAda = await publishing(sfu, adas);
+    const fromGrace = await publishing(sfu, graces);
+    sfu.refuse(/tracks\/close$/);
+    graces.leave();
+    await vi.waitFor(async () => expect(await kept(room, "huddleUnclosed")).toMatchObject([{ sessionId: fromGrace }]));
+
+    // The SFU is still answering for Grace's tracks when it refuses to close Ada's.
+    const answer = sfu.hold(/tracks\/close$/);
+    const rung = ring(room);
+    await vi.waitFor(() => expect(sfu.askedTo(/tracks\/close$/)).toHaveLength(2));
+    sfu.refuse(/tracks\/close$/);
+    adas.leave();
+    await vi.waitFor(async () => expect(await kept(room, "huddleUnclosed")).toMatchObject([{ sessionId: fromGrace }, { sessionId: fromAda }]));
+
+    answer();
+    await rung;
+    expect(closedOn(sfu, fromGrace)).toEqual(["0"]);
+    expect(await kept(room, "huddleUnclosed")).toMatchObject([{ sessionId: fromAda }]);
   });
 
   it("leaves the room's logs until they're due, however often it rings meanwhile, and the alarm to them once the huddle is over", async () => {
