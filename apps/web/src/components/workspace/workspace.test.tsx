@@ -2233,6 +2233,24 @@ describe("Huddles", () => {
     expect(controls.setMuted).toHaveBeenLastCalledWith(false);
   });
 
+  it("counts the huddle's keys once however long they're held: muting stays, and leaving starts nothing", async () => {
+    showWorkspace("/rooms/general", ada, HUDDLES_ON);
+    await roomHeading();
+    const mute = { key: " ", code: "Space", ctrlKey: true, shiftKey: true };
+    const toggle = { key: "H", code: "KeyH", ctrlKey: true, altKey: true, shiftKey: true };
+    /** The keys pressed and held, as the browser repeats them: whether it was left any of them to act on. */
+    const held = (keys: KeyboardEventInit) => [fireEvent.keyDown(document.body, keys), fireEvent.keyDown(document.body, { ...keys, repeat: true }), fireEvent.keyDown(document.body, { ...keys, repeat: true })].some(Boolean);
+
+    act(() => joinHuddle({ roomId: "general", muted: false, microphone: null, speakerId: "" }));
+    expect(held(mute)).toBe(false);
+    expect(controls.setMuted).toHaveBeenCalledExactlyOnceWith(true);
+
+    expect(held(toggle)).toBe(false);
+    expect(controls.leave).toHaveBeenCalledTimes(1);
+    expect(bar()).not.toBeInTheDocument();
+    expect(preview()).not.toBeInTheDocument();
+  });
+
   it("says why the room ended the tab's huddle", async () => {
     showWorkspace("/rooms/general", ada, HUDDLES_ON);
     await roomHeading();

@@ -548,18 +548,17 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   // unless it's pressed in a dialog.
   const huddleKeyPressed = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
-    if (togglesMute(event) && huddle) {
+    // Held down, the keys repeat, which counts as the one press: they'd mute and unmute by turns
+    // otherwise, and leaving would go on to offer the room's huddle.
+    const pressed = (act: () => void) => {
       event.preventDefault();
-      return muteHuddle(!huddle.muted);
-    }
+      if (!event.repeat) act();
+    };
+    if (togglesMute(event) && huddle) return pressed(() => muteHuddle(!huddle.muted));
     if (!togglesHuddle(event) || (event.target instanceof Element && event.target.closest("[role=dialog]"))) return;
-    if (huddle) {
-      event.preventDefault();
-      return leaveHuddle();
-    }
+    if (huddle) return pressed(leaveHuddle);
     if (!huddlesOn || !room || room.kind === "direct" || goneRoom) return;
-    event.preventDefault();
-    setHuddlePreview(room.id);
+    pressed(() => setHuddlePreview(room.id));
   });
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
