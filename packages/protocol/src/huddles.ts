@@ -123,7 +123,8 @@ export interface LiveHuddle {
 export type HuddleClientFrame =
   /**
    * Publishes the tab's microphone, with the offer its sending connection makes for it, which
-   * `huddle.published` answers. A tab whose sending connection has failed publishes again from a new one.
+   * `huddle.published` answers. A tab whose sending connection has failed publishes again from a new
+   * one, and only once the room has answered the last, so that each answer is to the offer it waits on.
    */
   | { type: "huddle.publish"; sdp: string; tracks: HuddleTrack[] }
   /** The tab's sending connection has connected, so the others can listen to what it publishes. */
@@ -166,10 +167,15 @@ export type HuddleServerFrame =
    */
   | { type: "huddle.listening" }
   /**
+   * The SFU no longer has what the tab published, so nobody can listen to its person until the tab
+   * publishes again, from a new sending connection. A tab waiting on the answer to an offer it has
+   * published with already is.
+   */
+  | { type: "huddle.unpublished" }
+  /**
    * The room couldn't do what the `failed` frame asked. After a failed `huddle.listen` or `huddle.answer`
-   * the room has let go of the tab's receiving connection, so the tab starts a fresh one. A failed
-   * `huddle.publish` can come unasked, once the SFU no longer has what the tab published: either way the
-   * tab publishes again, from a new sending connection.
+   * the room has let go of the tab's receiving connection, so the tab starts a fresh one. After a failed
+   * `huddle.publish` it publishes again, from a new sending connection.
    */
   | { type: "error"; message: string; failed?: HuddleClientFrame["type"] }
   | { type: "pong" };

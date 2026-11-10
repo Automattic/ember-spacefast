@@ -552,12 +552,12 @@ describe("What a huddle asks of the Realtime SFU", () => {
     vi.setSystemTime(Date.now() + PUBLICATION_SETTLES_MS - 1);
     expect(await listen(linuses)).toBeNull();
     await reached(adas, graces);
-    expect([...adas.pending("error"), ...graces.pending("huddle.changed")]).toEqual([]);
+    expect([...adas.pending("huddle.unpublished"), ...graces.pending("huddle.changed")]).toEqual([]);
 
     // Later, it's gone: her tab publishes again, and nobody can listen to her meanwhile.
     vi.setSystemTime(Date.now() + 1);
     expect(await listen(linuses)).toBeNull();
-    expect(await adas.next("error")).toEqual(failed("huddle.publish"));
+    expect(await adas.next("huddle.unpublished")).toEqual({ type: "huddle.unpublished" });
     expect(await graces.next("huddle.changed")).toEqual({ type: "huddle.changed", person: person(ada) });
     expect(await linuses.next("huddle.changed")).toEqual({ type: "huddle.changed", person: person(ada) });
     // Which the room says once.
@@ -565,7 +565,7 @@ describe("What a huddle asks of the Realtime SFU", () => {
     expect(await listen(linuses)).toBeNull();
     expect(await listen(graces, true)).toBeNull();
     await reached(adas);
-    expect(adas.pending("error")).toEqual([]);
+    expect(adas.pending("huddle.unpublished")).toEqual([]);
     expect(sfu.asked).toHaveLength(asked);
 
     await publishing(sfu, adas, "Ada's second offer");

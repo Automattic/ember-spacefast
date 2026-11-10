@@ -514,7 +514,7 @@ export class Huddle {
       if (publishing?.connectedAt === undefined || !sessionIds.includes(publishing.sessionId) || now - publishing.connectedAt < PUBLICATION_SETTLES_MS) continue;
       const { connectedAt: _, ...unconnected } = publishing;
       this.broadcast({ type: "huddle.changed", person: personOf(change(socket, (attachment) => ({ ...attachment, publishing: unconnected }))) }, socket);
-      send(socket, { type: "error", message: HUDDLE_FAILED, failed: "huddle.publish" });
+      send(socket, { type: "huddle.unpublished" });
     }
   }
 
