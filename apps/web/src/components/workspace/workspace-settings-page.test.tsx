@@ -193,6 +193,7 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
           models: [{ id: model, name: name ?? modelName(model), format: "chat" }],
           most: assistant?.most ?? TOP_LEVELS,
           webTools: null,
+          instructions: assistant?.instructions ?? "",
           avatarUrl: assistant?.avatarUrl ?? EMBER_FLAME,
           avatar: assistant?.avatar ?? false,
         };
@@ -1733,6 +1734,7 @@ describe("Ember AI", () => {
     models: [{ id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" }],
     most: TOP_LEVELS,
     webTools: null,
+    instructions: "",
     avatarUrl: EMBER_FLAME,
     avatar: false,
   };

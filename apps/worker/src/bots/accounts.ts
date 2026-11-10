@@ -1,4 +1,5 @@
 import { NAME_RESERVED, type UserId } from "@ember/protocol";
+import { agentsName } from "@ember/protocol/agents";
 import { BOTS_FORBIDDEN, parseBotChanges, parseNewBot, WEBHOOK_URL_REFUSED, type BotAnswer, type Bots, type BotSettings } from "@ember/protocol/bots";
 import { credentialsOf } from "../auth";
 import { userFormOf, userFormPhoto } from "../avatars";
@@ -57,6 +58,7 @@ export async function createBot(request: Request, env: Env): Promise<Response> {
   const created = await workspace(env).createBot(credentials, bot, avatar);
   if (!created) return problem(401, NOT_SIGNED_IN);
   if (created === "forbidden") return problem(403, BOTS_FORBIDDEN);
+  if (created === "agent's name") return problem(422, agentsName(bot.name));
   return Response.json({ bot: created } satisfies BotAnswer, { status: 201, headers: PRIVATE });
 }
 
@@ -83,7 +85,8 @@ export async function changeBot(request: Request, env: Env, botId: UserId): Prom
   if (typeof changes === "string") return problem(422, changes);
   const avatar = await userFormPhoto(env, sent.photo);
   if (avatar && "error" in avatar) return problem(avatar.status, avatar.error);
-  return botAnswer(await workspace(env).changeBot(credentials, botId, changes, avatar));
+  const changed = await workspace(env).changeBot(credentials, botId, changes, avatar);
+  return changed === "agent's name" ? problem(422, agentsName(changes.name!)) : botAnswer(changed);
 }
 
 /**

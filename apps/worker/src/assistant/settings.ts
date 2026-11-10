@@ -58,7 +58,7 @@ export const API_TOKEN_CHANGED = "Ember AI changed while the model answered, so 
 export const SETUP_CHANGED = "Ember AI was set up again while the model answered, so it wasn't added. Add it again.";
 
 /** What Set up Ember AI asks the model before Ember keeps it, so that it's known to answer. */
-const TEST_QUESTION: Question = {
+export const TEST_QUESTION: Question = {
   instructions: `You are ${ASSISTANT_NAME}, the AI assistant in a team's chat, where people ask you things by mentioning @ember. An administrator has just set you up.`,
   turns: [{ role: "user", text: "Say hello to the team in one short sentence." }],
   // Room for a model that thinks before it answers, however short the answer.
@@ -69,7 +69,7 @@ const TEST_QUESTION: Question = {
 const TEST_TIMEOUT_MS = 30_000;
 
 /** What turning on Search the web asks the model, which it has to search the web to answer, so that it's known to. */
-const WEB_TEST_QUESTION: Question = {
+export const WEB_TEST_QUESTION: Question = {
   instructions: `You are ${ASSISTANT_NAME}, the AI assistant in a team's chat. An administrator has just let you search the web.`,
   turns: [{ role: "user", text: "Search the web for what Cloudflare's AI Gateway is, then say it in one short sentence." }],
   // Room for a model that thinks before it searches and again once it has, however short the answer.
@@ -98,13 +98,13 @@ export const deployedAccountIdOf = (env: Env): string | null => accountIdOf(env.
 
 /**
  * Who `request` signs in, if they're an administrator, or else what to answer them: that they aren't
- * signed in, or aren't one, before anything they sent is read.
+ * signed in, or aren't one, as `forbidden` says, before anything they sent is read.
  */
-async function administratorOf(request: Request, env: Env): Promise<Credentials | Response> {
+export async function administratorOf(request: Request, env: Env, forbidden = ASSISTANT_FORBIDDEN): Promise<Credentials | Response> {
   const credentials = await credentialsOf(request, env);
   const administrator = credentials && (await workspace(env).canAdminister(credentials));
   if (!credentials || administrator === null) return problem(401, NOT_SIGNED_IN);
-  return administrator ? credentials : problem(403, ASSISTANT_FORBIDDEN);
+  return administrator ? credentials : problem(403, forbidden);
 }
 
 /**
@@ -292,22 +292,28 @@ export async function changeWebSearch(request: Request, env: Env): Promise<Respo
 }
 
 /**
- * What the model `gateway` names, called `name`, may do on the web, as it answers the web's test question
- * given its format's tools for it, and what it said, or why it can't: AI Gateway refused the tools, even
- * without the one for reading pages, which it may not have for every model, the model answered without
- * searching, which shows in the pages it cites, or it didn't answer at all.
+ * What the model `gateway` names, called `name`, may do on the web, as it answers the web's test question,
+ * @ember's unless it's another `question`, given its format's tools for it, and what it said, or why it
+ * can't: AI Gateway refused the tools, even without the one for reading pages, which it may not have for
+ * every model, the model answered without searching, which shows in the pages it cites, as `unsearched`
+ * says, or it didn't answer at all.
  */
-async function searchedBy(env: Env, gateway: Gateway & { name: string }): Promise<{ webTools: WebTool[]; found: string } | GatewayRefusal> {
+export async function searchedBy(
+  env: Env,
+  gateway: Gateway & { name: string },
+  question = WEB_TEST_QUESTION,
+  unsearched = answeredUnsearched,
+): Promise<{ webTools: WebTool[]; found: string } | GatewayRefusal> {
   const signal = AbortSignal.timeout(WEB_TEST_TIMEOUT_MS);
   let webTools = WEB_TOOLS_IN[gateway.format];
-  let answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
+  let answered = await askOnce(env, gateway, { ...question, webTools }, signal);
   if ("refusal" in answered && answered.wrongFormat && webTools.includes("read")) {
     console.error(`Asking ${gateway.model} to search again without reading pages, as AI Gateway didn't take that: ${answered.refusal}`);
     webTools = webTools.filter((tool) => tool !== "read");
-    answered = await askOnce(env, gateway, { ...WEB_TEST_QUESTION, webTools }, signal);
+    answered = await askOnce(env, gateway, { ...question, webTools }, signal);
   }
   if ("refusal" in answered) return answered.wrongFormat ? { ...answered, refusal: webToolsRefused(gateway.name, answered.cloudflareSays) } : answered;
-  if (!answered.sources) return { status: 422, reason: "model", refusal: answeredUnsearched(gateway.name) };
+  if (!answered.sources) return { status: 422, reason: "model", refusal: unsearched(gateway.name) };
   return { webTools: [...webTools], found: shownOf(answered.text) };
 }
 
@@ -332,14 +338,14 @@ export async function changeYourAssistant(request: Request, env: Env): Promise<R
 const refused = ({ refusal, field, status }: GatewayRefusal) => formAnswer({ error: refusal, ...(field && { field }) }, status);
 
 /**
- * What the model `gateway` names says to the test question, and the format it took it in, trying each
- * format in turn while the model is refused in one (`formatsFor`), or why it didn't answer: the first
- * format's refusal, unless another's says more.
+ * What the model `gateway` names says to the test question, @ember's unless it's another `question`, and
+ * the format it took it in, trying each format in turn while the model is refused in one (`formatsFor`),
+ * or why it didn't answer: the first format's refusal, unless another's says more.
  */
-async function greetingFrom(env: Env, gateway: Omit<Gateway, "format">): Promise<{ format: ModelFormat; greeting: string } | GatewayRefusal> {
+export async function greetingFrom(env: Env, gateway: Omit<Gateway, "format">, question = TEST_QUESTION): Promise<{ format: ModelFormat; greeting: string } | GatewayRefusal> {
   let first: GatewayRefusal | null = null;
   for (const format of formatsFor(gateway.model)) {
-    const answer = await ask(env, { ...gateway, format }, TEST_QUESTION, TEST_TIMEOUT_MS);
+    const answer = await ask(env, { ...gateway, format }, question, TEST_TIMEOUT_MS);
     if (!("refusal" in answer)) return { format, greeting: shownOf(answer.text) };
     if (!answer.wrongFormat) return answer;
     first ??= answer;

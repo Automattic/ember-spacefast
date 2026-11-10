@@ -1759,14 +1759,26 @@ export const NAME_RESERVED = `${ASSISTANT_NAME} is the AI assistant's name. Choo
 
 /**
  * Whether `name` is @ember's, which nobody can take, whether or not Ember AI is on, so that nobody passes
- * for it: "Ember" in any capitals, in any of Unicode's compatible forms, such as fullwidth letters, with
- * spaces around it, an @ before it, or characters that show nothing, such as a zero-width space, in it.
- * Anyone who had the name before keeps it.
+ * for it: "Ember" as `sameName` compares names. Anyone who had the name before keeps it.
  */
 export function isReservedName(name: string): boolean {
-  const shown = name.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/^[\s@]+|\s+$/g, "");
-  return shown.toLowerCase() === ASSISTANT_NAME.toLowerCase();
+  return sameName(name, ASSISTANT_NAME);
 }
+
+/**
+ * Whether two names look the same: in any capitals, in any of Unicode's compatible forms, such as
+ * fullwidth letters, with spaces around them, an @ before them, or characters that show nothing, such
+ * as a zero-width space, in them.
+ */
+export function sameName(name: string, other: string): boolean {
+  return nameAsShown(name) === nameAsShown(other);
+}
+
+/** `name` as `sameName` compares it. */
+function nameAsShown(name: string): string {
+  return name.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/^[\s@]+|\s+$/g, "").toLowerCase();
+}
+
 export const EMAIL_ADDRESS_TOO_LONG = `Email address must be at most ${MAX_EMAIL_ADDRESS_LENGTH} characters`;
 
 /** The reactions: the first three are quick reactions, the rest sit in the tray. */
