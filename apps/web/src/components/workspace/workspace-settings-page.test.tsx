@@ -25,6 +25,7 @@ import {
   type WorkspaceSettings,
 } from "@ember/protocol";
 import { ASSISTANT_MODELS, TOP_LEVELS, modelName, type AssistantChanges, type AssistantSettings, type NewAssistantModel } from "@ember/protocol/assistant";
+import type { Agent, Agents } from "@ember/protocol/agents";
 import type { HuddlesSetup } from "@ember/protocol/huddles";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
@@ -36,6 +37,7 @@ import { ApiError } from "@/lib/api";
 // script, which CI keeps the same as .github's, since a copy's .github keeps its own workflow, or none.
 import EMBERS_WORKFLOW from "../../../../worker/scripts/update-ember.yml?raw";
 import { HOW_COPIES_UPDATE, HOW_THIS_COPY_UPDATES, HOW_TO_ADD_THE_WORKFLOW } from "./ember-version";
+import { AGENTS_ANSWER, ASSISTANT_EXPLAINED } from "./assistant-settings";
 import { CONFIRM_REMOVE } from "./people-list";
 import { workspaceSectionPath, type WorkspaceSection } from "./settings-navigation";
 import { CHANGES_SAVED } from "./settings-page";
@@ -117,6 +119,21 @@ const LOGO = "/account/logo?v=20261017120000";
 
 /** @ember's avatar while it's Ember's flame. */
 const EMBER_FLAME = "/users/ember.abc/avatar?v=20261101120000";
+
+/** An agent, as the AI assistant tab lists it while Ember AI is on. */
+const RECAP: Agent = {
+  id: "0mgk3x2a9b4c60",
+  name: "Recap",
+  bio: null,
+  role: "bot",
+  status: "active",
+  avatarUrl: "/users/0mgk3x2a9b4c60/avatar?v=1",
+  description: "Sums up threads into decisions and to-dos.",
+  model: "anthropic/claude-sonnet-5.5",
+  modelName: "Claude Sonnet 5.5",
+  webTools: [],
+  rooms: null,
+};
 
 /** Answers the page's requests as the server would for `settings`, or as `answers` says. */
 function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, removed, ordered, logoSaved }: Answers = {}) {
@@ -219,6 +236,8 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
       case "DELETE /api/account/assistant":
         assistant = null;
         return Response.json({ assistant });
+      case "GET /api/account/agents":
+        return Response.json({ agents: [RECAP] } satisfies Agents);
       case "PUT /api/account/huddles":
         huddles = { appId: (JSON.parse(String(init?.body)) as HuddlesSetup).appId };
         return Response.json({ huddles });
@@ -388,7 +407,7 @@ describe("Community settings page", () => {
     expect(domain()).not.toBeInTheDocument();
     expect(assistant()).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "AI assistant" })).toBeInTheDocument();
-    expect(screen.getByText("Add an AI assistant people can ask in the chat.")).toBeInTheDocument();
+    expect(screen.getByText("Add AI agents people can ask in the chat.")).toBeInTheDocument();
 
     act(() => navigate("/account/edit#account_name"));
     expect(community()).toBeInTheDocument();
@@ -1739,11 +1758,15 @@ describe("Ember AI", () => {
     avatar: false,
   };
 
-  it("gives administrators the Ember AI card, whose switch sets up Ember AI, naming the model it saved", async () => {
+  const agentsCard = () => screen.queryByRole("region", { name: "Agents" });
+
+  it("gives administrators the Ember AI card, whose switch sets up Ember AI, then lists the agents under it", async () => {
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
     const assistantSwitch = within(card).getByRole("switch", { name: "Ember AI" });
     expect(assistantSwitch).not.toBeChecked();
+    expect(card).toHaveTextContent(ASSISTANT_EXPLAINED);
+    expect(agentsCard()).not.toBeInTheDocument();
     await user.click(assistantSwitch);
     await user.type(await screen.findByRole("textbox", { name: "Account ID" }), "0123456789abcdef0123456789abcdef");
     await user.type(screen.getByRole("textbox", { name: "API token" }), "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab");
@@ -1753,8 +1776,16 @@ describe("Ember AI", () => {
     expect(await screen.findByText("Hello, team!")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(card).toHaveTextContent("@ember runs on Claude Haiku 5.5 through Cloudflare AI Gateway.");
+    expect(card).toHaveTextContent(AGENTS_ANSWER);
     expect(assistantSwitch).toBeChecked();
+
+    // @ember, on the model it saved, then the agents.
+    await waitFor(() => expect(within(agentsCard()!).getAllByRole("listitem")).toHaveLength(2));
+    const [ember, recap] = within(agentsCard()!).getAllByRole("listitem");
+    expect(ember).toHaveTextContent("Claude Haiku 5.5 · Every open room");
+    expect(within(ember!).getByRole("link", { name: "Edit Ember" })).toHaveAttribute("href", "/account/agents/ember/edit");
+    expect(within(recap!).getByRole("link", { name: "Edit Recap" })).toHaveAttribute("href", `/account/agents/${RECAP.id}/edit`);
+    expect(within(agentsCard()!).getByRole("link", { name: "New agent" })).toHaveAttribute("href", "/account/agents/new");
 
     await user.click(within(card).getByRole("button", { name: "Change" }));
     expect(await screen.findByRole("textbox", { name: "Account ID" })).toHaveValue("0123456789abcdef0123456789abcdef");
@@ -1770,50 +1801,18 @@ describe("Ember AI", () => {
     expect(accountId).toHaveAccessibleDescription("Ember is deployed to this account. To ask through another, paste that account's ID.");
   });
 
-  it("turns Ember AI off once the administrator confirms", async () => {
+  it("turns Ember AI off once the administrator confirms, taking the agents away", async () => {
     serve({ ...asAdministrator, assistant: ON });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const { user } = showPage();
     const card = await screen.findByRole("region", { name: "Ember AI" });
-    expect(card).toHaveTextContent("@ember runs on GLM-4.7 Flash through Cloudflare AI Gateway.");
+    expect(card).toHaveTextContent(AGENTS_ANSWER);
+    expect(agentsCard()).toBeInTheDocument();
     await user.click(within(card).getByRole("switch", { name: "Ember AI" }));
     await waitFor(() => expect(within(card).queryByRole("button", { name: "Change" })).not.toBeInTheDocument());
     expect(within(card).getByRole("switch", { name: "Ember AI" })).not.toBeChecked();
-    expect(card).toHaveTextContent("Ember AI adds @ember");
-  });
-
-  it("changes the most @ember may think and write for anyone on the card, at once", async () => {
-    serve({ ...asAdministrator, assistant: ON });
-    const { user } = showPage();
-    const card = await screen.findByRole("region", { name: "Ember AI" });
-    const thinking = within(card).getByRole("group", { name: "Thinking" });
-    expect(within(thinking).getByRole("radio", { name: "High" })).toBeChecked();
-    await user.click(within(thinking).getByRole("radio", { name: "Low" }));
-    expect(within(thinking).getByRole("radio", { name: "Low" })).toBeChecked();
-    await waitFor(() => expect(within(thinking).getByRole("radio", { name: "High" })).toBeEnabled());
-    expect(within(thinking).getByRole("radio", { name: "Low" })).toBeChecked();
-    expect(thinking).toHaveTextContent("Thinks a little first, up to about 4,000 tokens.");
-    expect(fetch).toHaveBeenCalledWith("/api/account/assistant", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ thinking: "low" }) }));
-  });
-
-  it("lets administrators add a model people can pick, choose it to answer everyone, and remove another", async () => {
-    serve({ ...asAdministrator, assistant: ON });
-    const { user } = showPage();
-    const card = await screen.findByRole("region", { name: "Ember AI" });
-    await user.click(within(card).getByRole("button", { name: "Add a model" }));
-    const dialog = await screen.findByRole("dialog", { name: "Add a model" });
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Model" }), "GPT-6.1 Sol");
-    await user.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(await screen.findByText("Hi there!")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-    const models = within(card).getByRole("group", { name: "Models" });
-    await user.click(within(models).getByRole("radio", { name: "GPT-6.1 Sol" }));
-    await waitFor(() => expect(card).toHaveTextContent("@ember runs on GPT-6.1 Sol through Cloudflare AI Gateway, or on the model each person picks."));
-    await user.click(within(models).getByRole("button", { name: "Remove GLM-4.7 Flash" }));
-    await waitFor(() => expect(within(models).getAllByRole("radio").map((radio) => radio.closest("label")?.textContent)).toEqual(["GPT-6.1 Sol"]));
-    expect(card).toHaveTextContent("@ember runs on GPT-6.1 Sol through Cloudflare AI Gateway.");
+    expect(card).toHaveTextContent(ASSISTANT_EXPLAINED);
+    expect(agentsCard()).not.toBeInTheDocument();
   });
 
   it("tells members that administrators manage it, with no card", async () => {
@@ -1821,6 +1820,7 @@ describe("Ember AI", () => {
     showPage(asLinus);
     expect(await screen.findByText("Community admins manage the AI assistant.")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Ember AI" })).not.toBeInTheDocument();
+    expect(agentsCard()).not.toBeInTheDocument();
   });
 });
 

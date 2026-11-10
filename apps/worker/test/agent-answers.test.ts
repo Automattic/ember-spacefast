@@ -1,9 +1,9 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type User, type UserId } from "@ember/protocol";
 import { agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_REFUSED, QUESTION_NEEDED, type AgentAnswer, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
-import { ASSISTANT_OFF } from "@ember/protocol/assistant";
+import { ASSISTANT_OFF, maxTokensAt } from "@ember/protocol/assistant";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AGENT_NOTES, maxTokensAt, NOTES } from "../src/assistant/answers";
+import { AGENT_NOTES, NOTES } from "../src/assistant/answers";
 import { api, connect, cookieOf, createRoom, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
 
 // What AI agents answer when someone mentions them in a room they're in, or writes to them directly: as

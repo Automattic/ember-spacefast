@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 // Community settings: the pages that set the workspace up share a layout whose column of links to them
 // takes the conversations' place, and workspace settings show one of their sections at a time, the one
 // the address's fragment names: General, Rooms and permissions, Membership, and Domain settings, where
-// administrators give Ember a custom domain, and AI assistant, where they set up Ember AI.
+// administrators give Ember a custom domain, and AI assistant, where they set up Ember AI and its agents,
+// whose pages are part of it.
 
 /** The sections of community settings, by their ids. */
 export type SettingsSection =
@@ -44,6 +45,9 @@ export function settingsSectionOf(route: Route, hash: string): SettingsSection |
     case "new-bot":
     case "bot-settings":
       return "chat-bots";
+    case "new-agent":
+    case "agent-settings":
+      return "assistant-settings";
     case "custom-styles":
       return "custom-styles";
     default:

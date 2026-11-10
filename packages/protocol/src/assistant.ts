@@ -85,11 +85,29 @@ export type AnswerLength = (typeof ANSWER_LENGTHS)[number];
 /** About how many words each length's answers keep to, which @ember is told: a long one is nearly all one message holds. */
 export const ANSWER_WORDS: Record<AnswerLength, number> = { short: 150, medium: 400, long: 1_500 };
 
+/**
+ * The most tokens each length's answer may take once its model has thought: several times its words, at
+ * about 1.3 tokens each, as Markdown, code and tables take more, and a model writes past what it's asked.
+ */
+export const ANSWER_TOKENS: Record<AnswerLength, number> = { short: 1_000, medium: 2_000, long: 6_000 };
+
+/** The tokens of thinking an answer may take when it's asked for none, as some models think a little all the same. */
+export const UNTHINKING_TOKENS = 2_000;
+
+/**
+ * The most characters of a conversation @ember and the agents read: the newest messages that fit, so
+ * that one long conversation costs no more than about 10,000 tokens.
+ */
+export const MAX_CONVERSATION_LENGTH = 40_000;
+
 /** How much @ember thinks, and how long it answers. */
 export interface AnswerLevels {
   thinking: ThinkingLevel;
   length: AnswerLength;
 }
+
+/** The most tokens an answer at `levels` may take: its thinking's, which counts toward them, and then its words'. */
+export const maxTokensAt = ({ thinking, length }: AnswerLevels) => (thinking === "off" ? UNTHINKING_TOKENS : THINKING_TOKENS[thinking]) + ANSWER_TOKENS[length];
 
 /** Each level, as its dial names it. */
 export const LEVEL_NAMES: Record<ThinkingLevel | AnswerLength, string> = { off: "Off", low: "Low", medium: "Medium", high: "High", short: "Short", long: "Long" };
@@ -193,6 +211,18 @@ export const WEB_SEARCHES_PER_ANSWER = 5;
 
 /** The most pages @ember reads for one answer, as what it reads is paid for as the conversation is. */
 export const PAGES_READ_PER_ANSWER = 3;
+
+/** What a model may do on the web in each format, with the tools AI Gateway passes on in it. */
+export const WEB_TOOLS_IN: Record<ModelFormat, readonly WebTool[]> = { messages: ["search", "read"], responses: ["search"], chat: [] };
+
+/**
+ * The format `model` is likeliest to take: the one `models` list it with, or the models Ember knows, or
+ * else Messages for Anthropic's, Responses for OpenAI's, and Chat Completions for anyone else's.
+ */
+export function formatOf(model: string, models: readonly AssistantModel[] = []): ModelFormat {
+  const listed = (models.find(({ id }) => id === model) ?? ASSISTANT_MODELS.find(({ id }) => id === model))?.format;
+  return listed ?? (model.startsWith("anthropic/") ? "messages" : model.startsWith("openai/") ? "responses" : "chat");
+}
 
 /**
  * Ember AI as the AI assistant tab shows it to administrators while it's on: the Cloudflare account it

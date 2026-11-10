@@ -1,17 +1,14 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, MAX_MESSAGE_LENGTH, type BotAnswer, type BotSettings, type DirectRoom, type Message, type NewWorkspace, type RoomId, type User } from "@ember/protocol";
-import { DEFAULT_LEVELS, TOP_LEVELS, type AnswerLevelChanges } from "@ember/protocol/assistant";
+import { DEFAULT_LEVELS, MAX_CONVERSATION_LENGTH, maxTokensAt, TOP_LEVELS, UNTHINKING_TOKENS, type AnswerLevelChanges } from "@ember/protocol/assistant";
 import { MENTION_CONTENT_TYPE, mentionSgid, OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   answerOf,
-  MAX_CONVERSATION_LENGTH,
-  maxTokensAt,
   NOTES,
   previewAttachment,
   questionFor,
   ROOM_MESSAGES_READ,
   THREAD_REPLIES_READ,
-  UNTHINKING_TOKENS,
   waitFor,
   writtenBy,
   type Answerer,

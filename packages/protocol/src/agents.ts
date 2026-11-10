@@ -45,27 +45,27 @@ export interface AgentRoom {
 
 /**
  * An agent as the AI assistant tab lists it to administrators: as the people directory lists it, with
- * what it does, the model it answers with and what that's called, and the open rooms it's kept to, by
- * name, or null while it's in every one, new ones too.
+ * what it does, the model it answers with and what that's called, what it does on the web, nothing while
+ * Search the web is off, and the open rooms it's kept to, by name, or null while it's in every one, new
+ * ones too.
  */
 export interface Agent extends DirectoryUser {
   description: string;
   model: string;
   modelName: string;
+  webTools: WebTool[];
   rooms: AgentRoom[] | null;
 }
 
 /**
  * An agent as its page shows it: as the tab lists it, with its instructions, the format its model took
- * its test question in, how much it thinks and how long it answers, what it does on the web, nothing
- * while Search the web is off, whether an administrator uploaded its avatar, and who last changed it,
- * and when.
+ * its test question in, how much it thinks and how long it answers, whether an administrator uploaded
+ * its avatar, and who last changed it, and when.
  */
 export interface AgentSettings extends Agent {
   instructions: string;
   format: ModelFormat;
   levels: AnswerLevels;
-  webTools: WebTool[];
   /** Whether an administrator uploaded its avatar, which `DELETE /api/account/agents/<id>/avatar` takes away. */
   avatar: boolean;
   changedBy: User;

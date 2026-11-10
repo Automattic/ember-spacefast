@@ -10,7 +10,7 @@ const REMOVE_BUTTON =
 const SIZES = {
   /** 96px, as your avatar and the workspace's logo show. */
   large: { circle: "size-24", pixels: 96, camera: "size-9", icon: "size-[18px]" },
-  /** 64px, beside what it's for, as @ember's avatar shows on the Ember AI card. */
+  /** 64px, beside what it's for, as @ember's avatar shows on its page. */
   small: { circle: "size-16", pixels: 64, camera: "size-7", icon: "size-4" },
 };
 
