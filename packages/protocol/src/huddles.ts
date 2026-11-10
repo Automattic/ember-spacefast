@@ -156,8 +156,10 @@ export type HuddleServerFrame =
   | { type: "huddle.published"; sdp: string }
   /**
    * The SFU's offer of the people the tab asked to hear, as `tracks`, which the tab's receiving
-   * connection answers with `huddle.answer`. Someone can leave while their track is on its way, so a tab
-   * plays only the tracks of people who are in the huddle.
+   * connection answers with `huddle.answer`. `tracks` names whoever publishes what the offer carries of
+   * them as the room sends it, and not someone who left or began publishing anew while the SFU made it.
+   * Someone can do either while the offer is on its way, too, or while the connection takes it, so a tab
+   * plays only the tracks of people who have been in the huddle, and to be listened to, since it came.
    */
   | { type: "huddle.offer"; sdp: string; tracks: OfferedHuddleTrack[] }
   /**

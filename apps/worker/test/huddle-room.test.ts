@@ -450,6 +450,39 @@ describe("What a huddle asks of the Realtime SFU", () => {
     expect(sfu.sessions.get(toLinus)!.pulled).toEqual(new Map([["2", { sessionId: sfu.publishers[2], trackName: "audio" }]]));
   });
 
+  it("names nobody in an offer for what they published before, once they publish anew while the SFU makes it", async () => {
+    const { ada, sfu } = await huddlesOn();
+    const room = await freshRoom("anew-meanwhile");
+    const linus = await signIn("Linus");
+    const adas = await welcomed(room, ada);
+    const fromAda = await publishing(sfu, adas);
+    const linuses = await welcomed(room, linus);
+
+    // The SFU is slow to offer Linus what Ada publishes, and to close it: she has published anew, and can be listened to again, before it answers.
+    const offer = sfu.hold(/tracks\/new$/);
+    const close = sfu.hold(new RegExp(`${fromAda}/tracks/close$`));
+    linuses.send({ type: "huddle.listen", fresh: true });
+    await vi.waitFor(() => expect(sfu.askedTo(/tracks\/new$/)).toHaveLength(2));
+    const toLinus = newest(sfu);
+    const fromAdaNow = await publishing(sfu, adas, "Ada's second offer");
+    expect(await linuses.next("huddle.changed")).toEqual({ type: "huddle.changed", person: person(ada) });
+    expect(await linuses.next("huddle.changed")).toEqual({ type: "huddle.changed", person: person(ada, { audio: true }) });
+
+    // Named for that track, she'd be taken for heard, and never asked for again.
+    offer();
+    const outdated = await linuses.next("huddle.offer");
+    expect(outdated.tracks).toEqual([]);
+    expect(sfu.sessions.get(toLinus)!.pulled).toEqual(new Map([["0", { sessionId: fromAda, trackName: "audio" }]]));
+    linuses.send({ type: "huddle.answer", sdp: `answer to ${outdated.sdp}` });
+    await linuses.next("huddle.listening");
+    close();
+
+    // Asked again, as a tab does after an offer, the room has that track closed and offers what she publishes now.
+    expect((await listen(linuses))!.tracks).toEqual([{ mid: "1", kind: "audio", userId: ada.user.id }]);
+    expect(closedOn(sfu, toLinus)).toEqual(["0"]);
+    expect(sfu.sessions.get(toLinus)!.pulled).toEqual(new Map([["1", { sessionId: fromAdaNow, trackName: "audio" }]]));
+  });
+
   it("has the SFU close what a tab published and heard, and what it was offered, once it leaves", async () => {
     const { ada, sfu } = await huddlesOn();
     const room = await freshRoom("leaving");
