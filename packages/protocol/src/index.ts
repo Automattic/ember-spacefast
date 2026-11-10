@@ -807,6 +807,8 @@ export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.m
  */
 export interface ReleaseCheck {
   release: string;
+  /** Whether this Ember is a beta, such as "0.5 beta 1", ahead of the newest release, which GitHub never names a beta. */
+  beta: boolean;
   newest: { release: string; notes: string; newer: boolean } | null;
   /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
   copy: CopyOnGitHub | null;

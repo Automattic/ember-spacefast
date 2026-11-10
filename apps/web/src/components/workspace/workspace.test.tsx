@@ -939,7 +939,7 @@ describe("New releases", () => {
     const idle = idleCallbacks();
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-      "GET /api/account/release": () => Response.json({ release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true }, copy: null }),
+      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, copy: null }),
     });
     const { user } = showWorkspace("/rooms/random", asAdministrator);
     expect(await roomHeading()).toHaveTextContent("random");
@@ -959,7 +959,7 @@ describe("New releases", () => {
   it("asks afresh each time an administrator opens Admin, once the browser is idle, but not for going on within it, or leaving", async () => {
     const idle = idleCallbacks();
     let newest = "0.2";
-    const answer = () => Response.json({ release: "0.1", newest: { release: newest, notes: NOTES, newer: true }, copy: null });
+    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, notes: NOTES, newer: true }, copy: null });
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
       "GET /api/account/release": answer,
@@ -1007,7 +1007,7 @@ describe("New releases", () => {
       // Asked afresh alone, as the page opens in Admin.
       serve({
         "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-        "POST /api/account/release_checks": () => Response.json({ release: "0.1", newest, copy: null }),
+        "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, copy: null }),
       });
       const { unmount } = showWorkspace("/account/edit", asAdministrator);
       await communitySettings();

@@ -1,7 +1,7 @@
 import { EMBER_REPOSITORY, type NewWorkspace, type ReleaseCheck } from "@ember/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AFRESH_AFTER_MS, ANSWER_KEPT_MS, forgetNewestRelease, NO_ANSWER_KEPT_MS } from "../src/releases";
-import { releaseNameOf, VERSION } from "../src/version";
+import { AFRESH_AFTER_MS, ANSWER_KEPT_MS, forgetNewestRelease, isNewer, NO_ANSWER_KEPT_MS } from "../src/releases";
+import { isBeta, releaseNameOf, VERSION } from "../src/version";
 import type { Env } from "../src/env";
 import { api, apiWith, cookieOf, freshDeploy, shown, signIn, type Session } from "./support";
 
@@ -74,7 +74,7 @@ describe("Checking for a newer release", () => {
     const response = await checkRelease(administrator);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({ release: releaseNameOf(VERSION), newest: { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true }, copy: null });
+    expect(await response.json()).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true }, copy: null });
     expect(asked).toEqual([{ url: LATEST, redirect: "manual", userAgent: `Ember/${VERSION} (+${EMBER_REPOSITORY})` }]);
   });
 
@@ -86,13 +86,13 @@ describe("Checking for a newer release", () => {
     ] as const) {
       forgetNewestRelease();
       latestIs(version);
-      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), newest: { release: name, notes: pageOf(version), newer: false }, copy: null });
+      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: { release: name, notes: pageOf(version), newer: false }, copy: null });
     }
   });
 
   it("compares versions by their numbers, not as text", async () => {
     const administrator = await setUp();
-    const [major, minor, patch] = VERSION.split(".").map(Number) as [number, number, number];
+    const [major, minor, patch] = /^(\d+)\.(\d+)\.(\d+)/.exec(VERSION)!.slice(1).map(Number) as [number, number, number];
     const later = [`${major}.${minor}.${patch + 10}`, `${major}.${minor + 10}.0`, `${major + 10}.0.0`];
     const earlier = [major > 0 && `${major - 1}.99.99`, minor > 0 && `${major}.${minor - 1}.99`].filter((version): version is string => version !== false);
     for (const [version, newer] of [...later.map((version) => [version, true] as const), ...earlier.map((version) => [version, false] as const)]) {
@@ -100,6 +100,36 @@ describe("Checking for a newer release", () => {
       latestIs(version);
       expect((await releaseCheckFor(administrator)).newest?.newer, version).toBe(newer);
     }
+  });
+
+  it("puts a beta after the release before it and before its own, as copies take it", () => {
+    for (const [later, earlier] of [
+      ["0.5.0-beta.1", "0.4.2"],
+      ["0.5.0-beta.2", "0.5.0-beta.1"],
+      ["0.5.0-beta.10", "0.5.0-beta.9"],
+      ["0.5.0", "0.5.0-beta.10"],
+      ["0.5.1", "0.5.0"],
+      ["0.6.0-beta.1", "0.5.9"],
+    ]) {
+      expect(isNewer(later!, earlier!), `${later} after ${earlier}`).toBe(true);
+      expect(isNewer(earlier!, later!), `${earlier} after ${later}`).toBe(false);
+      expect(isNewer(later!, later!), `${later} after itself`).toBe(false);
+    }
+  });
+
+  it("names a beta for its release, as 0.5 beta 1, and a release without its trailing .0", () => {
+    expect(["0.5.0-beta.1", "0.5.1-beta.12", "1.0.0", "0.10.0", "0.4.2", "0.5.10"].map(releaseNameOf)).toEqual(["0.5 beta 1", "0.5.1 beta 12", "1.0", "0.10", "0.4.2", "0.5.10"]);
+    expect(["0.5.0-beta.1", "0.5.0", "0.5.0-rc.1"].map(isBeta)).toEqual([true, false, false]);
+  });
+
+  // GitHub never takes a pre-release for the latest, but this Ember is on a release only while its version is one.
+  it.skipIf(isBeta(VERSION))("tells an Ember on a release nothing of a beta, should GitHub name one its latest", async () => {
+    const administrator = await setUp();
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const beta = `${Number(VERSION.split(".")[0]) + 1}.0.0-beta.1`;
+    latestIs(beta);
+    expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: false, newest: null, copy: null });
+    expect(logged.mock.calls).toEqual([[`GitHub didn't name Ember's newest release: GitHub's latest release is a beta, ${pageOf(beta)}`]]);
   });
 
   it("follows Ember's repository to where it's moved, as GitHub redirects there first", async () => {
@@ -127,7 +157,7 @@ describe("Checking for a newer release", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => failure());
     for (failure of failures) {
       forgetNewestRelease();
-      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), newest: null, copy: null });
+      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: null, copy: null });
     }
     expect(logged.mock.calls).toEqual([
       ["GitHub didn't name Ember's newest release: GitHub answered 200"],
@@ -223,7 +253,7 @@ describe("Checking afresh, as opening Admin does", () => {
 
     vi.setSystemTime(start + AFRESH_AFTER_MS);
     const next = { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true };
-    expect(await releaseCheckFor(administrator, checkReleaseAfresh)).toEqual({ release: releaseNameOf(VERSION), newest: next, copy: null });
+    expect(await releaseCheckFor(administrator, checkReleaseAfresh)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: next, copy: null });
     expect(asked.map(({ url }) => url)).toEqual([LATEST, LATEST]);
     // Ordinary checks say so too, for six hours from then, and another made afresh within the minute asks nothing.
     expect((await releaseCheckFor(administrator)).newest).toEqual(next);

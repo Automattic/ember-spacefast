@@ -9,7 +9,8 @@ import { BUTTON } from "./email-settings";
 // request for each release once it has the Update Ember workflow, which Cloudflare's copy leaves out
 // (docs/self-hosting.md#updating), and the docs say how anything else updates. Where the deploy told the
 // Worker which copy on GitHub this is, the card links straight to running its workflow, as the project's
-// owner asked (2026-11-05), or to adding it.
+// owner asked (2026-11-05), or to adding it. A beta says it's one, ahead of the newest release, until its
+// release is out (docs/self-hosting.md#betas).
 
 const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 
@@ -46,6 +47,13 @@ function updating(copy: CopyOnGitHub | null): { says: string; link: string; href
   return { says: HOW_TO_ADD_THE_WORKFLOW, link: "Add GitHub action to update", href: addWorkflowLinkOf(copy) };
 }
 
+/** What the card says of this Ember under its heading: which release it is while a newer one is out, else whether it's the newest, or a beta ahead of it. */
+function noteOf({ release, beta, newest }: ReleaseCheck): string {
+  if (newest?.newer) return `This is Ember ${release}.`;
+  if (beta) return newest ? `This is a beta, ahead of Ember ${newest.release}, the newest release.` : "This is a beta. GitHub didn't say whether its release is out.";
+  return newest ? "This is the newest release." : "GitHub didn't say whether a newer release is out.";
+}
+
 /** The release this Ember is, and whether a newer one is out, once the Worker has said, as it does only for administrators. */
 export function EmberVersion({ check }: { check: ReleaseCheck | null }) {
   if (!check) return null;
@@ -58,7 +66,7 @@ export function EmberVersion({ check }: { check: ReleaseCheck | null }) {
         <h2 id="ember-version-heading" className="text-base font-semibold">
           {newer ? `Ember ${newer.release} is available` : `Ember ${release}`}
         </h2>
-        <p className={NOTE}>{newer ? `This is Ember ${release}.` : newest ? "This is the newest release." : "GitHub didn't say whether a newer release is out."}</p>
+        <p className={NOTE}>{noteOf(check)}</p>
       </div>
       {newer && (
         <>

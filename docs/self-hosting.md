@@ -11,6 +11,7 @@ account, as [Deploying](#deploying) describes.
 
 - [Deploying](#deploying)
   - [Updating](#updating)
+  - [Betas](#betas)
   - [The build's token](#the-builds-token)
   - [A custom domain](#a-custom-domain)
   - [Who can join](#who-can-join)
@@ -122,7 +123,8 @@ has.
 
 The workflow looks for a newer release every Monday, or when you run it from the Actions tab (Update
 Ember, then Run workflow), and opens a pull request, "Update Ember to v1.2.3", that links to what's
-new. Merging it deploys the update, as every push to `main` does, and that's all: each room's and the
+new. It brings releases alone, never a beta unless you ask for one, as [Betas](#betas) says. Merging
+it deploys the update, as every push to `main` does, and that's all: each room's and the
 workspace's tables bring themselves up to date the first time they open. Closing it instead turns that
 release down until the next, whose pull request brings its changes too. Workers Builds builds each
 pull request's branch as a Preview, and the pull request shows whether it built; that's all a Preview
@@ -169,6 +171,47 @@ git push -u origin update-ember/v1.2.3      # then merge it into main
 
 A clone of Ember's own repository shares its history, so `git pull` brings it up to date too, or the
 script, which merges from where yours and Ember's part.
+
+### Betas
+
+Before a release with big changes, Ember may publish betas of it, such as `v0.5.0-beta.1`, on its
+[releases page](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases), marked as
+pre-releases, for trying what's coming. Nobody is offered one without asking: Update Ember brings a
+copy releases alone, and Admin tells administrators of releases alone, since GitHub's latest release
+is never a pre-release. A copy whose update script predates betas, as Ember 0.4.2's and earlier do,
+doesn't see them at all.
+
+To try a beta:
+
+- As a new Ember: the Deploy to Cloudflare button at the top of the beta's notes deploys it as
+  [Deploying](#deploying) describes, with a Worker, bucket and database of its own, so it's a new
+  community, apart from any you run.
+- On your computer: in a clone of Ember, `git checkout v0.5.0-beta.1`, then `pnpm install`,
+  `pnpm dev`, and `pnpm seed` for a community to try it in, as
+  [Development](development.md#getting-started) says.
+- On a copy you have: run Update Ember from the Actions tab with **Take Ember's newest beta** ticked,
+  and merge the pull request it opens. The box comes with the workflow Ember has now, and an update's
+  pull request says when yours is older, for you to copy Ember's over it. Where the copy's update
+  script predates betas, run the beta's own in a clone of the copy, and push the branch it makes:
+
+  ```sh
+  git fetch https://github.com/NYLLON-SOFTWARE/ember-cloudflare.git refs/tags/v0.5.0-beta.1
+  mkdir ../ember-beta && git archive FETCH_HEAD apps/worker/scripts | tar -x -C ../ember-beta
+  node ../ember-beta/apps/worker/scripts/update-ember.ts --beta   # makes update-ember/v0.5.0-beta.1
+  git push -u origin update-ember/v0.5.0-beta.1                   # then merge it into main
+  ```
+
+  Run by hand, it brings Ember's workflows too, so in a copy Deploy to Cloudflare made, which has no
+  `.github` folder, it names those the beta changed as conflicts: on the branch, keep
+  `.github/workflows/update-ember.yml`, which brings the betas after it and the release, remove the
+  rest, which run only in Ember's own repository, and commit before you push.
+
+A copy that runs a beta is offered the betas after it, then the release, each as a pull request like
+any update's, and from then on releases alone, until it asks for a beta again. A pull request for a
+beta it asked for stays open until a release passes it. Its General says it's a beta, ahead of the
+newest release, and once the release is out, that it's available. A beta's migrations count as
+released ones, so a copy goes from beta to beta to release as it does from release to release, and
+reverting a beta's update leaves tables the release before it still works with.
 
 ### The build's token
 
