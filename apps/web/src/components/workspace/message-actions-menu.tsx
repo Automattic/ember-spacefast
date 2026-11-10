@@ -26,6 +26,7 @@ import { copyWithSuccess } from "@/lib/clipboard";
 import { replyQuote } from "@/lib/messages";
 import { canShare } from "@/lib/share";
 import { cn } from "@/lib/utils";
+import { COPY_CODE } from "./code-block";
 import { UNKNOWN_PERSON } from "./message-body";
 
 /** With a mouse, the bar overlaps its message. */
@@ -605,6 +606,16 @@ function copyLink(event: MouseEvent<HTMLButtonElement>, message: Message) {
   return copyWithSuccess(event.currentTarget, new URL(permalinkOf(message), document.baseURI).href);
 }
 
+/** The top of the highest of `row`'s Copy code buttons between `left` and `right`, or Infinity. */
+function copyCodeTop(row: HTMLElement, left: number, right: number): number {
+  let top = Infinity;
+  for (const button of row.querySelectorAll(COPY_CODE)) {
+    const box = button.getBoundingClientRect();
+    if (box.left < right && box.right > left) top = Math.min(top, box.top);
+  }
+  return top;
+}
+
 interface Placed {
   row: HTMLElement;
   container: HTMLElement;
@@ -620,7 +631,8 @@ interface Placed {
 
 /**
  * Places an open bar within the timeline less 8px on each side, and within what's on screen. With a
- * mouse, it overlaps the row, its top 17px above the row's and its right 16px in from the timeline's,
+ * mouse, it overlaps the row, its top 17px above the row's, or higher to keep clear of a code block's
+ * Copy code, and its right 16px in from the timeline's,
  * with Message options pinned as its last button, and the tray or More actions opens below it, or above
  * when there's more room there. For fingers, it opens 6px below its anchor, lined up with its right
  * edge, or above when it doesn't fit, or beside it when it fits neither, so it doesn't cover what opened
@@ -654,8 +666,10 @@ function placeMenu({ row, container, trigger, anchor, menu, bar, panel, overlapp
   let barHeight = 0;
   if (overlapping) {
     barHeight = bar.getBoundingClientRect().height;
-    // Overlapping the row by more than half the bar leaves the pointer a way across to it.
-    barTop = Math.max(bounds.top, Math.min(rowBox.top - 17, bounds.bottom - barHeight));
+    // Overlapping the row by more than half the bar leaves the pointer a way across to it. Over a code
+    // block's Copy code, as at the top of a follow-up, it sits on the block's edge instead.
+    const copyCode = copyCodeTop(row, Math.max(bounds.left, bounds.right - 8 - menuBox.width), bounds.right - 8);
+    barTop = Math.max(bounds.top, Math.min(rowBox.top - 17, copyCode - 6 - barHeight, bounds.bottom - barHeight));
     const below = bounds.bottom - barTop - barHeight;
     const above = barTop - bounds.top;
     const panelAbove = !panel.hidden && menuBox.height - barHeight > below && above > below;

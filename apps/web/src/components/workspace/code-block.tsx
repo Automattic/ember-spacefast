@@ -51,11 +51,30 @@ function codeOf(block: DisplayElement): string | null {
   return code;
 }
 
-/** `node`'s text as it reads, its `<br>`s as newlines, which `textContent` would drop. */
+/** The elements a message can hold that start a line of their own, as a bot's `<div>` lines in a code block do. */
+const BLOCKS = new Set(["ADDRESS", "BLOCKQUOTE", "DD", "DIV", "DL", "DT", "FIGCAPTION", "FIGURE", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "TABLE", "TR", "UL"]);
+
+/**
+ * `node`'s text as it reads, its `<br>`s and the lines its blocks start as newlines, which `textContent`
+ * would drop, and none of what the page hides, as it does an empty `<p>`.
+ */
 function textOf(node: Node): string {
   if (node.nodeName === "BR") return "\n";
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
-  return Array.from(node.childNodes, textOf).join("");
+  let text = "";
+  // Whether what comes next starts a line, as a block and whatever follows one do.
+  let broken = false;
+  for (const child of node.childNodes) {
+    if (child instanceof Element && getComputedStyle(child).display === "none") continue;
+    const block = BLOCKS.has(child.nodeName);
+    if (block) broken = true;
+    const part = textOf(child);
+    if (part === "") continue;
+    if (broken && text !== "" && !text.endsWith("\n")) text += "\n";
+    text += part;
+    broken = block;
+  }
+  return text;
 }
 
 /** `token` as React draws it, with what `marks` matches in its text marked. */
@@ -63,6 +82,9 @@ const tokenNode = (token: Token, marks: RegExp | null): ReactNode =>
   typeof token === "string"
     ? marked(token, marks)
     : createElement("span", { className: token.className }, ...token.children.map((child) => tokenNode(child, marks)));
+
+/** A code block's Copy code, which the bar over a message rises above rather than cover. */
+export const COPY_CODE = "[data-copy-code]";
 
 /**
  * A message's code block, highlighted once highlight.js has loaded, as Campfire's `MessageFormatter`
@@ -83,6 +105,7 @@ export function CodeBlock({ block, children, ...props }: ComponentProps<"pre"> &
     <button
       type="button"
       aria-label="Copy code"
+      data-copy-code
       className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-[6px] bg-background text-muted-foreground opacity-0 hover:bg-hover group-hover/code:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground touch:size-11 touch:opacity-100 [&_svg]:size-4"
       onClick={(event) => void copyWithSuccess(event.currentTarget, code ?? (pre.current ? textOf(pre.current) : ""))}
     >
