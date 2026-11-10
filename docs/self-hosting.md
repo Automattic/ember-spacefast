@@ -42,7 +42,15 @@ button again afterwards. If your account already has a bucket named `ember`, the
 pick a new one there for this Ember's files, and choose Create new for the database if it picks one
 another Ember uses. The copy has all of Ember but its `.github` folder, so
 add the Update Ember workflow to it, as [Updating](#updating) says, for it to be offered Ember's
-releases. To deploy from your machine instead, after `pnpm exec wrangler login`:
+releases.
+
+Cloudflare can build the copy before it has finished copying Ember into it. That first build then
+stops at `pnpm run build` with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`, `No package.json ... was found`,
+because the commit it built holds only Cloudflare's `wrangler.jsonc`, and that commit isn't in the
+copy's history afterwards. Push any commit to the copy, such as an edit to its README in GitHub's
+editor, and Workers Builds builds and deploys the copy as it is.
+
+To deploy from your machine instead, after `pnpm exec wrangler login`:
 
 ```sh
 pnpm build
