@@ -291,6 +291,7 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
   }
 
   const isUnheard = ({ user, audio }: HuddlePerson) => audio && user.id !== huddle.you?.id && !heard.has(user.id);
+  const canListenTo = (userId: UserId) => huddle.people.some(({ user, audio }) => audio && user.id === userId);
 
   /**
    * Starts a round, unless one is under way: asks to hear whoever the tab can listen to and doesn't, or
@@ -332,9 +333,15 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
     listenLater();
   }
 
-  /** The receiving connection's answer to an offer of `tracks`, which it plays, or undefined when it can't make one. The first offer makes the connection. */
+  /**
+   * The receiving connection's answer to an offer of `tracks`, which it plays, or undefined when it can't
+   * make one. The first offer makes the connection. The tab hears whoever the offer names from when it
+   * comes, though the connection takes a moment to have their tracks: whoever leaves or begins publishing
+   * anew in that moment is forgotten, and isn't played what the offer carries of them, which is of before.
+   */
   async function answerTo(sdp: string, tracks: OfferedHuddleTrack[]): Promise<string | undefined> {
     const connection = (receiving ??= receivingConnection());
+    for (const { userId } of tracks) if (canListenTo(userId)) heard.add(userId);
     try {
       await connection.setRemoteDescription({ type: "offer", sdp });
       if (receiving !== connection) return undefined;
@@ -355,15 +362,14 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
   }
 
   /**
-   * Plays the track the SFU offered of someone, which the connection receives on the media section the
-   * offer named. Not of someone who has left while it was on its way, nor of someone who can't be listened
-   * to for the moment: the track is of what they published before, and the tab asks for what they publish next.
+   * Plays the track the SFU offered of someone the tab hears, which the connection receives on the media
+   * section the offer named. Not of someone who had left as the offer came, or couldn't be listened to
+   * then, nor of someone the tab has forgotten since: the track is of what they published before, and
+   * the tab asks for what they publish next.
    */
   function play(connection: RTCPeerConnection, { mid, userId }: OfferedHuddleTrack) {
     const theirs = connection.getTransceivers().find((transceiver) => transceiver.mid === mid)?.receiver.track;
-    if (!theirs || !huddle.people.some(({ user, audio }) => user.id === userId && audio)) return;
-    heard.add(userId);
-    voices.play(userId, theirs);
+    if (theirs && heard.has(userId)) voices.play(userId, theirs);
   }
 
   /**

@@ -554,6 +554,27 @@ describe("Hearing the others in a huddle", () => {
     expect(voices().map((audio) => audio.dataset.userId)).toEqual([linus.id]);
   });
 
+  it("plays no track of someone who began publishing anew as the connection took the offer of it, and asks for what they publish now", async () => {
+    const room = await joined([person(grace)]);
+    room.take();
+    room.receive(offer(["0", grace]));
+    // Her connection failed, and she can be listened to again, before the tab's has taken the offer of what she published first.
+    room.receive({ type: "huddle.changed", person: person(grace, { audio: false }) });
+    room.receive({ type: "huddle.changed", person: person(grace) });
+    await settled();
+    expect(voices()).toEqual([]);
+    expect(room.take()).toEqual([{ type: "huddle.answer", sdp: "answer to offer:0" }]);
+
+    // The round after the offer's can't bring her yet, and the tab doesn't take her for heard: it asks again in a while.
+    room.receive({ type: "huddle.listening" });
+    expect(room.take()).toEqual([{ type: "huddle.listen" }]);
+    room.receive({ type: "huddle.listening" });
+    await wait(LISTEN_AGAIN_MS[0]);
+    expect(room.take()).toEqual([{ type: "huddle.listen" }]);
+    await offeredRound(["1", grace]);
+    expect(playedBy(voiceOf(grace))).toBe(connection().transceivers[1]!.receiver.track);
+  });
+
   it("starts a fresh connection, in a while, when its receiving connection fails", async () => {
     const room = await joined([person(grace)]);
     await offeredRound(["0", grace]);
