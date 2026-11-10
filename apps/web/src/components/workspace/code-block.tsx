@@ -54,7 +54,10 @@ function codeOf(block: DisplayElement): string | null {
 /** The elements a message can hold that start a line of their own, as a bot's `<div>` lines in a code block do. */
 const BLOCKS = new Set(["ADDRESS", "BLOCKQUOTE", "DD", "DIV", "DL", "DT", "FIGCAPTION", "FIGURE", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "LI", "OL", "P", "PRE", "TABLE", "TR", "UL"]);
 
-/** `node`'s text as it reads, its `<br>`s and the lines its blocks start as newlines, which `textContent` would drop. */
+/**
+ * `node`'s text as it reads, its `<br>`s and the lines its blocks start as newlines, which `textContent`
+ * would drop, and none of what the page hides, as it does an empty `<p>`.
+ */
 function textOf(node: Node): string {
   if (node.nodeName === "BR") return "\n";
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
@@ -62,6 +65,7 @@ function textOf(node: Node): string {
   // Whether what comes next starts a line, as a block and whatever follows one do.
   let broken = false;
   for (const child of node.childNodes) {
+    if (child instanceof Element && getComputedStyle(child).display === "none") continue;
     const block = BLOCKS.has(child.nodeName);
     if (block) broken = true;
     const part = textOf(child);

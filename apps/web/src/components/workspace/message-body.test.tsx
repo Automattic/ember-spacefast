@@ -114,6 +114,21 @@ describe("Rich text, safely", () => {
     expect(writeText).toHaveBeenCalledWith("echo one\necho two\necho three\necho four\necho five");
   });
 
+  it("copies nothing a code block hides, as the empty paragraph a message's styles hide, which starts no line", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    // index.css's rule, which tests don't load.
+    const styles = document.head.appendChild(document.createElement("style"));
+    styles.textContent = ".message-content p:empty { display: none }";
+    try {
+      const content = show("<pre>echo <p></p>one<div>echo two</div></pre>");
+      await user.click(within(content).getByRole("button", { name: "Copy code" }));
+      expect(writeText).toHaveBeenCalledWith("echo one\necho two");
+    } finally {
+      styles.remove();
+    }
+  });
+
   it("leaves the button unchanged when the clipboard refuses", async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Denied"));
