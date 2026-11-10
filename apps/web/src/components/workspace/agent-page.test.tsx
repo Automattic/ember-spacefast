@@ -9,7 +9,7 @@ import defaultBotAvatar from "@/components/default-bot-avatar.svg";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
 import { AccountContext, useAccount } from "@/hooks/use-account";
-import { agentSettingsPath, navigate, NEW_AGENT_PATH } from "@/hooks/use-route";
+import { agentSettingsPath, leave, navigate, NEW_AGENT_PATH } from "@/hooks/use-route";
 import { ApiError } from "@/lib/api";
 import { dateLabel } from "@/lib/messages";
 import { AGENTS_PATH } from "./agent-list";
@@ -224,7 +224,7 @@ describe("New agent", () => {
     expect(question()).toHaveAttribute("placeholder", "Ask Recap something");
   });
 
-  it("makes the agent as it's set up, its model asked a test question first, then goes back to the AI assistant tab", async () => {
+  it("makes the agent as it's set up, its model asked a test question first, holding the page meanwhile, then goes back to the AI assistant tab", async () => {
     let made = () => {};
     serve({ sent: () => new Promise((resolve) => (made = () => resolve(answer(RECAP, 201)))) });
     const { user } = showNewAgent();
@@ -241,6 +241,8 @@ describe("New agent", () => {
 
     expect(status()).toHaveTextContent("Asking GPT-6.1 Sol a test question…");
     expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
+    // Nothing typed meanwhile would be sent, nor asked about as the page goes back.
+    for (const field of [nameField(), descriptionField(), instructionsField()]) expect(field).toBeDisabled();
     expect(sent()).toEqual([
       [
         "POST /api/account/agents",
@@ -395,6 +397,21 @@ describe("New agent", () => {
     await user.click(within(dialog).getByRole("button", { name: "Discard" }));
     expect(location.pathname).toBe("/rooms/general");
     expect(sent()).toEqual([]);
+  });
+
+  it("says why the server refused what the dialog's Save sent on the field it's about, staying on the page", async () => {
+    serve({ sent: () => refused(422, NAME_TAKEN, "name") });
+    const { user, onFailed } = showNewAgent();
+    await fillIn(user);
+    act(() => navigate("/rooms/general"));
+    const dialog = await screen.findByRole("dialog", { name: "Unsaved Changes" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Your changes couldn’t be saved.");
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => expect(nameField()).toHaveAttribute("aria-invalid", "true"));
+    expect(nameField()).toHaveAccessibleDescription(NAME_TAKEN);
+    expect(location.pathname).toBe(NEW_AGENT_PATH);
+    expect(onFailed).not.toHaveBeenCalled();
   });
 
   it("leaves without asking while nothing's typed", async () => {
@@ -587,6 +604,17 @@ describe("An agent's settings", () => {
     await user.type(await loaded(), " Bot");
     act(() => navigate("/rooms/general"));
     expect(await screen.findByRole("dialog", { name: "Unsaved Changes" })).toHaveAccessibleDescription(AGENT_CHANGES);
+  });
+
+  it("goes back to the AI assistant tab once the dialog's Save has saved the changes, when signing out then fails, as its own Save does", async () => {
+    const { user } = showSettings();
+    await user.type(await loaded(), " Bot");
+    const signOut = vi.fn(async () => false);
+    act(() => leave(signOut));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await wentBack();
+    expect(signOut).toHaveBeenCalledOnce();
+    expect(sent()).toEqual([[`PATCH /api/account/agents/${RECAP.id}`, { name: "Recap Bot" }]]);
   });
 
   it("answers the 404 page for an id that isn't an agent's", async () => {

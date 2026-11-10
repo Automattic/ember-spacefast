@@ -350,6 +350,36 @@ describe("Instructions", () => {
     await waitFor(() => expect(location.pathname).toBe("/rooms/general"));
     expect(fetch).toHaveBeenCalledWith("/api/account/assistant", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ instructions: "Keep it short." }) }));
   });
+
+  it("keeps what's typed while they save unsaved, asking before the page is left with it", async () => {
+    const answer = held(() => Response.json({ assistant: { ...SONNET, instructions: "Keep it short." } }));
+    serve({ changed: answer.answered });
+    const { user } = showLiveCard(SONNET);
+    await user.type(box(), "Keep it short.");
+    await user.click(save());
+    await user.type(box(), " Use British English.");
+    await answer.answer();
+    expect(await screen.findByRole("alert")).toHaveTextContent(CHANGES_SAVED);
+    expect(box()).toHaveValue("Keep it short. Use British English.");
+    expect(save()).toBeEnabled();
+
+    act(() => navigate("/rooms/general"));
+    expect(await screen.findByRole("dialog", { name: "Unsaved Changes" })).toHaveAccessibleDescription(INSTRUCTIONS_UNSAVED);
+    expect(location.pathname).toBe(agentSettingsPath(ASSISTANT_ID));
+  });
+
+  it("asks before the page is left with what's typed unsaved while another change saves", async () => {
+    const answer = held(() => Response.json({ assistant: on("anthropic/claude-sonnet-5.5", { ...TOP_LEVELS, thinking: "low" }) }));
+    serve({ changed: answer.answered });
+    const { user } = showLiveCard(SONNET);
+    await user.type(box(), "Keep it short.");
+    await user.click(within(card()).getByRole("radio", { name: "Low" }));
+    expect(save()).toBeDisabled();
+    act(() => navigate("/rooms/general"));
+    expect(await screen.findByRole("dialog", { name: "Unsaved Changes" })).toHaveAccessibleDescription(INSTRUCTIONS_UNSAVED);
+    expect(location.pathname).toBe(agentSettingsPath(ASSISTANT_ID));
+    await answer.answer();
+  });
 });
 
 describe("Avatar", () => {

@@ -368,7 +368,7 @@ export function EmberSettings({ me, assistant, onSetUp, onStopped, onChanged, on
 /**
  * @ember's Instructions: what administrators add to Ember's own, `saved`, in a box that Save instructions
  * saves once what's typed differs, and What Ember adds around them, `prompt`. Leaving the page with what's
- * typed unsaved asks first.
+ * typed unsaved asks first, even while another change on the page saves.
  */
 function Instructions({
   saved,
@@ -389,12 +389,14 @@ function Instructions({
   const changed = typed !== null && typed.trim() !== saved;
   const mounted = useMounted();
 
-  /** Saves what's typed, which the box then shows as saved. */
-  const save = () =>
-    onSave(instructions.trim()).then((assistant) => {
-      if (mounted.current) setTyped(null);
+  /** Saves what's typed, which the box then shows as saved, but for anything typed while it saves, which stays unsaved. */
+  const save = () => {
+    const sent = instructions.trim();
+    return onSave(sent).then((assistant) => {
+      if (mounted.current) setTyped((typed) => (typed?.trim() === sent ? null : typed));
       return assistant;
     });
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -431,7 +433,7 @@ function Instructions({
         </button>
       </div>
       <PromptPreview name="@ember" prompt={prompt} />
-      <UnsavedChanges changed={changed && !disabled} stays={leaves} onSave={save} description={INSTRUCTIONS_UNSAVED} />
+      <UnsavedChanges changed={changed} stays={leaves} onSave={save} description={INSTRUCTIONS_UNSAVED} />
     </form>
   );
 }

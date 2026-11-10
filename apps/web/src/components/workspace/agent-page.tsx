@@ -372,17 +372,35 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
     return agent;
   };
 
-  /** Says why saving or deleting failed: on the field it's about, on the avatar, under the button, or as the workspace's alerts do. */
-  const refuse = (error: unknown) => {
-    if (!(error instanceof ApiError)) return onFailed(error);
-    if (error.field === "avatar") return photo.refuse(error.message);
-    // What the Worker, AI Gateway or the model said of what was sent, or that it changed meanwhile, which the page says itself.
+  /**
+   * Says why the server refused what the page sent, if the page says it itself: on the field it's about, on
+   * the avatar, or under the button. Returns whether it did.
+   */
+  const sayRefused = (error: unknown): boolean => {
+    if (!(error instanceof ApiError)) return false;
+    if (error.field === "avatar") {
+      photo.refuse(error.message);
+      return true;
+    }
+    // What the Worker, AI Gateway or the model said of what was sent, or that it changed meanwhile.
     const said = [422, 429, 502].includes(error.status) || (error.status === 409 && error.message !== ASSISTANT_OFF);
     if (said) setRefusal({ field: fieldOf(error.field), error: error.message });
-    else onFailed(error);
+    return said;
   };
 
-  /** Runs `request`, going back to the AI assistant tab once it succeeds, or else saying why it didn't. */
+  /** Says why saving or deleting failed: on the page, where it says so itself, or else as the workspace's alerts do. */
+  const refuse = (error: unknown) => {
+    if (!sayRefused(error)) onFailed(error);
+  };
+
+  /** Sends the page for the unsaved changes dialog, which says so when it isn't saved, saying on the page too why the server refused it. */
+  const sendBeforeLeaving = () =>
+    send().catch((error: unknown) => {
+      sayRefused(error);
+      throw error;
+    });
+
+  /** Runs `request`, holding the page meanwhile, going back to the AI assistant tab once it succeeds, or else saying why it didn't. */
   const run = (doing: "saving" | "deleting", request: () => Promise<unknown>) => {
     setBusy(doing);
     request().then(
@@ -448,6 +466,7 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
             maxLength={MAX_USER_NAME_LENGTH}
             autoFocus={!saved}
             required
+            disabled={busy !== null}
             data-1p-ignore
             value={fields.name}
             aria-invalid={refused("name")}
@@ -465,6 +484,7 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
             placeholder="Sums up threads into decisions and to-dos"
             maxLength={MAX_AGENT_DESCRIPTION_LENGTH}
             required
+            disabled={busy !== null}
             value={fields.description}
             aria-invalid={refused("description")}
             aria-describedby={describedBy("agent-description", "description")}
@@ -492,6 +512,7 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
             rows={9}
             maxLength={MAX_INSTRUCTIONS_LENGTH}
             required
+            disabled={busy !== null}
             placeholder="You sum up conversations for the team…"
             value={fields.instructions}
             onChange={(event) => change("instructions", { instructions: event.target.value })}
@@ -623,7 +644,7 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
           <DeleteButton label={`Delete ${saved.name}`} text="Delete agent" disabled={busy !== null} onClick={remove} />
         </>
       )}
-      <UnsavedChanges changed={changed} stays={leaves} onSave={send} form={form} description={AGENT_CHANGES} />
+      <UnsavedChanges changed={changed} stays={leaves} onSave={sendBeforeLeaving} onStayAfterSave={() => navigate(AGENTS_PATH)} form={form} description={AGENT_CHANGES} />
     </>
   );
 }
