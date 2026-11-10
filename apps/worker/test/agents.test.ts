@@ -611,6 +611,8 @@ describe("AI agents", () => {
 
       await turnOff(administrator);
       expect((await heardOf(tab, 3)).map(({ id, status }) => [id, status])).toEqual(everyone.map((id) => [id, "deactivated"]));
+      // Nor does lifting a ban, as People can someone's, let one back.
+      for (const { id } of [recap, juniper]) expect((await api(`/api/users/${id}/ban`, { method: "DELETE", headers: as(administrator) })).status).toBe(404);
       expect(await roomsOf(recap.id)).toEqual([]);
       expect(await roomsOf(juniper.id)).toEqual([]);
       expect((await inDirectory(administrator, recap.id))?.status).toBe("deactivated");
@@ -658,9 +660,11 @@ describe("AI agents", () => {
   });
 
   describe("beside bots and people", () => {
-    it("aren't on the bots page, nor removed or banned from the people page", async () => {
+    it("aren't on the bots page, nor removed, banned or let back from the people page", async () => {
       const administrator = await setUp();
-      const recap = await made(administrator);
+      const support = await createRoom("Support", { as: administrator });
+      // Kept to a room picked, which lifting a ban would undo, as it puts whoever it lets back in every open room.
+      const recap = await made(administrator, { rooms: [support.id] });
       expect(((await (await api("/api/account/bots", { headers: as(administrator) })).json()) as Bots).bots).toEqual([]);
       for (const response of [
         await api(`/api/account/bots/${recap.id}`, { headers: as(administrator) }),
@@ -669,10 +673,12 @@ describe("AI agents", () => {
         await api(`/api/account/bots/${recap.id}`, { method: "DELETE", headers: as(administrator) }),
         await api(`/api/account/users/${recap.id}`, { method: "DELETE", headers: as(administrator) }),
         await api(`/api/users/${recap.id}/ban`, { method: "POST", headers: as(administrator) }),
+        await api(`/api/users/${recap.id}/ban`, { method: "DELETE", headers: as(administrator) }),
       ]) {
         expect(response.status).toBe(404);
       }
       expect(await shownAgent(administrator, recap.id)).toEqual(recap);
+      expect(await roomsOf(recap.id)).toEqual([support.id]);
     });
   });
 

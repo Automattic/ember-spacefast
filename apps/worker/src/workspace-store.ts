@@ -2865,10 +2865,11 @@ export class WorkspaceStore {
 
   /**
    * Lifts someone's ban: unblocks their IP addresses and makes them active, recording when, unless they
-   * were already, whatever their status was. The rooms yet to delete their messages delete only those
-   * written by then, at once. It queues having every room tell the sockets from those addresses to
-   * reconnect, due at `dueAt`, so they come back able to change things again, unless another ban blocks
-   * them too. Answers whether it queued anything.
+   * were already, whatever their status was, and puts them in every open room, as joining does, those
+   * made or opened while they were banned among them. The rooms yet to delete their messages delete
+   * only those written by then, at once. It queues having every room tell the sockets from those
+   * addresses to reconnect, due at `dueAt`, so they come back able to change things again, unless
+   * another ban blocks them too. Answers whether it queued anything.
    */
   async unbanPerson(userId: UserId, reconnect: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [reconnections] = (await this.db.batch([
@@ -2876,6 +2877,7 @@ export class WorkspaceStore {
       statement(QUEUE_UNBANNED_ADDRESS_REVOCATIONS, ADDRESS_TAG_PREFIX, reconnect, dueAt, userId),
       statement(`DELETE FROM bans WHERE user_id = ?`, userId),
       statement(`UPDATE users SET status = ${ACTIVE}, updated_at = ? WHERE id = ? AND status <> ${ACTIVE}`, now, userId),
+      statement(GRANT_OPEN_ROOMS_TO_USER, userId, now, now),
       // The outbox holds a row only until its room answers, so this reads it all rather than keep an index.
       statement(`UPDATE pending_purges SET lifted_at = ? WHERE user_id = ? AND lifted_at IS NULL`, now, userId),
     ])) as unknown[][];

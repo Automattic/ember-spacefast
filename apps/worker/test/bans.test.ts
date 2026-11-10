@@ -9,6 +9,7 @@ import {
   type NewWorkspace,
   type ProfileAnswer,
   type RoomId,
+  type Sidebar,
   type UserId,
 } from "@ember/protocol";
 import { runInDurableObject } from "cloudflare:test";
@@ -103,6 +104,19 @@ const bansOf = (userId: UserId) => workspaceSql("SELECT ip_address, created_at, 
 const sessionsOf = async (userId: UserId) => ((await workspaceSql("SELECT count(*) AS n FROM sessions WHERE user_id = ?", userId)) as Array<{ n: number }>)[0]!.n;
 
 const signedIn = async (session: Session) => (await api("/api/me", { headers: { Cookie: session.cookie } })).status === 200;
+
+/** The rooms `userId` is in, by id. */
+const roomsOf = async (userId: UserId) =>
+  ((await workspaceSql("SELECT room_id FROM memberships WHERE user_id = ? ORDER BY room_id", userId)) as Array<{ room_id: RoomId }>).map(({ room_id }) => room_id);
+
+/** The open rooms, by id. */
+const openRooms = async () => ((await workspaceSql("SELECT id FROM rooms WHERE kind = 'open' ORDER BY id")) as Array<{ id: RoomId }>).map(({ id }) => id);
+
+/** Changes room `roomId` as its settings do, as `session`. */
+async function changeRoom(session: Session, roomId: RoomId, changes: unknown): Promise<void> {
+  const response = await api(`/api/rooms/${roomId}`, { method: "PATCH", headers: { Cookie: session.cookie }, body: JSON.stringify(changes) });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
 
 /** The ids of the messages `userId` wrote in `room`, in the order they were written. */
 const written = async (room: RoomId, userId: UserId) =>
@@ -472,6 +486,31 @@ describe("Ban and unban people", () => {
     expect((await signInFrom(grace, "203.0.113.7")).status).toBe(201);
   });
 
+  it("puts them back in their rooms and every open room, those made or opened while they were banned too", async () => {
+    const administrator = await setUp();
+    const member = await join(grace);
+    const team = await createRoom("Team", { closedTo: [administrator.user.id, member.user.id], as: administrator });
+    const before = await roomsOf(member.user.id);
+    await ban(administrator, member.user.id);
+    await purged();
+    // While she's banned, an open room is made, a private one is opened, and another made without her.
+    const launch = await createRoom("Launch", { as: administrator });
+    const leads = await createRoom("Leads", { closedTo: [administrator.user.id], as: administrator });
+    await changeRoom(administrator, leads.id, { kind: "open" });
+    const board = await createRoom("Board", { closedTo: [administrator.user.id], as: administrator });
+    // Her rooms stay hers, but those made or opened meanwhile leave her out.
+    expect(await roomsOf(member.user.id)).toEqual(before);
+
+    expect((await unban(administrator, member.user.id)).status).toBe(200);
+    expect(await openRooms()).toEqual(expect.arrayContaining([launch.id, leads.id]));
+    expect(await roomsOf(member.user.id)).toEqual([...(await openRooms()), team.id].sort());
+    expect(await roomsOf(member.user.id)).not.toContain(board.id);
+    // As her sidebar lists them once she's signed in again.
+    const back = await signInAsGrace("203.0.113.7");
+    const { rooms } = (await (await api("/api/sidebar", { headers: { Cookie: back.cookie } })).json()) as Sidebar;
+    expect(rooms.map(({ id }) => id).sort()).toEqual(await roomsOf(member.user.id));
+  });
+
   it("keeps what they write once the ban is lifted, however late a room answers, deleting everything of theirs from before", async () => {
     const administrator = await setUp();
     const member = await join(grace);
@@ -542,12 +581,17 @@ describe("Ban and unban people", () => {
     expect(await socket.answers()).toBe(true);
   });
 
-  it("makes whoever it's lifted for active, removed people too", async () => {
+  it("makes whoever it's lifted for active in every open room, removed people and bots too", async () => {
     const administrator = await setUp();
     const removed = await deactivatedPerson("Former");
-    const response = await unban(administrator, removed);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ user: { id: removed, status: "active" } });
+    const now = new Date().toISOString();
+    await workspaceSql("INSERT INTO users (id, name, role, status, created_at, updated_at) VALUES ('robot', 'Build Bot', 2, 2, ?, ?)", now, now);
+    for (const userId of [removed, "robot"]) {
+      const response = await unban(administrator, userId);
+      expect(response.status, userId).toBe(200);
+      expect(await response.json()).toMatchObject({ user: { id: userId, status: "active" } });
+      expect(await roomsOf(userId), userId).toEqual(await openRooms());
+    }
   });
 
   it("lets only administrators lift bans, finding anyone whatever their status", async () => {

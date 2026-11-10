@@ -218,7 +218,9 @@ Objects, D1 or speed call for something else.
   reads, and by person, which lifting the ban deletes. They're written in the batch that ends the
   person's sessions, marks them banned and queues closing their sockets and deleting their messages,
   the addresses going to the `INSERT` as one JSON value, so it binds the same few values however
-  many sessions there were.
+  many sessions there were. Someone banned keeps their memberships, but a room opened to everyone
+  meanwhile leaves them out, as it does anyone not active, so the batch that lifts the ban puts them
+  in every open room, as joining does.
 - **Banned addresses are kept in memory.** Campfire reads `bans` for every request that would change
   something. Here the Worker asks the Workspace before each such request, and the Workspace answers
   from the set of banned addresses it keeps, so the check costs that call but never a database read,
