@@ -674,6 +674,26 @@ describe("Custom CSS", () => {
   });
 });
 
+describe("Huddles", () => {
+  const huddleButton = () => screen.queryByRole("button", { name: "Start huddle" });
+
+  it("gives a room's header its huddle button, and takes it away, as the workspace socket says huddles go on and off", async () => {
+    WorkspaceSocket.all = [];
+    vi.stubGlobal("WebSocket", WorkspaceSocket);
+    serve({ signedIn: true });
+    render(<App />);
+    await roomHeading();
+    await waitFor(() => expect(WorkspaceSocket.all).toHaveLength(1));
+    act(() => WorkspaceSocket.all[0]!.welcome(ada));
+    expect(huddleButton()).not.toBeInTheDocument();
+
+    act(() => WorkspaceSocket.all[0]!.receive({ type: "account.updated", account: { ...EMBER, huddles: true } }));
+    expect(huddleButton()).toBeInTheDocument();
+    act(() => WorkspaceSocket.all[0]!.receive({ type: "account.updated", account: EMBER }));
+    expect(huddleButton()).not.toBeInTheDocument();
+  });
+});
+
 describe("Workspace logo", () => {
   const LOGO = "/account/logo?v=20261017120000";
   const brand = () => screen.getByRole("link", { name: "Ember home" }).querySelector("img");
