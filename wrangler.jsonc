@@ -61,6 +61,11 @@
   // it if there's none and the deploy's token may. `wrangler dev` keeps them on this machine.
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "ember" }],
 
+  // Cloudflare Images, which makes the preview of a picture whose uploader sent none, as a bot or a
+  // browser that couldn't read it doesn't (apps/worker/src/files/previews.ts). There's nothing to make
+  // for it first, and it's free for 5,000 pictures a month. `wrangler dev` makes them on this machine.
+  "images": { "binding": "IMAGES" },
+
   // Cloudflare Email Service, which sends Ember's email from the address an administrator gives in
   // Membership. It delivers once the account is on Workers Paid and has a domain onboarded under Email
   // Service, Email Sending; until then sending fails, and Membership says why. A RESEND_API_KEY secret

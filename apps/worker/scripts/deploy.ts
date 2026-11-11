@@ -46,6 +46,8 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const EMBER = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare";
 /** The workflow that offers a copy Ember's releases (docs/self-hosting.md#updating), and Ember's, kept beside this script. */
 const UPDATE_WORKFLOW = ".github/workflows/update-ember.yml";
+/** And the beta workflow, which brings a copy Ember's newest beta when it's run (docs/self-hosting.md#betas). */
+const BETA_WORKFLOW = ".github/workflows/update-ember-beta.yml";
 const EMBERS_UPDATE_WORKFLOW = new URL("./update-ember.yml", import.meta.url);
 
 /** Runs `pnpm exec wrangler` from the root, with its output captured or shown, and `env` besides this process's. */
@@ -264,21 +266,23 @@ function copyRepository(): string | null {
 
 /** Whether the checkout has the Update Ember workflow. */
 const hasUpdateWorkflow = () => existsSync(path.join(ROOT, UPDATE_WORKFLOW));
+/** And the beta workflow. */
+const hasBetaWorkflow = () => existsSync(path.join(ROOT, BETA_WORKFLOW));
 
 /** The branch that deploys: the one Workers Builds deploys, else `main`. */
 const deployBranch = () => process.env.WORKERS_CI_BRANCH || "main";
 
 /**
  * The vars that tell the Worker of the copy it's deployed from, as `--var`s for wrangler deploy: its
- * repository on GitHub, the branch that deploys, and whether it has the Update Ember workflow, which
- * General's release card links to, or to adding it. None for a checkout that isn't a copy on GitHub, and
- * none that `args` give themselves.
+ * repository on GitHub, the branch that deploys, and whether it has the Update Ember workflow and the
+ * beta workflow, which General's release card links to, or to adding them. None for a checkout that
+ * isn't a copy on GitHub, and none that `args` give themselves.
  */
 function copyVars(args: string[]): string[] {
   const repository = copyRepository();
   if (!repository) return [];
   const given = varsGiven(args);
-  const vars = { GITHUB_REPOSITORY: repository, GIT_BRANCH: deployBranch(), UPDATE_WORKFLOW: String(hasUpdateWorkflow()) };
+  const vars = { GITHUB_REPOSITORY: repository, GIT_BRANCH: deployBranch(), UPDATE_WORKFLOW: String(hasUpdateWorkflow()), BETA_WORKFLOW: String(hasBetaWorkflow()) };
   return Object.entries(vars).flatMap(([name, value]) => (given.has(name) ? [] : ["--var", `${name}:${value}`]));
 }
 

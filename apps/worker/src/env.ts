@@ -20,6 +20,13 @@ export interface Env {
    * answers 503 and a file's address 404.
    */
   FILES?: R2Bucket;
+  /**
+   * Cloudflare Images, which makes the preview of a picture that came without one, as from a bot or a
+   * browser that couldn't read it, where its message would otherwise show it as a file: one over 5 MiB,
+   * or that not every browser shows (files/previews.ts). It makes 5,000 a month free. Unbound, or past
+   * what the account's plan makes, such a picture shows as a file.
+   */
+  IMAGES?: ImagesBinding;
   STORAGE_BACKEND: StorageBackend;
   /**
    * Comma-separated addresses of rooms from before the Workspace kept a list, which it registers as
@@ -134,13 +141,14 @@ export interface Env {
   GIT_REVISION?: string;
   /**
    * The GitHub repository of the copy of Ember deployed, as `owner/name`, which `pnpm run deploy` gives
-   * where git's origin is a copy on GitHub, with GIT_BRANCH, the branch that deploys, and UPDATE_WORKFLOW,
-   * "true" where the copy has the Update Ember workflow: General's release card links to running it, or
-   * to adding it.
+   * where git's origin is a copy on GitHub, with GIT_BRANCH, the branch that deploys, UPDATE_WORKFLOW,
+   * "true" where the copy has the Update Ember workflow, and BETA_WORKFLOW, "true" where it has the beta
+   * workflow: General's release card links to running each, or to adding it.
    */
   GITHUB_REPOSITORY?: string;
   GIT_BRANCH?: string;
   UPDATE_WORKFLOW?: string;
+  BETA_WORKFLOW?: string;
   /**
    * Any value but a blank one lets plain HTTP through rather than redirecting it to HTTPS, and leaves
    * out HSTS. Loopback addresses, where `wrangler dev` serves, never need it.

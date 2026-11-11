@@ -10,7 +10,7 @@ import { useStarOrder } from "@/hooks/use-star-order";
 import { membersShown } from "@/lib/directs";
 import { apart, inDirectOrder, inSidebarOrder, markedUnread, suggestedPeople, type DirectSidebarRoom } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
-import { AgentBadge, useIsAgent, useIsWithAgent } from "./agent-badge";
+import { AgentBadge, useIsWithAgent } from "./agent-badge";
 import { opensNewDirect } from "./new-direct-dialog";
 import { UserAvatar } from "./user-avatar";
 
@@ -260,19 +260,17 @@ interface SuggestionRowProps {
 }
 
 /**
- * Someone suggested for a DM: a button in a DM row's style with their avatar and name, and the agent
- * badge for an AI agent, which starts the DM with them.
+ * Someone suggested for a DM, a person rather than a bot or an AI agent: a button in a DM row's style
+ * with their avatar and name, which starts the DM with them.
  */
 function SuggestionRow({ person, starting, onClick }: SuggestionRowProps) {
   const nameOf = useNameOf();
-  const isAgent = useIsAgent();
   return (
     <button type="button" aria-disabled={starting || undefined} onClick={onClick} className={cn(ROW, "w-full cursor-pointer text-start aria-disabled:cursor-default")}>
       <UserAvatar user={person} className="size-6" />
       {/* The space after the hidden words starts the visible line, where it doesn't show. */}
       <span className="min-w-0 flex-1 truncate">
         <span className="sr-only">Start a direct message with</span> {nameOf(person)}
-        {isAgent(person) && <AgentBadge className="ms-0.5" />}
       </span>
     </button>
   );

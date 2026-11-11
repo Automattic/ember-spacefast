@@ -15,15 +15,17 @@ import { useSidebar } from "@/hooks/use-sidebar";
 import { ApiError, dismissInvitation, isSignedOut, startDirect } from "@/lib/api";
 import { hearHuddleEnd, leaveHuddle, muteHuddle } from "@/lib/huddle-store";
 import { whenIdle } from "@/lib/idle";
-import { opensFind, togglesHuddle, togglesMute } from "@/lib/keyboard";
+import { opensFind, opensShortcuts, togglesHuddle, togglesMute } from "@/lib/keyboard";
 import { lastRoomVisited } from "@/lib/last-room";
 import { takeMemberfulFlash } from "@/lib/memberful";
 import { loadPage } from "@/lib/page";
+import { updateOf } from "@/lib/release-check";
 import { markedUnread } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
 import { afterNavigating, messagePath, navigate, pageMark, roomPath, routeOf, useHash, useRoute, type Route } from "@/hooks/use-route";
 import { HuddlesContext, NO_HUDDLES, type Huddles } from "./huddle-button";
 import { MovedNotice } from "./moved-notice";
+import { KeyboardShortcutsDialog } from "./keyboard-shortcuts-dialog";
 import { NewDirectDialog } from "./new-direct-dialog";
 import { DrawerOpen, PageHeader } from "./page-header";
 import { Rail, type RailPage } from "./rail";
@@ -313,10 +315,10 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   // doesn't wait for them. If they fail to, the first page that needs them tries again.
   const listed = rooms !== null;
   useEffect(() => (listed ? whenIdle(() => void loadRarePages().catch(() => {})) : undefined), [listed]);
-  // And for an administrator, whether a newer release of Ember is out, which the rail's Admin marks, asked
-  // afresh each time Admin opens.
-  const release = useReleaseCheck(administrator, listed, settings !== null);
-  const newRelease = release?.newest?.newer ? release.newest.release : null;
+  // And for an administrator, whether a newer release of Ember is out, or for a beta the beta after it,
+  // which the rail's Admin marks, asked afresh each time Admin opens, and by General's Check for updates.
+  const { check: release, checkAgain: checkForUpdates } = useReleaseCheck(administrator, listed, settings !== null);
+  const newRelease = (release && updateOf(release)?.release) ?? null;
 
   // On a phone, the drawer closes as New direct message opens.
   const openNewDirect = (opener: HTMLElement | null) => {
@@ -338,6 +340,8 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   const huddle = useHuddle();
   const huddlesOn = useAccount().huddles;
   const [huddlePreview, setHuddlePreview] = useState<RoomId | null>(null);
+  // Whether the keyboard shortcuts dialog is open.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const closeHuddlePreview = useCallback(() => setHuddlePreview(null), []);
   const liveHuddles = list?.huddles ?? NO_HUDDLES;
   const huddles = useMemo<Huddles>(() => ({ live: liveHuddles, preview: setHuddlePreview }), [liveHuddles]);
@@ -571,10 +575,19 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
     if (!huddlesOn || !room || room.kind === "direct" || goneRoom) return;
     pressed(() => setHuddlePreview(room.id));
   });
+  // Cmd+/ or Ctrl+/ opens the keyboard shortcuts: from the composer too, which has no
+  // key of its own there, but not over another dialog, a native <dialog> like Notification setup included.
+  const shortcutsPressed = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || !opensShortcuts(event)) return;
+    if (event.target instanceof Element && event.target.closest("dialog, [role=dialog]")) return;
+    event.preventDefault();
+    setShortcutsOpen(true);
+  });
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       findPressed(event);
       huddleKeyPressed(event);
+      shortcutsPressed(event);
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
@@ -655,6 +668,7 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
             onSharedOrderSaved={reorderedRooms}
             onSessionChanged={onSessionChanged}
             release={release}
+            onCheckForUpdates={checkForUpdates}
           />
         ));
       case "custom-styles":
@@ -836,6 +850,7 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
               onFailed={failed}
             />
           )}
+          <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
           {searchBox && <SearchBox {...searchBox} me={me} rooms={rooms ?? NO_ROOMS} onClose={() => setSearchBox(null)} onFailed={failed} />}
           {previewed && (
             <RarePage

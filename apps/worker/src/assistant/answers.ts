@@ -39,13 +39,15 @@ export const waitFor = ({ maxTokens }: Question) => Math.max(LEAST_WAIT_MS, maxT
 
 /**
  * Who answers a question: @ember, or an AI agent, by its id, or null for one not saved yet, which an
- * administrator tries, its name and its instructions, an agent's own, or what administrators added to
- * @ember's, if anything.
+ * administrator tries, its name, its instructions, an agent's own, or what administrators added to
+ * @ember's, if anything, and what Ember adds around them, as administrators changed it, or null for
+ * Ember's own.
  */
 export interface Answerer {
   id: UserId | null;
   name: string;
   instructions: string;
+  promptTemplate: string | null;
 }
 
 /** What's read of a message in a conversation: who wrote it, its plain text, whether it shares a file, and whether it was deleted. */
@@ -90,10 +92,11 @@ export function questionFor(
 
 /**
  * What `answerer` is told before the conversation: who it is, its instructions, where it's asked, to
- * answer in about `words` words at most, and what it's told of the web, `web` (`promptAround`).
+ * answer in about `words` words at most, and what it's told of the web, `web`, as its template has it
+ * (`promptAround`).
  */
-const instructionsFor = ({ id, name, instructions }: Answerer, asker: User, where: AskedIn, words: number, now: Date, web: string) =>
-  withInstructions(promptAround(id, name, asker.name, where, words, web, now), instructions);
+const instructionsFor = ({ id, name, instructions, promptTemplate }: Answerer, asker: User, where: AskedIn, words: number, now: Date, web: string) =>
+  withInstructions(promptAround(id, name, asker.name, where, words, web, now, promptTemplate), instructions);
 
 /** What @ember is told when it's asked again without the web, as AI Gateway didn't take its model's tools for it. */
 const WEB_TOOLS_REFUSED =

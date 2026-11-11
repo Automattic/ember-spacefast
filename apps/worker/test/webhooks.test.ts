@@ -9,8 +9,10 @@ import type { ChatRoom } from "../src/chat-room";
 import type { WebhookAccess } from "../src/workspace";
 import type { Env } from "../src/env";
 import { objectKey } from "../src/files/blobs";
+import { imageSize } from "../src/files/images";
 import type { RoomEvent } from "../src/room-log";
 import { BOT_WEBHOOK, MESSAGE_BOTS, type BotWebhook, type MessageWebhook } from "../src/workspace-store";
+import { storedPng } from "./png-files";
 import {
   api,
   closeOf,
@@ -108,18 +110,18 @@ function bots(answer: (delivery: Delivery) => Promise<Response> = async () => ne
  * Stands in for every webhook, answering with an image it sends only once `send` is called, waiting in
  * the room's own I/O context. `reading` says whether the room has begun reading it.
  */
-function sendingFileWhenLet(): { reading: () => boolean; send: () => void } {
+function sendingFileWhenLet(file = recordedImage("moon-thumb.jpg"), type = "image/jpeg"): { reading: () => boolean; send: () => void } {
   let [reading, sending] = [false, false];
   bots(async () => {
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
         reading = true;
         while (!sending) await new Promise((resolve) => setTimeout(resolve, 10));
-        controller.enqueue(recordedImage("moon-thumb.jpg"));
+        controller.enqueue(file);
         controller.close();
       },
     });
-    return new Response(body, { headers: { "Content-Type": "image/jpeg" } });
+    return new Response(body, { headers: { "Content-Type": type } });
   });
   return { reading: () => reading, send: () => (sending = true) };
 }
@@ -506,6 +508,22 @@ describe("Webhook replies", () => {
     client.close();
   });
 
+  it("posts a picture a bot says back that's too large to show by itself with the preview Cloudflare Images makes of it", async () => {
+    const { ada, general } = await setUp();
+    const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
+    bots(async () => new Response(storedPng(1600, 1200), { headers: { "Content-Type": "image/png" } }));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const client = await connect(general, ada);
+
+    await post(client, `<p>Hey ${mention(bot)}</p>`);
+    const { attachment } = (await client.next("message.created")).message;
+    expect(attachment).toMatchObject({ name: "attachment.png", contentType: "image/png", width: 1600, height: 1200, previewUrl: expect.stringMatching(/^\/previews\//) });
+    const preview = await api(attachment!.previewUrl!);
+    expect(preview.headers.get("Content-Type")).toBe("image/webp");
+    expect(imageSize(new Uint8Array(await preview.arrayBuffer()), "image/webp")).toEqual({ width: 1067, height: 800 });
+    client.close();
+  });
+
   it("posts nothing for an error page a bot's webhook answers, keeping nothing in R2, as Campfire 1.5.2 doesn't", async () => {
     const { ada, general } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
@@ -609,10 +627,10 @@ describe("Webhook replies", () => {
     expect(left).toEqual({ tables: [], keys: [], alarm: null });
   });
 
-  it("keeps none of a file a bot says back once the bot is deleted while it arrives", async () => {
+  it("keeps none of a file a bot says back once the bot is deleted while it arrives, nor its preview", async () => {
     const { ada, general } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
-    const file = sendingFileWhenLet();
+    const file = sendingFileWhenLet(storedPng(1600, 1200), "image/png");
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const client = await connect(general, ada);
 
@@ -622,15 +640,16 @@ describe("Webhook replies", () => {
     file.send();
     await vi.waitFor(() => expect(errors).toHaveBeenCalledWith(`Bot::WebhookJob of message ${sent.id} to bot ${bot.id} failed:`, REPLY_REFUSED));
     expect((await files().list({ prefix: "files/" })).objects).toEqual([]);
+    expect((await files().list({ prefix: "previews/" })).objects).toEqual([]);
     await settle(client);
     expect(client.pending("message.created")).toEqual([]);
     client.close();
   });
 
-  it("keeps none of a file a bot says back when the Workspace can't be asked about the bot once it has arrived", async () => {
+  it("keeps none of a file a bot says back when the Workspace can't be asked about the bot once it has arrived, nor its preview", async () => {
     const { ada, general } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
-    const file = sendingFileWhenLet();
+    const file = sendingFileWhenLet(storedPng(1600, 1200), "image/png");
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const client = await connect(general, ada);
 
@@ -645,6 +664,7 @@ describe("Webhook replies", () => {
     file.send();
     await vi.waitFor(() => expect(errors).toHaveBeenCalledWith(`Bot::WebhookJob of message ${sent.id} to bot ${bot.id} failed:`, unreachable));
     expect((await files().list({ prefix: "files/" })).objects).toEqual([]);
+    expect((await files().list({ prefix: "previews/" })).objects).toEqual([]);
     client.close();
   });
 });

@@ -140,6 +140,8 @@ export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
   assistantMost: AnswerLevels;
   /** What Ember adds to @ember's own instructions, as administrators write them, or "" for nothing, whether Ember AI is on or not. */
   assistantInstructions: string;
+  /** What Ember adds around them, as administrators changed it, or null for Ember's own, whether Ember AI is on or not. */
+  assistantPromptTemplate: string | null;
   /** The SFU app huddles run through, while an administrator has them on, or else null. */
   huddles: SavedHuddles | null;
   /** Where a deploy puts Ember, as the latest page opened there told it, or null until one has (`EmberAddresses.deployed`). */
@@ -384,13 +386,15 @@ export interface NewStoredBot {
 }
 
 /**
- * What makes a bot an agent, as the agents table keeps it: what it does, its instructions, the model it
- * answers with, what that's called and the format it took its test question in, how much it thinks and
- * how long it answers, and what it may do on the web.
+ * What makes a bot an agent, as the agents table keeps it: what it does, its instructions and what Ember
+ * adds around them, the model it answers with, what that's called and the format it took its test
+ * question in, how much it thinks and how long it answers, and what it may do on the web.
  */
 export interface AgentSetup {
   description: string;
   instructions: string;
+  /** What Ember adds around the instructions, as an administrator changed it, or null for Ember's own. */
+  promptTemplate: string | null;
   model: string;
   modelName: string;
   format: ModelFormat;
@@ -398,8 +402,11 @@ export interface AgentSetup {
   webTools: WebTool[];
 }
 
-/** An agent as a question for it finds it: its name, its instructions, its model and that model's format, its levels and what it may do on the web. */
-export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "model" | "format" | "levels" | "webTools"> {
+/**
+ * An agent as a question for it finds it: its name, its instructions and what Ember adds around them, its
+ * model and that model's format, its levels and what it may do on the web.
+ */
+export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "promptTemplate" | "model" | "format" | "levels" | "webTools"> {
   name: string;
 }
 
@@ -933,6 +940,7 @@ interface AgentRow extends DirectoryRow {
 /** An agent as its page shows it, as `AGENT` reads it. */
 interface AgentSettingsRow extends AgentRow, AvatarColumns {
   instructions: string;
+  prompt_template: string | null;
   format: string;
   thinking: string;
   answer_length: string;
@@ -951,12 +959,16 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
   rooms: row.every_open_room === 1 ? null : rooms,
 });
 
-/** How an agent answers, as the agents table keeps it: its instructions, its model's format, its levels and what it may do on the web. */
-type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "format" | "thinking" | "answer_length" | "web_tools">;
+/**
+ * How an agent answers, as the agents table keeps it: its instructions and what Ember adds around them,
+ * its model's format, its levels and what it may do on the web.
+ */
+type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "prompt_template" | "format" | "thinking" | "answer_length" | "web_tools">;
 
 /** How an agent answers, as `row` keeps it. What can't be a format or a level, as nothing Ember writes is, reads as where @ember's start. */
-const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "format" | "levels" | "webTools"> => ({
+const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "promptTemplate" | "format" | "levels" | "webTools"> => ({
   instructions: row.instructions,
+  promptTemplate: row.prompt_template,
   format: isModelFormat(row.format) ? row.format : "chat",
   levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
   webTools: webToolsIn(row.web_tools),
@@ -978,8 +990,8 @@ function webToolsIn(kept: string | null): WebTool[] {
 }
 
 /** An agent's setup's columns, as `INSERT_AGENT` and `CHANGE_AGENT` take them, in order. */
-const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools }: AgentSetup) =>
-  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null] as const;
+const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools, promptTemplate }: AgentSetup) =>
+  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null, promptTemplate] as const;
 
 /** Whether a value is `present?`: not null, false, blank, or empty. */
 function isPresent(value: unknown): boolean {
@@ -1117,6 +1129,12 @@ function assistantMostIn(settings: Record<string, unknown> | null): AnswerLevels
 function assistantInstructionsIn(settings: Record<string, unknown> | null): string {
   const kept = settings?.assistant_instructions;
   return typeof kept === "string" ? kept : "";
+}
+
+/** What Ember adds around them, which the account's settings keep as `assistant_prompt_template`, or null for Ember's own. */
+function assistantPromptTemplateIn(settings: Record<string, unknown> | null): string | null {
+  const kept = settings?.assistant_prompt_template;
+  return typeof kept === "string" ? kept : null;
 }
 
 /** `kept` as one of a dial's `levels`, or null when it isn't one. */
@@ -1337,25 +1355,28 @@ function liveHuddlesIn(rows: SidebarRow[]): Record<RoomId, LiveHuddle> {
 /**
  * Keeps room ?1's huddle as the room reported it at ?2: started at ?3, with the people ?4 lists in it,
  * or nobody once it's over. A report no later than the one kept changes nothing, nor does one that says
- * what's kept already. Answers the room if it changed what's kept.
+ * what's kept already, but for its time (`KEEP_REPORT_TIME`). Answers the room if it changed what's kept.
  */
 const REPORT_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2, huddle_started_at = ?3, huddle_user_ids = ?4
   WHERE id = ?1 AND huddle_reported_at < ?2 AND (huddle_user_ids <> ?4 OR huddle_started_at <> ?3) RETURNING id`;
 
 /**
- * Who's in room ?1, to hear of its huddle, if the report kept of it is the one made at ?2. A room says
- * who's in its huddle again every half a minute, and a report that changes nothing reads no memberships.
+ * Who's in room ?1, to hear of its huddle, if the report kept of it is the one made at ?2, as it is once
+ * `REPORT_HUDDLE` has changed what's kept, and not yet when `KEEP_REPORT_TIME` keeps only the time. A
+ * room says who's in its huddle again every half a minute, and a report that changes nothing reads no
+ * memberships.
  */
 export const MEMBERS_TO_TELL_OF_HUDDLE = `SELECT user_id FROM memberships
   WHERE room_id = ?1 AND EXISTS (SELECT 1 FROM rooms WHERE id = ?1 AND huddle_reported_at = ?2)`;
 
 /**
- * Keeps ?2 as when room ?1, which has no huddle going on, last reported that. After `REPORT_HUDDLE` a
- * room with none still has an earlier time only when the report said so too, as one does when the
- * Workspace never heard of the huddle that's over. A report from while it went on can still arrive, and
- * the later time is what has it change nothing.
+ * Keeps ?2 as when room ?1 last reported its huddle, after `REPORT_HUDDLE` has left the time as it was
+ * for a report that says what's kept already. A report made before it can still arrive after it, as
+ * one the room gave up waiting for does, and the later time is what has that change nothing: it would
+ * otherwise show the wrong people until the room's next report, or start a huddle that's over again,
+ * with nobody left in it to say so, as when the Workspace never heard of the huddle.
  */
-const REPORT_NO_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2 WHERE id = ?1 AND huddle_reported_at < ?2 AND huddle_user_ids = '[]'`;
+const KEEP_REPORT_TIME = `UPDATE rooms SET huddle_reported_at = ?2 WHERE id = ?1 AND huddle_reported_at < ?2`;
 
 /** When the report kept of a room's huddle was made. */
 const HUDDLE_REPORTED_AT = `SELECT huddle_reported_at FROM rooms WHERE id = ?`;
@@ -1392,12 +1413,13 @@ const DIRECT_WITH_KEY = `SELECT rooms.id AS room_id, ${ACTIVE_AT}, users.id, use
 
 /**
  * The people the sidebar suggests ?1 start a DM with, before it leaves out as many as their DMs take:
- * the active people with the oldest accounts who share no DM with them, never them. The people in their
- * DMs come from a subquery, and the index on users' age lets it stop at the last one it needs rather
- * than sorting everyone.
+ * the active people with the oldest accounts who share no DM with them, never them. Unlike Campfire's,
+ * it suggests no bots, nor @ember and the agents, whose rows among the DMs would look like DMs nobody
+ * started. The people in their DMs come from a subquery, and the index on users' age lets it stop at
+ * the last one it needs rather than sorting everyone.
  */
 export const SUGGESTED_FOR_USER = `SELECT id, name FROM users
-  WHERE status = ${ACTIVE} AND id <> ?1 AND id NOT IN (
+  WHERE status = ${ACTIVE} AND role <> ${BOT} AND id <> ?1 AND id NOT IN (
     SELECT members.user_id FROM memberships AS mine JOIN rooms ON rooms.id = mine.room_id
       JOIN memberships AS members ON members.room_id = mine.room_id
     WHERE mine.user_id = ?1 AND rooms.kind = 'direct')
@@ -1700,6 +1722,7 @@ const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
 const REMEMBER_ASSISTANT = rememberSetting("assistant");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
 const REMEMBER_ASSISTANT_INSTRUCTIONS = rememberSetting("assistant_instructions");
+const REMEMBER_ASSISTANT_PROMPT_TEMPLATE = rememberSetting("assistant_prompt_template");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
 /** Navigation icon changes as the merge patch `CHANGE_NAVIGATION_ICONS` takes them: null for a slot's default. */
@@ -1918,7 +1941,7 @@ const KEPT_AGENTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
 
 /** An active agent as its page shows it, with its avatar and who last changed it. */
 const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_variant,
-    agents.instructions, agents.format, agents.thinking, agents.answer_length,
+    agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length,
     agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
   FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
   WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;
@@ -1928,7 +1951,7 @@ const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_va
  * posted: its name, its model, and how it answers. Nothing unless it's an active agent in the room, so
  * that turning Ember AI off, deleting the agent or taking it out of the room stops what's on its way.
  */
-const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.format, agents.thinking, agents.answer_length, agents.web_tools
+const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length, agents.web_tools
   FROM agents JOIN users ON users.id = agents.user_id
   WHERE agents.user_id = ?2 AND users.status = ${ACTIVE} AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = ?2)`;
 
@@ -1943,14 +1966,14 @@ const AGENTS_LISTED = `SELECT ${DIRECTORY_COLUMNS} FROM agents JOIN users ON use
 const AGENT_PROFILE = `SELECT agents.description, agents.model, agents.model_name, agents.created_by, makers.name AS created_by_name
   FROM agents JOIN users AS makers ON makers.id = agents.created_by WHERE agents.user_id = ?`;
 
-/** What makes a bot an agent, ?10 being 1 to put it in every open room, made by ?11. */
+/** What makes a bot an agent, ?11 being 1 to put it in every open room, made by ?12. */
 const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
-    every_open_room, created_by, updated_by, created_at, updated_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?12)`;
+    prompt_template, every_open_room, created_by, updated_by, created_at, updated_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13)`;
 
 /** Changes an agent's setup, and records who changed it, and when. */
 const CHANGE_AGENT = `UPDATE agents SET description = ?2, instructions = ?3, model = ?4, model_name = ?5, format = ?6, thinking = ?7, answer_length = ?8,
-  web_tools = ?9, updated_by = ?10, updated_at = ?11 WHERE user_id = ?1`;
+  web_tools = ?9, prompt_template = ?10, updated_by = ?11, updated_at = ?12 WHERE user_id = ?1`;
 
 /** Puts ?1 in the open rooms the JSON list ?2 names, of those there are, keeping the memberships it has. */
 const GRANT_PICKED_ROOMS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
@@ -2310,6 +2333,7 @@ export class WorkspaceStore {
       assistant: assistantIn(settings),
       assistantMost: assistantMostIn(settings),
       assistantInstructions: assistantInstructionsIn(settings),
+      assistantPromptTemplate: assistantPromptTemplateIn(settings),
       huddles: huddlesIn(settings),
       deployedAddress: deployedAddressIn(settings),
       otherAddresses: otherAddressesIn(settings),
@@ -3210,16 +3234,16 @@ export class WorkspaceStore {
 
   /**
    * Keeps room `roomId`'s huddle as the room reported it at `at`, by its own clock: `huddle`, or nobody
-   * in it once it's null. Answers who's in the room, to hear of it, when the report changed the huddle
-   * kept, and the time of the report kept instead, when that's no earlier than this one. A room that's
-   * gone keeps nothing.
+   * in it once it's null, and the report's time, even when the huddle kept was that already. Answers
+   * who's in the room, to hear of it, when the report changed the huddle kept, and the time of the
+   * latest report instead, when that's no earlier than this one. A room that's gone keeps nothing.
    */
   async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<ReportedHuddle> {
     const [[before], changed, members] = (await this.db.batch([
       statement(HUDDLE_REPORTED_AT, roomId),
       statement(REPORT_HUDDLE, roomId, at, huddle?.startedAt ?? "", huddle ? JSON.stringify(huddle.userIds) : NOBODY),
       statement(MEMBERS_TO_TELL_OF_HUDDLE, roomId, at),
-      statement(REPORT_NO_HUDDLE, roomId, at),
+      statement(KEEP_REPORT_TIME, roomId, at),
     ])) as [Array<{ huddle_reported_at: number }>, unknown[], UserIdRow[], unknown[]];
     if (before && before.huddle_reported_at >= at) return { memberIds: null, outdatedBy: before.huddle_reported_at };
     return { memberIds: changed.length > 0 ? userIdsOf(members) : null, outdatedBy: null };
@@ -3698,14 +3722,16 @@ export class WorkspaceStore {
 
   /**
    * Changes Ember AI while it's on to `assistant`, the most each of @ember's dials goes to for anyone's
-   * questions to `most`, and what Ember adds to @ember's instructions to `instructions`, in one batch,
-   * without recording when, as no page's address goes by any of them.
+   * questions to `most`, what Ember adds to @ember's instructions to `instructions`, and what it adds
+   * around them to `promptTemplate`, null for its own, in one batch, without recording when, as no page's
+   * address goes by any of them.
    */
-  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels, instructions: string): Promise<void> {
+  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels, instructions: string, promptTemplate: string | null): Promise<void> {
     await this.db.batch([
       statement(REMEMBER_ASSISTANT, assistantSetting(assistant)),
       statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most)),
       statement(REMEMBER_ASSISTANT_INSTRUCTIONS, JSON.stringify(instructions)),
+      statement(REMEMBER_ASSISTANT_PROMPT_TEMPLATE, JSON.stringify(promptTemplate)),
     ]);
   }
 

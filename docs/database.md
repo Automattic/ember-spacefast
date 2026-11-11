@@ -297,15 +297,16 @@ Objects, D1 or speed call for something else.
   arrive out of order the later stands, one from before a huddle ended can't bring it back, and a
   room that was too late is told so, and reports again after it. While a huddle goes on the room's
   alarm rings every half a minute and says who's in it again, which is what makes up for a call that
-  failed; a report that says what's kept reads no memberships and writes nothing, unless it says
-  that no huddle is going on, when its time is kept: the Workspace may never have heard of the
-  huddle that's over, and a report of it that arrived after that would otherwise start it again,
-  with nobody left in it to say it's over. From before the Workspace hears of anyone until it has
-  heard that the huddle is over, the room's object keeps the room's id in its own storage
-  (`huddleRoom`), so the alarm can say so with nobody left in it, whatever became of the object
-  meanwhile. The tracks Cloudflare's Realtime SFU didn't close when asked wait there too
-  (`huddleUnclosed`), for the alarm to ask about again, and since the alarm then rings far more
-  often than a failed log is sent again, the room keeps when its logs are next due (`logsDue`).
+  failed. A report that says what's kept reads no memberships, but its time is kept all the same,
+  since a call the room gave up waiting for can still arrive after it: made earlier, that call then
+  changes nothing, where it would otherwise show the wrong people until the room's next report, or
+  start a huddle that's over again, with nobody left in it to say it's over (as when the Workspace
+  never heard of the huddle). From before the Workspace hears of anyone until it has heard that the
+  huddle is over, the room's object keeps the room's id in its own storage (`huddleRoom`), so the
+  alarm can say so with nobody left in it, whatever became of the object meanwhile. The tracks
+  Cloudflare's Realtime SFU didn't close when asked wait there too (`huddleUnclosed`), for the alarm
+  to ask about again, and since the alarm then rings far more often than a failed log is sent again,
+  the room keeps when its logs are next due (`logsDue`).
 - **Rooms are named by their ids, and some have no creator.** A room's id names its Durable Object
   too, so it's a 16-character sortable string like a message's rather than an integer, and its kind
   is `open`, `closed` or `direct` rather than Rails' class name. The rooms from before the Workspace
