@@ -264,10 +264,11 @@ export const startingInvolvement = (room: Room): Involvement => (room.kind === "
 
 /**
  * A room in someone's sidebar, with whether a message has come since they last had it open in a shown
- * tab, which marks it unread for them until they do again, and their level in it. A room they've
- * hidden is listed too, since they can still open it, but their sidebar leaves it out.
+ * tab, which marks it unread for them until they do again, when the first of those messages came, while
+ * it's marked, and their level in it. A room they've hidden is listed too, since they can still open it,
+ * but their sidebar leaves it out.
  */
-export type SidebarRoom = Room & { unread: boolean; involvement: Involvement };
+export type SidebarRoom = Room & { unread: boolean; unreadSince?: string; involvement: Involvement };
 
 /**
  * The rooms someone has starred, which their sidebar lists first, in the order they starred them.
@@ -1628,8 +1629,11 @@ export type WorkspaceClientFrame = { type: "ping" };
 export type WorkspaceServerFrame =
   /** Sent as the Workspace lets the socket in: who its session signs in, and the workspace as it is then. */
   | { type: "welcome"; you: Me; account: Account }
-  /** A room of theirs has a message they haven't seen, which marks it unread. Sent only to the person marked, as their mark changes. */
-  | { type: "room.unread"; roomId: RoomId }
+  /**
+   * A room of theirs has a message they haven't seen, which marks it unread, as of `at`, when that message
+   * came. Sent only to the person marked, as their mark changes.
+   */
+  | { type: "room.unread"; roomId: RoomId; at: string }
   /** They've read a room marked unread, in this tab or another. */
   | { type: "room.read"; roomId: RoomId }
   /**

@@ -17,6 +17,40 @@ test.describe("Who's here", () => {
   });
 });
 
+test.describe("New line", () => {
+  test("draws New over the first message that came while a room was unread, and none on the next visit", async ({ members }) => {
+    const ada = await members.signIn("Ada");
+    await ada.send("Before you left");
+    // Grace reads general, then leaves it before the rest comes. The Workspace hears of a message a
+    // moment after it's sent, so one sent just before someone joins can mark the room unread for them as
+    // of it, unless they read the room after it.
+    const grace = await members.signIn("Grace");
+    await expect(grace.message("Before you left")).toBeVisible();
+    await expect(ada.presence()).toHaveText("2 here now");
+    const rows = grace.page.getByRole("region", { name: "Rooms" });
+    const general = rows.getByRole("link", { name: "general" });
+    await rows.getByRole("link", { name: "random" }).click();
+    await expect(ada.presence()).toHaveText("1 here now");
+
+    await ada.send("While you were away");
+    await ada.send("And another");
+    await expect(general).toHaveAccessibleDescription(/^Unread/);
+    await general.click();
+    const newLine = grace.page.getByRole("separator", { name: "New messages" });
+    await expect(newLine).toBeVisible();
+    await expect(grace.page.locator("[data-message-id]").filter({ has: newLine })).toContainText("While you were away");
+
+    // It stays while the room is open, and is gone once it's read and opened again.
+    await ada.send("Still here");
+    await expect(grace.message("Still here")).toBeVisible();
+    await expect(newLine).toHaveCount(1);
+    await rows.getByRole("link", { name: "random" }).click();
+    await general.click();
+    await expect(grace.message("Still here")).toBeVisible();
+    await expect(newLine).toHaveCount(0);
+  });
+});
+
 test.describe("Presence", () => {
   test("counts someone with two tabs open once", async ({ members, rooms }) => {
     const ada = await members.signIn("Ada");

@@ -480,6 +480,13 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   }, [route, goingOn]);
 
   const room = route.page !== "room" || goingOn ? null : (goneRoom ?? rooms?.find((r) => r.id === route.roomId) ?? null);
+  // When the room shown was marked unread as of as it opened, for its timeline's New line, kept while it
+  // stays open, though opening it reads it. Coming back to it with nothing new draws none.
+  const [opened, setOpened] = useState<{ roomId: RoomId | null; newSince: string | null }>({ roomId: null, newSince: null });
+  if (opened.roomId !== (room?.id ?? null)) {
+    const listed = room && rooms?.find((r) => r.id === room.id);
+    setOpened({ roomId: room?.id ?? null, newSince: (listed?.unread && listed.unreadSince) || null });
+  }
   const direct = route.page !== "direct-settings" || goingOn || !rooms ? null : directIn(goneRoom ? [goneRoom] : rooms, route.roomId);
   // The workspace socket's news that a room is gone takes it out of the list, and the room or the DM's
   // settings shown stay. Declared as a function, so that `useSidebar` above can take it.
@@ -723,6 +730,7 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
               onStarred={starredRooms}
               // As the list has it, or as it starts once the room has gone from the list.
               involvement={rooms?.find((r) => r.id === room.id)?.involvement ?? startingInvolvement(room)}
+              newSince={opened.roomId === room.id ? opened.newSince : null}
               askForRoom={askForRoom}
               onSessionChanged={onSessionChanged}
               onFailed={failed}

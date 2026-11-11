@@ -519,8 +519,8 @@ export interface SavedRoomChange {
 
 /** What applying events from a room's log changed. */
 export interface AppliedEvents {
-  /** Whose unread marks changed, and whether each is now unread. */
-  marks: Map<UserId, boolean>;
+  /** Whose unread marks changed, and when the message each is now marked unread as of came, or null for one now read. */
+  marks: Map<UserId, string | null>;
   /** When messages came in a DM, when the latest did and everyone in the DM; null otherwise. */
   active: { at: string; userIds: UserId[] } | null;
   /** The new messages' pushes, oldest message first, when they were asked for. */
@@ -1253,6 +1253,7 @@ interface SidebarRow extends HuddleRow {
   icon: SharedRoom["icon"];
   active_at: string;
   unread: number;
+  unread_since: string | null;
   involvement: Involvement;
   shared_position: number | null;
 }
@@ -1297,10 +1298,11 @@ const membersOf = (rows: DirectMemberRow[]): User[] => rows.map(({ id, name }) =
 const roomOf = ({ id, kind, name, icon, active_at }: SidebarRow, members: DirectMemberRow[] = []): Room =>
   kind === "direct" ? { id, kind, members: membersOf(members), activeAt: active_at } : { id, kind, name: name ?? "", icon };
 
-/** A room as someone's sidebar lists it, with whether it's marked unread for them and their level in it. */
+/** A room as someone's sidebar lists it, with whether it's marked unread for them, since when, and their level in it. */
 const sidebarRoom = (row: SidebarRow, members?: DirectMemberRow[]): SidebarRoom => ({
   ...roomOf(row, members),
   unread: row.unread === 1,
+  ...(row.unread_since !== null && { unreadSince: row.unread_since }),
   involvement: row.involvement,
 });
 
@@ -1325,7 +1327,7 @@ const ACTIVE_AT = `coalesce(rooms.last_message_at, rooms.created_at) AS active_a
  * they were listed.
  */
 export const ROOMS_FOR_USER = `SELECT rooms.id, rooms.kind, rooms.name, rooms.icon, ${ACTIVE_AT}, memberships.unread_at IS NOT NULL AS unread,
-    memberships.involvement, rooms.shared_position, rooms.huddle_started_at, rooms.huddle_user_ids
+    memberships.unread_at AS unread_since, memberships.involvement, rooms.shared_position, rooms.huddle_started_at, rooms.huddle_user_ids
   FROM memberships JOIN rooms ON rooms.id = memberships.room_id
   WHERE memberships.user_id = ? ORDER BY rooms.created_at, rooms.id`;
 
@@ -3402,10 +3404,10 @@ export class WorkspaceStore {
     const told = statements.length;
     statements.push(...(message ? [statement(TOLD_OF_DIRECT_MESSAGE, roomId, message.seq), statement(APPLIED_WITH_MESSAGE, last, roomId, messageAt!)] : [statement(APPLIED, last, roomId)]));
     const results = await this.db.batch(statements);
-    const marks = new Map<UserId, boolean>();
+    const marks = new Map<UserId, string | null>();
     for (const { event, marks: at } of applied) {
       if (at === null) continue;
-      for (const { user_id } of results[at] as UserIdRow[]) marks.set(user_id, isNewMessage(event));
+      for (const { user_id } of results[at] as UserIdRow[]) marks.set(user_id, isNewMessage(event) ? event.at : null);
     }
     const pushes = applied.flatMap(({ event, pushes: at }) => (at === null ? [] : messagePushes(roomId, event, results[at] as PushRow[])));
     const deliveries = applied.flatMap(({ event, bots: at }) => (at === null ? [] : messageDeliveries(event, results[at] as MessageBotRow[])));
