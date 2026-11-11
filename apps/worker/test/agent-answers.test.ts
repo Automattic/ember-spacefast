@@ -1,6 +1,7 @@
-import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type User, type UserId } from "@ember/protocol";
+import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type Sidebar, type User, type UserId } from "@ember/protocol";
 import { agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_REFUSED, QUESTION_NEEDED, type AgentAnswer, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
 import { ASSISTANT_OFF, maxTokensAt } from "@ember/protocol/assistant";
+import { unknownPlaceholder } from "@ember/protocol/prompts";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENT_NOTES, NOTES } from "../src/assistant/answers";
@@ -16,6 +17,8 @@ const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api
 const CLOUDFLARE_API = `https://api.cloudflare.com/client/v4/accounts/${SETUP.accountId}/ai/v1`;
 /** Workers AI's models, which take Chat Completions, whose turns AI Gateway is sent as they are, and Anthropic's, which take Messages and can search the web. */
 const [GLM, GEMMA, GPT_OSS, HAIKU, SONNET] = ["@cf/zai-org/glm-4.7-flash", "@cf/google/gemma-4-26b-a4b-it", "@cf/openai/gpt-oss-120b", "anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5"];
+/** xAI's model that takes Chat Completions but no thinking level. */
+const GROK = "xai/grok-4.20-0309-reasoning";
 
 /** An agent as New agent sends it: Scout, on Gemma, in every open room, thinking not at all and answering briefly. */
 const SCOUT: NewAgent = {
@@ -70,6 +73,15 @@ function answerTo({ url, body }: Pick<Asked, "url" | "body">, text: string): Res
 
 /** Cloudflare's answer to a request it refuses with `status`, in its own shape. */
 const refusal = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
+
+/**
+ * A Grok model's answer saying `text`, as AI Gateway answers once xAI has refused a thinking level, with
+ * its code for a request the provider refuses, which Cloudflare's API answers an account it can't route to with too.
+ */
+const unthinkingGrok = (text: string) => ({ body }: Asked) =>
+  body.reasoning_effort === undefined
+    ? chatAnswer(text)
+    : refusal(400, 7003, `Model execution failed (User Input Error): {"code":"invalid-argument","error":"Model grok-4.20-0309-reasoning does not support parameter reasoningEffort."}`);
 
 /** Stands in for AI Gateway, whose model answers each question with what `answer` makes of it, keeping the questions in the order they came. */
 function internet(answer: (asked: Asked) => Response | Promise<Response>): Asked[] {
@@ -228,6 +240,23 @@ describe("An AI agent", () => {
     client.close();
   });
 
+  it("is told what an administrator changed what Ember adds around its instructions to, each placeholder filled in", async () => {
+    const { ada, general } = await setUp();
+    const template = "You are {{name}} of {{community}}, asked in {{where}} by {{asker}}.\n\n{{instructions}}\n\nWrite at most {{words}} words. {{web}} Today is {{today}}.";
+    const scout = await makeAgent(ada, { ...SCOUT, promptTemplate: template });
+    expect(scout.promptTemplate).toBe(template);
+    const questions = internet(() => chatAnswer("Sunny."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(scout)} what's the forecast?</p>`);
+    expect(await nextFrom(client, scout)).toMatchObject({ plainText: "Sunny." });
+    const told = questions[0]!.body.messages[0]!.content;
+    expect(told).toMatch(new RegExp(`^You are Scout of .+, asked in the room "general" by Ada Lovelace\\.\n\n${SCOUT.instructions.replace(/[.,]/g, "\\$&")}\n\nWrite at most 150 words\\. You can't search the web or open links\\.`));
+    expect(told).toMatch(/ Today is \w+, \w+ \d+, \d{4}\.$/);
+    expect(told).not.toContain("{{");
+    client.close();
+  });
+
   it("answers a reply in a thread in the thread, only there, reading its own answers there as its own", async () => {
     const { ada, general } = await setUp();
     const scout = await makeAgent(ada, SCOUT);
@@ -296,6 +325,21 @@ describe("An AI agent", () => {
     expect(told(GLM)).toContain("You are Ember, the AI assistant");
     expect(told(GPT_OSS)).toContain(`You are Recap, an AI agent`);
     expect(told(GPT_OSS)).toContain(RECAP.instructions);
+    client.close();
+  });
+
+  it("answers a mention in a room with no DM, which the asker's sidebar neither lists nor suggests, nor one with @ember", async () => {
+    const { ada, general } = await setUp();
+    const scout = await makeAgent(ada, SCOUT);
+    internet(() => chatAnswer("Sunny."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(scout)} ${mention(EMBER)} what's the forecast?</p>`);
+    await nextFromEach(client, [scout, EMBER]);
+    await allApplied(general);
+    const sidebar = (await (await api("/api/sidebar", { headers: { Cookie: ada.cookie } })).json()) as Sidebar;
+    expect(sidebar.rooms.filter(({ kind }) => kind === "direct")).toEqual([]);
+    expect(sidebar.suggestions).toEqual([]);
     client.close();
   });
 
@@ -389,6 +433,23 @@ describe("An AI agent", () => {
     expect(errors).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^Agent ${scout.id}'s model ${GEMMA.replaceAll(".", "\\.")} didn't answer message ${question.id}: .*Insufficient credits`)));
     client.close();
   });
+
+  it("asks its model again without a thinking level when the model's provider refuses one, rather than saying Ember AI's account is gone", async () => {
+    const { ada, general } = await setUp();
+    const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(unthinkingGrok("The Packers won."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(grok)} who won the latest Packers game?</p>`);
+    expect(await nextFrom(client, grok)).toMatchObject({ plainText: "The Packers won." });
+    expect(questions.map(({ url, body }) => [url, body.reasoning_effort])).toEqual([
+      [`${CLOUDFLARE_API}/chat/completions`, "low"],
+      [`${CLOUDFLARE_API}/chat/completions`, undefined],
+    ]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${GROK} again without a thinking level`));
+    client.close();
+  });
 });
 
 describe("@ember", () => {
@@ -405,6 +466,20 @@ describe("@ember", () => {
     expect(body.messages[0]!.content).toContain(`or by writing to you directly.\n\nAnswer in British English.\n\nYou're asked in the room "general".`);
     expect(body.messages[0]!.content).toContain("as a helpful teammate would: plainly, and in at most about 400 words.");
     expect(JSON.parse(metadata!)).toEqual({ user_id: ada.user.id, agent_id: ASSISTANT_ID });
+    client.close();
+  });
+
+  it("answers within what administrators changed what Ember adds around its instructions to", async () => {
+    const { ada, general } = await setUp();
+    const promptTemplate = "{{instructions}}\n\nYou are {{name}}. Answer {{asker}}, in {{where}}.";
+    const changed = await api("/api/account/assistant", { method: "PATCH", headers: { Cookie: ada.cookie }, body: JSON.stringify({ instructions: "Be brief.", promptTemplate }) });
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    const questions = internet(() => chatAnswer("Fine."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(EMBER)} how's the launch?</p>`);
+    expect(await nextFrom(client, EMBER)).toMatchObject({ plainText: "Fine." });
+    expect(questions[0]!.body.messages[0]!.content).toBe(`Be brief.\n\nYou are Ember. Answer Ada Lovelace, in the room "general".`);
     client.close();
   });
 });
@@ -433,6 +508,21 @@ describe("Try it", () => {
     expect(body.messages.slice(1)).toEqual([{ role: "user", content: "Ada Lovelace: Is it sunny? https://example.com/sky.png" }]);
     // Nothing's saved, and nobody else hears of it.
     expect(await workspaceSql("SELECT count(*) AS n FROM agents")).toEqual([{ n: 0 }]);
+  });
+
+  it("asks the agent with what Ember adds around its instructions as the page has it, saved or not", async () => {
+    const { ada } = await setUp();
+    const scout = await makeAgent(ada, { ...SCOUT, promptTemplate: "Saved. {{instructions}}" });
+    const questions = internet(() => chatAnswer("Sunny."));
+
+    expect((await tryIt(ada, scout.id, { ...TRIAL, promptTemplate: "You are {{name}}, in {{where}}. {{instructions}}" })).status).toBe(200);
+    expect(questions[0]!.body.messages[0]!.content).toBe(`You are Scout, in a direct message. ${SCOUT.instructions}`);
+    // Ember's own, for none.
+    expect((await tryIt(ada, scout.id, TRIAL)).status).toBe(200);
+    expect(questions[1]!.body.messages[0]!.content).toMatch(/^You are Scout, an AI agent in the team chat/);
+    const refused = await tryIt(ada, scout.id, { ...TRIAL, promptTemplate: "{{instructions}} in {{room}}" });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: unknownPlaceholder("room"), field: "promptTemplate" }]);
+    expect(questions).toHaveLength(2);
   });
 
   it("asks a saved agent in the format, and with the web tools, its tests found, while its model is the same, labeled as its", async () => {
@@ -487,6 +577,18 @@ describe("Try it", () => {
     expect(((await response.json()) as AgentTrialAnswer).body).toBe("<p>In Messages.</p>");
     // Chat Completions first, as for any model whose ID doesn't say it's Anthropic's or OpenAI's, asked again without thinking.
     expect(questions.map(({ url }) => url.slice(CLOUDFLARE_API.length))).toEqual(["/chat/completions", "/chat/completions", "/messages"]);
+  });
+
+  it("asks a saved agent's model again without a thinking level when the model's provider refuses one, as it would in a room", async () => {
+    const { ada } = await setUp();
+    const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(unthinkingGrok("The Packers won."));
+
+    const response = await tryIt(ada, grok.id, { ...TRIAL, name: "Grok", model: GROK, thinking: "low", question: "who won the latest packers game" });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(((await response.json()) as AgentTrialAnswer).body).toBe("<p>The Packers won.</p>");
+    expect(questions.map(({ body }) => body.reasoning_effort)).toEqual(["low", undefined]);
   });
 
   it("refuses Search the web for a model that can't search, as saving would, and says on the model's field why it didn't answer", async () => {

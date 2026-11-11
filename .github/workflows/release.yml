@@ -3,7 +3,9 @@ name: Release
 # Releases Ember whenever main's version, apps/worker/package.json's, is a new one: tags the commit
 # v<version> and publishes the release, with notes that list the pull requests merged since the last.
 # Copies of Ember update from release to release (docs/self-hosting.md#updating), so a pull request
-# that changes the version is how to release (docs/development.md#releasing).
+# that changes the version is how to release (docs/development.md#releasing). A beta's version, such
+# as 0.5.0-beta.1, is published as a pre-release, which GitHub never takes for the latest release,
+# and no copy is offered it unless it asks for one (docs/self-hosting.md#betas).
 on:
   push:
     branches: [main]
@@ -29,9 +31,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(jq -r .version apps/worker/package.json)
+          # Copies tell a release from a beta by its tag, and know no other kind.
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+            echo "::error::Ember's version is a release's, such as 1.2.3, or a beta's of one, such as 1.2.3-beta.1, not $version."
+            exit 1
+          fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
             echo "Ember $version is out already."
             exit 0
           fi
-          gh release create "v$version" --target "$GITHUB_SHA" --title "Ember $version" --generate-notes
-          echo "Released [Ember $version]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v$version)." >> "$GITHUB_STEP_SUMMARY"
+          # The notes list what's changed since the release before, which copies come from, or for a beta,
+          # since the release or beta before, newest first with a beta before its release. Apart from a
+          # pipe, so a failed lookup fails the step rather than reading as no releases.
+          tags=$(git -c versionsort.suffix=- ls-remote --tags --refs --sort=-v:refname origin 'refs/tags/v*')
+          if [[ "$version" == *-beta.* ]]; then
+            previous=$(echo "$tags" | cut -f 2 | head -n 1)
+          else
+            previous=$(echo "$tags" | cut -f 2 | grep -v -e '-beta\.' | head -n 1)
+          fi
+          from=()
+          if [ -n "$previous" ]; then from=(--notes-start-tag "${previous#refs/tags/}"); fi
+          if [[ "$version" == *-beta.* ]]; then
+            title="Ember ${version/-beta./ beta }"
+            deploy="https://deploy.workers.cloudflare.com/?url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/v$version"
+            intro=$(cat <<EOF
+          **This is a beta of Ember ${version%%-*}**, for trying what's coming before it's released. Copies of Ember aren't offered it unless they ask for a beta or run one already, and Admin tells nobody on a release that it's out. To try it, deploy it as a new Ember with the button below, run it on your computer, or bring a copy you have up to it, as [Betas]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/self-hosting.md#betas) says.
+
+          [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)]($deploy)
+          EOF
+            )
+            gh release create "v$version" --target "$GITHUB_SHA" --title "$title" --prerelease --notes "$intro" --generate-notes "${from[@]}"
+          else
+            title="Ember $version"
+            gh release create "v$version" --target "$GITHUB_SHA" --title "$title" --generate-notes "${from[@]}"
+          fi
+          echo "Released [$title]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v$version)." >> "$GITHUB_STEP_SUMMARY"

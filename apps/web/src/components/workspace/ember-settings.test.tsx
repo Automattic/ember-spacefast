@@ -22,6 +22,7 @@ import {
   type WebSearchChanged,
   type WebTool,
 } from "@ember/protocol/assistant";
+import { EMBER_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED } from "@ember/protocol/prompts";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
 import { AccountContext, useAccount } from "@/hooks/use-account";
@@ -46,7 +47,7 @@ import {
   webSearchOn,
 } from "./ember-settings";
 import { CATALOG_UNREAD } from "./model-picker";
-import { aroundExplained } from "./prompt-preview";
+import { aroundExplained, cautionFor } from "./prompt-preview";
 import { CHANGES_SAVED } from "./settings-page";
 
 vi.mock("@/lib/previews", () => ({ avatarVariantOf: vi.fn(async () => new Blob(["variant"], { type: "image/webp" })) }));
@@ -74,6 +75,7 @@ const on = (model: string, most: AnswerLevels = TOP_LEVELS, others: string[] = [
   most,
   webTools,
   instructions: "",
+  promptTemplate: null,
   avatarUrl: FLAME,
   avatar: false,
 });
@@ -216,7 +218,8 @@ describe("@ember's page", () => {
     expect(screen.getByText(EMBER_EXPLAINED)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go Back" })).toHaveAttribute("href", AGENTS_PATH);
     expect(await screen.findByRole("region", { name: "@ember" })).toBeInTheDocument();
-    expect(within(card()).getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["Avatar", "Instructions", "Models", "Search the web", "Limits"]);
+    // Modify with caution is in What Ember adds around them, under Instructions.
+    expect(within(card()).getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["Avatar", "Instructions", "Modify with caution", "Models", "Search the web", "Limits"]);
   });
 
   it("sends anyone but an administrator to workspace settings at once, reading nothing, saying why", async () => {
@@ -284,8 +287,20 @@ describe("Instructions", () => {
   const save = () => within(card()).getByRole("button", { name: "Save instructions" });
   const SONNET = on("anthropic/claude-sonnet-5.5");
   const BRITISH: Assistant = { ...SONNET, instructions: "Answer in British English." };
-  /** The preview of what Ember adds around them. */
+  /** The preview of what Ember adds around them, the box that asks for care before it's modified, and the template, once Modify is pressed. */
   const preview = () => within(card()).getByText("What Ember adds around them").closest("details")!;
+  const caution = () => within(card()).getByRole("region", { name: "Modify with caution" });
+  const modify = () => within(caution()).getByRole("button", { name: "Modify" });
+  const templateBox = () => within(card()).getByRole("textbox", { name: "What Ember adds around them" });
+  const saveTemplate = () => within(caution()).getByRole("button", { name: "Save" });
+  /** What Ember adds around @ember's instructions, as an administrator modified it. */
+  const SCRIBE = "You are {{name}}, the scribe of {{community}}.\n\n{{instructions}}\n\nAnswer {{asker}} in at most {{words}} words.";
+  /** The changes the page sent. */
+  const changesSent = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([, init]) => init?.method === "PATCH")
+      .map(([, init]) => JSON.parse(String(init?.body)) as unknown);
 
   beforeEach(() => history.replaceState(null, "", agentSettingsPath(ASSISTANT_ID)));
   afterEach(() => history.replaceState(null, "", "/"));
@@ -385,6 +400,77 @@ describe("Instructions", () => {
     expect(box()).toHaveValue("Keep it short. Use British English.");
     expect(save()).toBeEnabled();
 
+    act(() => navigate("/rooms/general"));
+    expect(await screen.findByRole("dialog", { name: "Unsaved Changes" })).toHaveAccessibleDescription(INSTRUCTIONS_UNSAVED);
+    expect(location.pathname).toBe(agentSettingsPath(ASSISTANT_ID));
+  });
+
+  it("keeps Ember's own around them until Modify is pressed, asking for care first", async () => {
+    serve();
+    const { user } = showCard(SONNET);
+    expect(within(caution()).getByRole("heading", { level: 4, name: "Modify with caution" })).toBeInTheDocument();
+    expect(caution()).toHaveTextContent(cautionFor("@ember"));
+    expect(within(card()).queryByRole("textbox", { name: "What Ember adds around them" })).toBeNull();
+    await user.click(modify());
+    expect(templateBox()).toHaveValue(EMBER_TEMPLATE);
+    expect(templateBox()).toHaveFocus();
+    expect(saveTemplate()).toBeDisabled();
+    expect(save()).toBeDisabled();
+  });
+
+  it("saves what's modified with Save beside it, or Save instructions, without the spaces around it, with a notice, and Ember's own as null", async () => {
+    const answer = held(() => Response.json({ assistant: { ...SONNET, promptTemplate: SCRIBE } }));
+    serve({ changed: answer.answered });
+    const { user } = showLiveCard(SONNET);
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste(`  ${SCRIBE}\n`);
+    expect(preview()).toHaveTextContent("You are Ember, the scribe of Analytical Engines. Your instructions Answer Ada Lovelace in at most 400 words.");
+    expect(within(preview()).getByText("Modified")).toBeInTheDocument();
+    expect(save()).toBeEnabled();
+    await user.click(saveTemplate());
+    expect(changesSent()).toEqual([{ promptTemplate: SCRIBE }]);
+    expect(saveTemplate()).toBeDisabled();
+    expect(addModel()).toBeDisabled();
+    await answer.answer();
+    expect(await screen.findByRole("alert")).toHaveTextContent(CHANGES_SAVED);
+    expect(templateBox()).toHaveValue(SCRIBE);
+    expect(saveTemplate()).toBeDisabled();
+
+    vi.mocked(fetch).mockImplementation(async () => Response.json({ assistant: { ...SONNET, instructions: "Be brief." } }));
+    await user.type(box(), "Be brief.");
+    await user.click(within(caution()).getByRole("button", { name: "Use Ember's own" }));
+    expect(within(preview()).queryByText("Modified")).toBeNull();
+    await user.click(save());
+    await waitFor(() => expect(changesSent()).toEqual([{ promptTemplate: SCRIBE }, { instructions: "Be brief.", promptTemplate: null }]));
+    await waitFor(() => expect(templateBox()).toHaveValue(EMBER_TEMPLATE));
+    expect(saveTemplate()).toBeDisabled();
+  });
+
+  it("refuses what Ember can't take before saving it, saying why in it, and in Unsaved Changes", async () => {
+    serve();
+    const { user, onFailed } = showLiveCard(SONNET);
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste("You are {{name}}.");
+    expect(templateBox()).toHaveAccessibleDescription(`${cautionFor("@ember")} ${INSTRUCTIONS_PLACE_NEEDED}`);
+    await user.click(saveTemplate());
+    expect(changesSent()).toEqual([]);
+    expect(onFailed).not.toHaveBeenCalled();
+
+    act(() => navigate("/rooms/general"));
+    const dialog = await screen.findByRole("dialog", { name: "Unsaved Changes" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Your changes couldn’t be saved.");
+    expect(changesSent()).toEqual([]);
+    expect(location.pathname).toBe(agentSettingsPath(ASSISTANT_ID));
+  });
+
+  it("asks before the page is left with what Ember adds around them unsaved", async () => {
+    serve();
+    const { user } = showLiveCard(SONNET);
+    await user.click(modify());
+    await user.type(templateBox(), " Be brief.");
     act(() => navigate("/rooms/general"));
     expect(await screen.findByRole("dialog", { name: "Unsaved Changes" })).toHaveAccessibleDescription(INSTRUCTIONS_UNSAVED);
     expect(location.pathname).toBe(agentSettingsPath(ASSISTANT_ID));

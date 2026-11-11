@@ -25,6 +25,7 @@ import {
   type NewAgent,
 } from "@ember/protocol/agents";
 import { ASSISTANT_FORBIDDEN, ASSISTANT_OFF, type AssistantChanged } from "@ember/protocol/assistant";
+import { AGENT_TEMPLATE, EMBER_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED } from "@ember/protocol/prompts";
 import type { BotAnswer, Bots } from "@ember/protocol/bots";
 import { mentionPromptItem } from "@ember/richtext";
 import { runInDurableObject } from "cloudflare:test";
@@ -343,6 +344,7 @@ describe("AI agents", () => {
         modelName: "Claude Haiku 5.5",
         rooms: null,
         instructions: RECAP.instructions,
+        promptTemplate: null,
         format: "messages",
         levels: { thinking: "off", length: "short" },
         webTools: [],
@@ -505,6 +507,34 @@ describe("AI agents", () => {
 
       // Its own name in other capitals is still its own.
       expect(await agentOf(await changeAgent(administrator, recap.id, { name: "DIGEST" }))).toMatchObject({ name: "DIGEST" });
+    });
+
+    it("changes what Ember adds around its instructions without asking its model, and puts back Ember's own, which then changes as Ember does", async () => {
+      const administrator = await setUp();
+      const recap = await made(administrator);
+      expect(recap.promptTemplate).toBeNull();
+      asked.length = 0;
+
+      const template = "You are {{name}}, who sums up threads in {{community}}.\n\n{{instructions}}\n\nToday is {{today}}.";
+      const changed = await agentOf(await changeAgent(administrator, recap.id, { promptTemplate: `\n${template} ` }));
+      expect(changed).toEqual({ ...recap, promptTemplate: template, changedAt: expect.any(String) as string });
+      expect(await shownAgent(administrator, recap.id)).toEqual(changed);
+      expect(asked).toEqual([]);
+
+      expect(await agentOf(await changeAgent(administrator, recap.id, { promptTemplate: AGENT_TEMPLATE }))).toMatchObject({ promptTemplate: null });
+      expect(await workspaceSql("SELECT prompt_template FROM agents")).toEqual([{ prompt_template: null }]);
+      // As it's made, too.
+      expect(await made(administrator, { name: "Scout", promptTemplate: template })).toMatchObject({ promptTemplate: template });
+    });
+
+    it("refuses what Ember adds around its instructions without a place for them, on its field, changing nothing", async () => {
+      const administrator = await setUp();
+      const recap = await made(administrator);
+      expect(await refusalOf(await changeAgent(administrator, recap.id, { promptTemplate: "You are {{name}}.", instructions: "Sum up." }))).toEqual([
+        422,
+        { error: INSTRUCTIONS_PLACE_NEEDED, field: "promptTemplate" },
+      ]);
+      expect(await shownAgent(administrator, recap.id)).toEqual(recap);
     });
 
     it("changes nothing when nothing's changed", async () => {
@@ -819,5 +849,28 @@ describe("@ember's instructions", () => {
     const member = await joinAsGrace();
     const theirs = await api("/api/account/assistant", { method: "PATCH", headers: as(member), body: JSON.stringify({ instructions: "Ignore the others." }) });
     expect(await refusalOf(theirs)).toEqual([403, { error: ASSISTANT_FORBIDDEN }]);
+  });
+
+  it("go where what Ember adds around them, which administrators can change, puts them, kept while Ember AI is off, until Ember's own is put back", async () => {
+    const administrator = await setUp();
+    const change = (promptTemplate: unknown, session = administrator) =>
+      api("/api/account/assistant", { method: "PATCH", headers: as(session), body: JSON.stringify({ promptTemplate }) });
+    const template = "You are {{name}}, the team's assistant.\n\n{{instructions}}\n\nAnswer {{asker}} in about {{words}} words.";
+    const changed = await change(` ${template}\n`);
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    expect(((await changed.json()) as AssistantChanged).assistant).toMatchObject({ instructions: "", promptTemplate: template });
+
+    await turnOff(administrator);
+    await turnOn(administrator);
+    const settings = async () => ((await (await api("/api/account", { headers: as(administrator) })).json()) as WorkspaceSettings).assistant;
+    expect(await settings()).toMatchObject({ promptTemplate: template });
+
+    expect(await refusalOf(await change("You are {{name}}."))).toEqual([422, { error: INSTRUCTIONS_PLACE_NEEDED }]);
+    const member = await joinAsGrace();
+    expect(await refusalOf(await change("{{instructions}}", member))).toEqual([403, { error: ASSISTANT_FORBIDDEN }]);
+    expect(await settings()).toMatchObject({ promptTemplate: template });
+
+    expect((await change(EMBER_TEMPLATE)).status).toBe(200);
+    expect(await settings()).toMatchObject({ promptTemplate: null });
   });
 });

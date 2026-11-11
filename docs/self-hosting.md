@@ -11,6 +11,7 @@ account, as [Deploying](#deploying) describes.
 
 - [Deploying](#deploying)
   - [Updating](#updating)
+  - [Betas](#betas)
   - [The build's token](#the-builds-token)
   - [A custom domain](#a-custom-domain)
   - [Who can join](#who-can-join)
@@ -41,7 +42,15 @@ button again afterwards. If your account already has a bucket named `ember`, the
 pick a new one there for this Ember's files, and choose Create new for the database if it picks one
 another Ember uses. The copy has all of Ember but its `.github` folder, so
 add the Update Ember workflow to it, as [Updating](#updating) says, for it to be offered Ember's
-releases. To deploy from your machine instead, after `pnpm exec wrangler login`:
+releases.
+
+Cloudflare can build the copy before it has finished copying Ember into it. That first build then
+stops at `pnpm run build` with `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`, `No package.json ... was found`,
+because the commit it built holds only Cloudflare's `wrangler.jsonc`, and that commit isn't in the
+copy's history afterwards. Push any commit to the copy, such as an edit to its README in GitHub's
+editor, and Workers Builds builds and deploys the copy as it is.
+
+To deploy from your machine instead, after `pnpm exec wrangler login`:
 
 ```sh
 pnpm build
@@ -122,7 +131,8 @@ has.
 
 The workflow looks for a newer release every Monday, or when you run it from the Actions tab (Update
 Ember, then Run workflow), and opens a pull request, "Update Ember to v1.2.3", that links to what's
-new. Merging it deploys the update, as every push to `main` does, and that's all: each room's and the
+new. It brings releases alone, never a beta unless you ask for one, as [Betas](#betas) says. Merging
+it deploys the update, as every push to `main` does, and that's all: each room's and the
 workspace's tables bring themselves up to date the first time they open. Closing it instead turns that
 release down until the next, whose pull request brings its changes too. Workers Builds builds each
 pull request's branch as a Preview, and the pull request shows whether it built; that's all a Preview
@@ -135,7 +145,8 @@ on GitHub, where **Run workflow** opens the pull request now, or, while the copy
 **Add GitHub action to update** opens GitHub's editor with it filled in, as the build log's link does.
 To know, the Worker asks GitHub for the page of Ember's latest release once an administrator has Ember
 open, telling it nothing but the version it is, and keeps the answer for six hours, but asks again
-each time an administrator opens Admin, at most once a minute.
+each time an administrator opens Admin, or presses **Check for updates** on General's Ember card, at
+most once a minute. Under the button, the card says when GitHub last named the newest release.
 
 A new GitHub repository doesn't let workflows open pull requests, so until yours does, the workflow
 opens an issue instead, with a link that opens the pull request for you to merge. To have it open them
@@ -169,6 +180,57 @@ git push -u origin update-ember/v1.2.3      # then merge it into main
 
 A clone of Ember's own repository shares its history, so `git pull` brings it up to date too, or the
 script, which merges from where yours and Ember's part.
+
+### Betas
+
+Before a release with big changes, Ember may publish betas of it, such as `v0.5.0-beta.1`, on its
+[releases page](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases), marked as
+pre-releases, for trying what's coming. Nobody gets one without asking: Update Ember brings a copy
+releases alone, and a copy whose update script predates betas, as Ember 0.4.2's and earlier do,
+doesn't see them at all. While a beta is out ahead of the newest release, General offers it to an
+Ember on the newest release, in a reddish box of its own under the Ember card, since a beta is
+experimental: **Ember 0.6 beta 1 is out to try**, with its notes and how to try it. Admin on the rail
+has no dot for it. To know, the Worker asks GitHub for Ember's tags as `git ls-remote` does, with its
+check for the latest release, telling it nothing but the version it is.
+
+To try a beta:
+
+- As a new Ember: the Deploy to Cloudflare button at the top of the beta's notes deploys it as
+  [Deploying](#deploying) describes, with a Worker, bucket and database of its own, so it's a new
+  community, apart from any you run.
+- On your computer: in a clone of Ember, `git checkout v0.5.0-beta.1`, then `pnpm install`,
+  `pnpm build`, which `pnpm dev` serves the app from, `pnpm dev`, and `pnpm seed` for a community
+  to try it in, as [Development](development.md#getting-started) says.
+- On a copy you have: run its beta workflow, **Update Ember to its newest beta**, from the Actions
+  tab, and merge the pull request it opens. For a copy the deploy told the Worker about, General's
+  **Open GitHub action to try it** opens the workflow on GitHub, where **Run workflow** runs it, or,
+  while the copy hasn't the workflow, **Add GitHub action to try betas** opens GitHub's editor with
+  Ember's filled in, `apps/worker/scripts/update-ember-beta.yml`, for you to commit. It runs the update
+  script from Ember's newest release or beta rather than the copy's own, so it works however old the
+  copy is. Update Ember's **Take Ember's newest beta** box, in the workflow Ember has had since 0.5
+  beta 1, does the same with the copy's own script. Elsewhere, as on GitLab, run the beta's script in a
+  clone of the copy, and push the branch it makes:
+
+  ```sh
+  git fetch https://github.com/NYLLON-SOFTWARE/ember-cloudflare.git refs/tags/v0.5.0-beta.1
+  mkdir ../ember-beta && git archive FETCH_HEAD apps/worker/scripts | tar -x -C ../ember-beta
+  node ../ember-beta/apps/worker/scripts/update-ember.ts --beta   # makes update-ember/v0.5.0-beta.1
+  git push -u origin update-ember/v0.5.0-beta.1                   # then merge it into main
+  ```
+
+  Run by hand, it brings Ember's workflows too, so in a copy Deploy to Cloudflare made, which has no
+  `.github` folder, it names those the beta changed as conflicts: on the branch, keep
+  `.github/workflows/update-ember.yml`, which brings the betas after it and the release, remove the
+  rest, which run only in Ember's own repository, and commit before you push.
+
+A copy that runs a beta is offered the betas after it, then the release, each as a pull request like
+any update's, and from then on releases alone, until it asks for a beta again. A pull request for a
+beta it asked for stays open until a release passes it. Its General says it's a beta, ahead of the
+newest release, and the newest beta until a later one is out, which it says is available, then the
+release, as Admin's dot does. General learned of betas in 0.5 beta 2, so 0.5 beta 1's says nothing of
+the betas after it, though Update Ember and the beta workflow bring them. A beta's migrations count as
+released ones, so a copy goes from beta to beta to release as it does from release to release, and
+reverting a beta's update leaves tables the release before it still works with.
 
 ### The build's token
 
@@ -489,6 +551,17 @@ another. `wrangler dev` keeps files on your machine. Without the binding Ember k
 A file goes up in parts of 10 MiB, since a Worker takes at most 100 MB a request, and R2 puts them
 back together. R2 deletes the parts of an upload nobody finishes after a week.
 
+A picture's message shows its preview, a WebP, JPEG or PNG within 1200×800 that the uploader's browser
+makes and sends before the last part, or the picture itself if every browser shows it and it's at most
+5 MiB. Where neither would show it, as for a bot's picture, a HEIC from a browser that can't read one,
+or a picture a browser couldn't make a preview of in 5 seconds, the Worker has
+[Cloudflare Images](https://developers.cloudflare.com/images/optimization/binding/), bound as `IMAGES`,
+make the preview. There's nothing to set up, and its free plan makes 5,000 a month. Past those, the
+Worker's log says why it made none, and the message shows the picture as a file to download, as it
+does a picture over 20 MB, 100 megapixels or 12,000 pixels a side. An account still on Cloudflare's
+legacy Image Resizing subscription has to move to the Images one first. `wrangler dev` makes previews
+on your machine.
+
 ### Ember AI
 
 An administrator adds @ember, an AI assistant, on the AI assistant tab of community settings. Turning
@@ -521,8 +594,9 @@ browser goes on showing the old picture it keeps for half an hour.
 
 @ember follows Ember's own instructions, and Instructions, on its page, adds an administrator's to
 them, up to 10,000 characters, such as how the team likes answers written or what to leave to people.
-What Ember adds around them shows the whole prompt @ember is given, from the Worker's own code. They're
-kept while Ember AI is off.
+What Ember adds around them shows the whole prompt @ember is given, from the Worker's own code, and
+administrators can [modify it with caution](#what-ember-adds-around-the-instructions). They're kept
+while Ember AI is off.
 
 The Models list on @ember's page has the models people can pick, at most 20, starting with the one
 Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another, Add
@@ -607,9 +681,10 @@ agent's page, which changes it. The page sets up:
   show, so people know when to ask it.
 - **Instructions**, its system prompt, up to 10,000 characters: its task, how to go about it, and what to
   leave alone. What Ember adds around them shows the prompt the Worker writes around them, from the
-  same code. They aren't secret, as anyone who can ask the agent could get it to repeat them, so leave
-  out keys, passwords and private links. Nor are they a boundary: someone in the conversation can talk
-  an agent out of them, so what an agent reads and does is up to Ember's code, as it is for @ember.
+  same code, which administrators can [modify with caution](#what-ember-adds-around-the-instructions).
+  They aren't secret, as anyone who can ask the agent could get it to repeat them, so leave out keys,
+  passwords and private links. Nor are they a boundary: someone in the conversation can talk an agent
+  out of them, so what an agent reads and does is up to Ember's code, as it is for @ember.
 - **How it answers**: its model, from the catalog's text models, or Another model by its ID, and its
   own Thinking and Answer length, the dials @ember has, which people can't change on their profile as
   they can for @ember. For a model outside Workers AI, the page says the most an answer at those
@@ -638,6 +713,37 @@ messages, deleted agents' too, on a DM with it alone in the sidebar and the room
 mention prompt and New direct message, and on its profile. The profile shows everyone what the agent
 does, the model it answers with, where that runs (Cloudflare's Workers AI, or the company that makes
 the model, which AI Gateway sends what it's asked to), and who set it up, but not its instructions.
+
+#### What Ember adds around the instructions
+
+Ember writes the rest of @ember's and each agent's system prompt around their instructions: who they
+are, where they're asked, how the chat shows Markdown and pictures, what they may do on the web, and
+the date. Under What Ember adds around them, on @ember's page and each agent's, a box headed Modify
+with caution keeps it as Ember writes it until Modify is pressed, as a change there can leave a model
+unsure who it is, where it's asked or what the chat can show. Modify opens the template Ember fills in
+each time it's asked, up to 10,000 characters, with what each placeholder stands for:
+
+| Placeholder | What Ember fills in |
+| --- | --- |
+| `{{name}}` | Its name |
+| `{{community}}` | The community's name |
+| `{{where}}` | The room, thread or direct message it's asked in |
+| `{{asker}}` | The name of whoever asked |
+| `{{words}}` | About how many words it may answer in, from Answer length |
+| `{{web}}` | What it may do on the web, or who could let it |
+| `{{today}}` | Today's date, in UTC |
+| `{{instructions}}` | The instructions, which it needs once |
+
+The preview above it follows what's typed, and the box says why Ember can't take a template, before
+anything's saved: one without `{{instructions}}`, or with it twice, or with a placeholder Ember doesn't
+fill in, such as a misspelt one. A template that leaves out a placeholder, such as `{{web}}` or
+`{{today}}`, is taken, though the model then isn't told what it would have said. While @ember has no
+instructions added, `{{instructions}}` on a line of its own goes with its line, and within a line it
+leaves the rest of the line as it's written. An agent's template saves with Save changes, and
+@ember's with Save beside it, or Save instructions. Try it asks an agent with the template as the page
+has it, saved or not. Use Ember's own puts Ember's back, which Ember keeps as its own, so that it
+changes as Ember's does in later releases, where a modified template stays as it was saved. While it's
+modified, What Ember adds around them is marked Modified.
 
 ### Huddles
 
@@ -835,7 +941,9 @@ pages had them in October 2026:
   are monthly and far larger, such as 50 million rows written a month, and use past them is billed at
   Cloudflare's rates.
 - **Files** go to R2, which stores 10 GB a month free, then charges $0.015 per GB a month, and never
-  charges for downloads.
+  charges for downloads. Cloudflare Images makes the previews of 5,000 pictures a month free, where
+  uploaders' browsers sent none, and on its Paid plan charges $0.50 per 1,000 after that, as
+  [Files](#files) says.
 - **Email**, if Ember sends it: Resend's free plan sends 3,000 emails a month, at most 100 a day, and
   Cloudflare Email Service includes 3,000 a month on Workers Paid, as [Sending email](#sending-email)
   says.

@@ -133,7 +133,7 @@ describe("Ember AI", () => {
       const response = await setUpAssistant(administrator, { ...SETUP, accountId: ` ${ACCOUNT_ID.toUpperCase()} `, apiToken: ` ${API_TOKEN}\n` });
       expect(response.status, await response.clone().text()).toBe(200);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
+      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", promptTemplate: null, ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
 
       // Claude takes Anthropic's Messages, with the instructions as its system prompt.
       expect(requests).toEqual([{ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, gateway: "default", body: expect.any(Object) as unknown }]);
@@ -156,7 +156,7 @@ describe("Ember AI", () => {
         web_tools_asked_at: expect.any(String) as unknown,
       });
       expect(JSON.stringify(await workspaceSql("SELECT * FROM accounts"))).not.toContain(API_TOKEN);
-      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", ...WITH_THE_FLAME });
+      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", promptTemplate: null, ...WITH_THE_FLAME });
       expect(await assistantSettings(member)).toBeNull();
     });
 
@@ -241,6 +241,7 @@ describe("Ember AI", () => {
         most: TOP_LEVELS,
         webTools: [],
         instructions: "",
+        promptTemplate: null,
         ...WITH_THE_FLAME,
       });
       expect(requests.map(({ url, authorization }) => [url, authorization])).toEqual([
@@ -296,12 +297,16 @@ describe("Ember AI", () => {
       expect(((await storedSettings()).assistant as { format: string }).format).toBe("chat");
     });
 
-    it("refuses a model no format takes on the model's field, with Cloudflare's own words, keeping nothing", async () => {
+    it.each([
+      ["a model it doesn't have", 404, 2002, "Model not found: openai/gpt-0"],
+      // AI Gateway's code for a request it or the provider refuses as invalid, which Cloudflare's API answers an account it can't route to with too.
+      ["a question the model's provider refuses", 400, 7003, 'Model execution failed (User Input Error): {"code":"invalid-argument","error":"Model gpt-0 does not support parameter maxTokens."}'],
+    ])("refuses %s, in every format, on the model's field, with Cloudflare's own words, keeping nothing", async (_, status, code, message) => {
       const administrator = await setUp();
-      const requests = fakeGateway(refusing(404, 2002, "Model not found: openai/gpt-0"));
+      const requests = fakeGateway(refusing(status, code, message));
       const response = await setUpAssistant(administrator, { ...SETUP, model: "openai/gpt-0" });
       expect(response.status).toBe(422);
-      expect(await response.json()).toEqual({ error: "AI Gateway didn't take that model. Cloudflare says: Model not found: openai/gpt-0", field: "model" });
+      expect(await response.json()).toEqual({ error: `AI Gateway didn't take that model. Cloudflare says: ${message}`, field: "model" });
       expect(requests).toHaveLength(3);
       expect((await storedSettings()).assistant).toBeUndefined();
       expect(await storedAssistant()).toBeUndefined();

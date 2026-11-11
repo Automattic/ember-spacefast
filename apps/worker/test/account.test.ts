@@ -237,7 +237,7 @@ describe("Rename the workspace", () => {
       vi.spyOn(storeOf(workspace), "account").mockReturnValueOnce(new Promise((resolve) => (finishReading = resolve)));
       const reading = workspace.bootstrap(null, null, null);
       expect(await workspace.changeAccount(credentials, { name: "Ember Studio" }, "ember.test")).toEqual(named("Ember Studio"));
-      finishReading({ ...named("Ember"), joinCode: "aB3d-Ef5h-iJ7k", updatedAt: new Date().toISOString(), storedLogo: null, emailFrom: null, resendApiKey: null, deployedAddress: null, otherAddresses: [], turnstileKeys: null, assistant: null, assistantMost: TOP_LEVELS, assistantInstructions: "", huddles: null });
+      finishReading({ ...named("Ember"), joinCode: "aB3d-Ef5h-iJ7k", updatedAt: new Date().toISOString(), storedLogo: null, emailFrom: null, resendApiKey: null, deployedAddress: null, otherAddresses: [], turnstileKeys: null, assistant: null, assistantMost: TOP_LEVELS, assistantInstructions: "", assistantPromptTemplate: null, huddles: null });
       await reading;
     });
     expect((await bootstrap()).account.name).toBe("Ember Studio");
@@ -659,7 +659,7 @@ describe("Regenerate the join link", () => {
       vi.spyOn(storeOf(workspace), "account").mockReturnValueOnce(new Promise((resolve) => (finishReading = resolve)));
       const reading = workspace.bootstrap(null, null, null);
       const regenerated = await workspace.regenerateJoinCode(credentials);
-      finishReading({ ...named("Ember"), joinCode: old, updatedAt: new Date().toISOString(), storedLogo: null, emailFrom: null, resendApiKey: null, deployedAddress: null, otherAddresses: [], turnstileKeys: null, assistant: null, assistantMost: TOP_LEVELS, assistantInstructions: "", huddles: null });
+      finishReading({ ...named("Ember"), joinCode: old, updatedAt: new Date().toISOString(), storedLogo: null, emailFrom: null, resendApiKey: null, deployedAddress: null, otherAddresses: [], turnstileKeys: null, assistant: null, assistantMost: TOP_LEVELS, assistantInstructions: "", assistantPromptTemplate: null, huddles: null });
       await reading;
       return regenerated;
     });
