@@ -1134,10 +1134,7 @@ export class ChatRoom extends DurableObject<Env> {
   private async sendEvents(roomId: RoomId): Promise<number> {
     const log = this.logFor(roomId);
     const logged = await log.undelivered(ENTRIES_PER_CALL);
-    if (logged.length === 0) {
-      this.seenBy.clear();
-      return 0;
-    }
+    if (logged.length === 0) return 0;
     const now = Date.now();
     const viewers = viewersOf(this.ctx, now);
     const threads = new Map<string, UserId[]>();
