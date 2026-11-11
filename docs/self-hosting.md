@@ -176,10 +176,13 @@ script, which merges from where yours and Ember's part.
 
 Before a release with big changes, Ember may publish betas of it, such as `v0.5.0-beta.1`, on its
 [releases page](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases), marked as
-pre-releases, for trying what's coming. Nobody is offered one without asking: Update Ember brings a
-copy releases alone, and Admin tells administrators of releases alone, since GitHub's latest release
-is never a pre-release. A copy whose update script predates betas, as Ember 0.4.2's and earlier do,
-doesn't see them at all.
+pre-releases, for trying what's coming. Nobody gets one without asking: Update Ember brings a copy
+releases alone, and a copy whose update script predates betas, as Ember 0.4.2's and earlier do,
+doesn't see them at all. While a beta is out ahead of the newest release, General offers it to an
+Ember on the newest release, in a reddish box of its own under the Ember card, since a beta is
+experimental: **Ember 0.6 beta 1 is out to try**, with its notes and how to try it. Admin on the rail
+has no dot for it. To know, the Worker asks GitHub for Ember's tags as `git ls-remote` does, with its
+check for the latest release, telling it nothing but the version it is.
 
 To try a beta:
 
@@ -189,10 +192,15 @@ To try a beta:
 - On your computer: in a clone of Ember, `git checkout v0.5.0-beta.1`, then `pnpm install`,
   `pnpm build`, which `pnpm dev` serves the app from, `pnpm dev`, and `pnpm seed` for a community
   to try it in, as [Development](development.md#getting-started) says.
-- On a copy you have: run Update Ember from the Actions tab with **Take Ember's newest beta** ticked,
-  and merge the pull request it opens. The box comes with the workflow Ember has now, and an update's
-  pull request says when yours is older, for you to copy Ember's over it. Where the copy's update
-  script predates betas, run the beta's own in a clone of the copy, and push the branch it makes:
+- On a copy you have: run its beta workflow, **Update Ember to its newest beta**, from the Actions
+  tab, and merge the pull request it opens. For a copy the deploy told the Worker about, General's
+  **Open GitHub action to try it** opens the workflow on GitHub, where **Run workflow** runs it, or,
+  while the copy hasn't the workflow, **Add GitHub action to try betas** opens GitHub's editor with
+  Ember's filled in, `apps/worker/scripts/update-ember-beta.yml`, for you to commit. It runs the update
+  script from Ember's newest release or beta rather than the copy's own, so it works however old the
+  copy is. Update Ember's **Take Ember's newest beta** box, in the workflow Ember has had since 0.5
+  beta 1, does the same with the copy's own script. Elsewhere, as on GitLab, run the beta's script in a
+  clone of the copy, and push the branch it makes:
 
   ```sh
   git fetch https://github.com/NYLLON-SOFTWARE/ember-cloudflare.git refs/tags/v0.5.0-beta.1
@@ -209,9 +217,9 @@ To try a beta:
 A copy that runs a beta is offered the betas after it, then the release, each as a pull request like
 any update's, and from then on releases alone, until it asks for a beta again. A pull request for a
 beta it asked for stays open until a release passes it. Its General says it's a beta, ahead of the
-newest release, and once the release is out, that it's available. A beta's migrations count as
-released ones, so a copy goes from beta to beta to release as it does from release to release, and
-reverting a beta's update leaves tables the release before it still works with.
+newest release, and that the next beta, then the release, is available, as Admin's dot does. A beta's
+migrations count as released ones, so a copy goes from beta to beta to release as it does from
+release to release, and reverting a beta's update leaves tables the release before it still works with.
 
 ### The build's token
 

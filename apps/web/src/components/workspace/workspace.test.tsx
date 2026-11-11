@@ -939,7 +939,7 @@ describe("New releases", () => {
     const idle = idleCallbacks();
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, copy: null }),
+      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, newestBeta: null, copy: null }),
     });
     const { user } = showWorkspace("/rooms/random", asAdministrator);
     expect(await roomHeading()).toHaveTextContent("random");
@@ -959,7 +959,7 @@ describe("New releases", () => {
   it("asks afresh each time an administrator opens Admin, once the browser is idle, but not for going on within it, or leaving", async () => {
     const idle = idleCallbacks();
     let newest = "0.2";
-    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, notes: NOTES, newer: true }, copy: null });
+    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, notes: NOTES, newer: true }, newestBeta: null, copy: null });
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
       "GET /api/account/release": answer,
@@ -1007,7 +1007,7 @@ describe("New releases", () => {
       // Asked afresh alone, as the page opens in Admin.
       serve({
         "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-        "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, copy: null }),
+        "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, newestBeta: null, copy: null }),
       });
       const { unmount } = showWorkspace("/account/edit", asAdministrator);
       await communitySettings();
@@ -1016,6 +1016,31 @@ describe("New releases", () => {
       expect(await screen.findByRole("region", { name: "Ember 0.1" })).toHaveTextContent(says);
       expect(screen.getByRole("link", { name: "Admin" })).not.toHaveAccessibleDescription();
       expect([releaseChecks(), afreshChecks()]).toEqual([0, 1]);
+      unmount();
+      vi.mocked(fetch).mockClear();
+    }
+  });
+
+  it("marks Admin for the beta after a beta's own, which Update Ember brings, but not for a beta a release could try", async () => {
+    const betaNotes = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0-beta.2";
+    const newestBeta = { release: "0.2 beta 2", notes: betaNotes, newer: true };
+    for (const [check, card, mark] of [
+      [{ release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.2 beta 2 is available", "Ember 0.2 beta 2 is available"],
+      [{ release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.1", null],
+    ] as const) {
+      const idle = idleCallbacks();
+      serve({
+        "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
+        "POST /api/account/release_checks": () => Response.json(check),
+      });
+      const { unmount } = showWorkspace("/account/edit", asAdministrator);
+      await communitySettings();
+      await vi.waitFor(() => expect(idle).toHaveLength(2));
+      act(() => idle.forEach((run) => run()));
+      expect(await screen.findByRole("region", { name: card })).toBeInTheDocument();
+      const admin = screen.getByRole("link", { name: "Admin" });
+      if (mark) expect(admin).toHaveAccessibleDescription(mark);
+      else expect(admin).not.toHaveAccessibleDescription();
       unmount();
       vi.mocked(fetch).mockClear();
     }

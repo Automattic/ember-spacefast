@@ -797,6 +797,8 @@ export interface CustomStyles {
 /** Ember's repository, which publishes its releases, and its docs on updating a deployment to one. */
 export const EMBER_REPOSITORY = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare";
 export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#updating`;
+/** Ember's docs on its betas, and on trying one. */
+export const TRYING_BETAS = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#betas`;
 
 /**
  * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
@@ -810,19 +812,26 @@ export interface ReleaseCheck {
   /** Whether this Ember is a beta, such as "0.5 beta 1", ahead of the newest release, which GitHub never names a beta. */
   beta: boolean;
   newest: { release: string; notes: string; newer: boolean } | null;
+  /**
+   * Ember's newest beta while it's ahead of the newest release, named as "0.6 beta 1", with its notes and
+   * whether it's newer than this one, or null when it isn't ahead, or GitHub didn't say: what General
+   * offers a release to try, and a beta to update to (docs/self-hosting.md#betas).
+   */
+  newestBeta: { release: string; notes: string; newer: boolean } | null;
   /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
   copy: CopyOnGitHub | null;
 }
 
 /**
  * A copy of Ember on GitHub, as its deploy tells the Worker: its repository, as `owner/name`, the branch
- * that deploys, and whether it has the Update Ember workflow, for General's release card to link to
- * running it, or to adding it.
+ * that deploys, and whether it has the Update Ember workflow, and the beta workflow, Update Ember to its
+ * newest beta, for General's release card to link to running each, or to adding it.
  */
 export interface CopyOnGitHub {
   repository: string;
   branch: string;
   workflow: boolean;
+  betaWorkflow: boolean;
 }
 
 /** The roles an administrator can give someone with the crown on workspace settings. Bots stay bots. */
