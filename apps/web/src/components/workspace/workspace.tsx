@@ -315,8 +315,8 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
   const listed = rooms !== null;
   useEffect(() => (listed ? whenIdle(() => void loadRarePages().catch(() => {})) : undefined), [listed]);
   // And for an administrator, whether a newer release of Ember is out, or for a beta the beta after it,
-  // which the rail's Admin marks, asked afresh each time Admin opens.
-  const release = useReleaseCheck(administrator, listed, settings !== null);
+  // which the rail's Admin marks, asked afresh each time Admin opens, and by General's Check for updates.
+  const { check: release, checkAgain: checkForUpdates } = useReleaseCheck(administrator, listed, settings !== null);
   const newRelease = (release && updateOf(release)?.release) ?? null;
 
   // On a phone, the drawer closes as New direct message opens.
@@ -649,6 +649,7 @@ export function Workspace({ me, workspaceName, onAccountChanged, onSignOut, onSe
             onSharedOrderSaved={reorderedRooms}
             onSessionChanged={onSessionChanged}
             release={release}
+            onCheckForUpdates={checkForUpdates}
           />
         ));
       case "custom-styles":

@@ -104,7 +104,14 @@ describe("Checking for a newer release", () => {
     const response = await checkRelease(administrator);
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(await response.json()).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true }, newestBeta: null, copy: null });
+    expect(await response.json()).toEqual({
+      release: releaseNameOf(VERSION),
+      beta: isBeta(VERSION),
+      newest: { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true },
+      checkedAt: expect.any(String),
+      newestBeta: null,
+      copy: null,
+    });
     expect(asked).toEqual([{ url: LATEST, redirect: "manual", userAgent: `Ember/${VERSION} (+${EMBER_REPOSITORY})` }]);
   });
 
@@ -116,7 +123,14 @@ describe("Checking for a newer release", () => {
     ] as const) {
       forgetNewestRelease();
       latestIs(version);
-      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: { release: name, notes: pageOf(version), newer: false }, newestBeta: null, copy: null });
+      expect(await releaseCheckFor(administrator)).toEqual({
+        release: releaseNameOf(VERSION),
+        beta: isBeta(VERSION),
+        newest: { release: name, notes: pageOf(version), newer: false },
+        checkedAt: expect.any(String),
+        newestBeta: null,
+        copy: null,
+      });
     }
   });
 
@@ -158,7 +172,7 @@ describe("Checking for a newer release", () => {
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
     const beta = `${Number(VERSION.split(".")[0]) + 1}.0.0-beta.1`;
     latestIs(beta);
-    expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: false, newest: null, newestBeta: null, copy: null });
+    expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: false, newest: null, checkedAt: null, newestBeta: null, copy: null });
     expect(logged.mock.calls).toEqual([[`GitHub didn't name Ember's newest release: GitHub's latest release is a beta, ${pageOf(beta)}`]]);
   });
 
@@ -187,7 +201,7 @@ describe("Checking for a newer release", () => {
     fakeGitHub(() => failure());
     for (failure of failures) {
       forgetNewestRelease();
-      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: null, newestBeta: null, copy: null });
+      expect(await releaseCheckFor(administrator)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: null, checkedAt: null, newestBeta: null, copy: null });
     }
     expect(logged.mock.calls).toEqual([
       ["GitHub didn't name Ember's newest release: GitHub answered 200"],
@@ -286,7 +300,14 @@ describe("Checking afresh, as opening Admin does", () => {
 
     vi.setSystemTime(start + AFRESH_AFTER_MS);
     const next = { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true };
-    expect(await releaseCheckFor(administrator, checkReleaseAfresh)).toEqual({ release: releaseNameOf(VERSION), beta: isBeta(VERSION), newest: next, newestBeta: null, copy: null });
+    expect(await releaseCheckFor(administrator, checkReleaseAfresh)).toEqual({
+      release: releaseNameOf(VERSION),
+      beta: isBeta(VERSION),
+      newest: next,
+      checkedAt: new Date(start + AFRESH_AFTER_MS).toISOString(),
+      newestBeta: null,
+      copy: null,
+    });
     expect(asked.map(({ url }) => url)).toEqual([LATEST, LATEST]);
     // Ordinary checks say so too, for six hours from then, and another made afresh within the minute asks nothing.
     expect((await releaseCheckFor(administrator)).newest).toEqual(next);
@@ -328,6 +349,47 @@ describe("Checking afresh, as opening Admin does", () => {
     vi.setSystemTime(start + 2 * AFRESH_AFTER_MS);
     expect((await releaseCheckFor(administrator, checkReleaseAfresh)).newest).toEqual(next);
     expect(asked).toHaveLength(3);
+  });
+
+  it("says when GitHub named the release, which General says it last checked, renewed by asking again but not by hearing none", async () => {
+    const administrator = await setUp();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let answer = () => redirectTo(pageOf(NEXT));
+    fakeGitHub(() => answer());
+    const start = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"], now: start });
+    const at = (time: number) => new Date(time).toISOString();
+    expect((await releaseCheckFor(administrator)).checkedAt).toBe(at(start));
+    // Kept with the release, as ordinary checks say it, and one made afresh within the minute.
+    vi.setSystemTime(start + AFRESH_AFTER_MS - 1);
+    expect((await releaseCheckFor(administrator)).checkedAt).toBe(at(start));
+    expect((await releaseCheckFor(administrator, checkReleaseAfresh)).checkedAt).toBe(at(start));
+    vi.setSystemTime(start + AFRESH_AFTER_MS);
+    expect((await releaseCheckFor(administrator, checkReleaseAfresh)).checkedAt).toBe(at(start + AFRESH_AFTER_MS));
+
+    // A check that hears no release says when GitHub named the one kept, and once none is, nothing of when.
+    answer = () => new Response("Unavailable", { status: 503 });
+    vi.setSystemTime(start + 2 * AFRESH_AFTER_MS);
+    const next = { release: releaseNameOf(NEXT), notes: pageOf(NEXT), newer: true };
+    expect(await releaseCheckFor(administrator, checkReleaseAfresh)).toMatchObject({ newest: next, checkedAt: at(start + AFRESH_AFTER_MS) });
+    vi.setSystemTime(start + AFRESH_AFTER_MS + ANSWER_KEPT_MS);
+    expect(await releaseCheckFor(administrator)).toMatchObject({ newest: null, checkedAt: null });
+  });
+
+  it("says GitHub named the release when it did, though it lists the tags seconds after", async () => {
+    const administrator = await setUp();
+    const start = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"], now: start });
+    fakeGitHub(
+      () => redirectTo(pageOf(NEXT)),
+      async () => {
+        // Long after the release is named, which takes no time here.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        vi.setSystemTime(start + 3_000);
+        return tagsOf();
+      },
+    );
+    expect((await releaseCheckFor(administrator)).checkedAt).toBe(new Date(start).toISOString());
   });
 });
 

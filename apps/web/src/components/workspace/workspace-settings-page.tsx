@@ -80,6 +80,8 @@ interface Props {
   onSessionChanged: (me: Me | null) => void;
   /** For an administrator, the release this Ember is and the newest one, once the Worker has said, or else null. */
   release: ReleaseCheck | null;
+  /** Asks the Worker that afresh, as General's Check for updates does, settling once it's answered, which `release` then says. */
+  onCheckForUpdates: () => Promise<void>;
 }
 
 /**
@@ -89,7 +91,8 @@ interface Props {
  * - General, where administrators change the workspace's icon, which one picked saves at once, showing it
  *   meanwhile, and Remove icon takes away, then rename the workspace, give it a tagline, and show or hide
  *   the translation buttons, which Save changes saves together, and see which release of Ember this is,
- *   and when a newer one is out. Members see its icon, name and tagline.
+ *   and when a newer one is out, which Check for updates asks GitHub again. Members see its icon, name
+ *   and tagline.
  *   The rail's icons are in Custom styles (`NavigationIconSettings`), where the project's owner moved
  *   them.
  * - Rooms and permissions: New room, which members don't get while only administrators can create
@@ -118,6 +121,7 @@ export function WorkspaceSettingsPage({
   onSharedOrderSaved,
   onSessionChanged,
   release,
+  onCheckForUpdates,
 }: Props) {
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   // What's typed in Workspace name and Tagline, or null for either while it's as the workspace has it,
@@ -434,7 +438,7 @@ export function WorkspaceSettingsPage({
                   Save changes
                 </SubmitButton>
               </form>
-              <EmberVersion check={release} />
+              <EmberVersion check={release} onCheckForUpdates={onCheckForUpdates} onFailed={onFailed} />
             </>
           ) : (
             <>

@@ -1046,6 +1046,30 @@ describe("New releases", () => {
     }
   });
 
+  it("asks afresh at once for General's Check for updates, marking Admin once the Worker hears of a newer release", async () => {
+    const idle = idleCallbacks();
+    let newest = { release: "0.1", notes: NOTES, newer: false };
+    serve({
+      "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
+      "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, checkedAt: new Date().toISOString(), newestBeta: null, copy: null }),
+    });
+    const { user } = showWorkspace("/account/edit", asAdministrator);
+    await communitySettings();
+    await vi.waitFor(() => expect(idle).toHaveLength(2));
+    act(() => idle.splice(0).forEach((run) => run()));
+    const card = await screen.findByRole("region", { name: "Ember 0.1" });
+    const admin = screen.getByRole("link", { name: "Admin" });
+    expect(admin).not.toHaveAccessibleDescription();
+
+    // GitHub has published 0.2 since, which Check for updates hears of without waiting for the browser to be idle.
+    newest = { release: "0.2", notes: NOTES, newer: true };
+    await user.click(within(card).getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.2 is available" })).toBeInTheDocument();
+    expect(admin).toHaveAccessibleDescription("Ember 0.2 is available");
+    expect(idle).toEqual([]);
+    expect([releaseChecks(), afreshChecks()]).toEqual([0, 2]);
+  });
+
   it("asks nothing for anyone else, even as they open Workspace", async () => {
     const idle = idleCallbacks();
     const { user } = showWorkspace("/rooms/random");
