@@ -715,11 +715,13 @@ each time it's asked, up to 10,000 characters, with what each placeholder stands
 The preview above it follows what's typed, and the box says why Ember can't take a template, before
 anything's saved: one without `{{instructions}}`, or with it twice, or with a placeholder Ember doesn't
 fill in, such as a misspelt one. A template that leaves out a placeholder, such as `{{web}}` or
-`{{today}}`, is taken, though the model then isn't told what it would have said. An agent's template
-saves with Save changes, and @ember's with Save beside it, or Save instructions. Try it asks an agent
-with the template as the page has it, saved or not. Use Ember's own puts Ember's back, which Ember
-keeps as its own, so that it changes as Ember's does in later releases, where a modified template stays
-as it was saved. While it's modified, What Ember adds around them is marked Modified.
+`{{today}}`, is taken, though the model then isn't told what it would have said. While @ember has no
+instructions added, `{{instructions}}` on a line of its own goes with its line, and within a line it
+leaves the rest of the line as it's written. An agent's template saves with Save changes, and
+@ember's with Save beside it, or Save instructions. Try it asks an agent with the template as the page
+has it, saved or not. Use Ember's own puts Ember's back, which Ember keeps as its own, so that it
+changes as Ember's does in later releases, where a modified template stays as it was saved. While it's
+modified, What Ember adds around them is marked Modified.
 
 ### Huddles
 

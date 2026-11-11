@@ -104,9 +104,22 @@ export function promptAround(
   return { before: filled(before), after: filled(after.join(placeholderOf("instructions"))) };
 }
 
-/** `prompt` with `instructions` in their place, as the model reads it, or without them, and the space they'd take, when there are none. */
-export const withInstructions = ({ before, after }: Prompt, instructions: string) =>
-  instructions === "" ? [before.trimEnd(), after.trimStart()].filter((part) => part !== "").join("\n\n") : `${before}${instructions}${after}`;
+/**
+ * `prompt` with `instructions` in their place, as the model reads it. When there are none, a place for
+ * them on a line of its own goes with its line, leaving the text around it as far apart as the further
+ * side was, where a place within a line leaves the rest of the line as it's written.
+ */
+export function withInstructions({ before, after }: Prompt, instructions: string): string {
+  if (instructions !== "") return `${before}${instructions}${after}`;
+  const [above, below] = [before.trimEnd(), after.trimStart()];
+  const [gapAbove, gapBelow] = [before.slice(above.length), after.slice(0, after.length - below.length)];
+  const ownLine = (above === "" || gapAbove.includes("\n")) && (below === "" || gapBelow.includes("\n"));
+  if (!ownLine) return `${before}${after}`;
+  return [above, below].filter((part) => part !== "").join("\n".repeat(Math.max(lineBreaksIn(gapAbove), lineBreaksIn(gapBelow))));
+}
+
+/** How many line breaks `space` holds. */
+const lineBreaksIn = (space: string) => space.split("\n").length - 1;
 
 /** The longest template Ember takes, as long as the instructions it goes around may be. */
 export const MAX_TEMPLATE_LENGTH = 10_000;

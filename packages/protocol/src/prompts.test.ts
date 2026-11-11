@@ -68,10 +68,18 @@ describe("What an administrator changes it to", () => {
     expect(prompt).toEqual({ before: "{{web}} {{nickname}}\n\n", after: "" });
   });
 
-  it("drops the instructions, and the space they'd take, when there are none", () => {
-    expect(withInstructions(promptAround(ASSISTANT_ID, "Ember", "Ada Lovelace", IN_LAUNCH, 150, "WEB", NOW, "{{instructions}}\n\nToday is {{today}}."), "")).toBe(
-      "Today is Tuesday, November 10, 2026.",
-    );
+  it("drops the line the instructions would take when there are none, leaving the lines around it as far apart as the further side was", () => {
+    const withNone = (template: string) => withInstructions(promptAround(ASSISTANT_ID, "Ember", "Ada Lovelace", IN_LAUNCH, 150, "WEB", NOW, template), "");
+    expect(withNone("{{instructions}}\n\nToday is {{today}}.")).toBe("Today is Tuesday, November 10, 2026.");
+    expect(withNone("You are {{name}}.\n{{instructions}}\nToday is {{today}}.")).toBe("You are Ember.\nToday is Tuesday, November 10, 2026.");
+    expect(withNone("You are {{name}}.\n\n  {{instructions}}\nToday is {{today}}.")).toBe("You are Ember.\n\nToday is Tuesday, November 10, 2026.");
+    expect(withNone("You are {{name}}.\n\n{{instructions}}")).toBe("You are Ember.");
+  });
+
+  it("leaves the rest of the line as it's written when the instructions' place within it has none", () => {
+    const withNone = (template: string) => withInstructions(promptAround(ASSISTANT_ID, "Ember", "Ada Lovelace", IN_LAUNCH, 150, "WEB", NOW, template), "");
+    expect(withNone('Answer as {"instructions": "{{instructions}}"} says.')).toBe('Answer as {"instructions": ""} says.');
+    expect(withNone("You are {{name}}. Also: {{instructions}}\n\nToday is {{today}}.")).toBe("You are Ember. Also: \n\nToday is Tuesday, November 10, 2026.");
   });
 
   it("takes a template with the instructions once and only the placeholders Ember fills in, of at most the length it takes", () => {
