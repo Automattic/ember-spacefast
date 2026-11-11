@@ -1556,6 +1556,45 @@ describe("Star rooms", () => {
   });
 });
 
+describe("Keyboard shortcuts", () => {
+  const shortcuts = () => screen.queryByRole("dialog", { name: "Keyboard shortcuts" });
+
+  it("opens on Ctrl+/ from the composer, closes on Escape, handing focus back, and stays shut over another dialog", async () => {
+    vi.stubGlobal("WebSocket", OpenRoomSocket);
+    const { user } = showWorkspace("/rooms/general");
+    await roomHeading();
+    const composer = await screen.findByRole("textbox", { name: "Write a message" });
+    await user.click(composer);
+    expect(fireEvent.keyDown(composer, { key: "/", ctrlKey: true })).toBe(false);
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(shortcuts()).not.toBeInTheDocument());
+    await waitFor(() => expect(composer).toHaveFocus());
+
+    await user.click(screen.getByRole("link", { name: "DMs" }));
+    expect(fireEvent.keyDown(screen.getByRole("combobox", { name: "Search people" }), { key: "/", ctrlKey: true })).toBe(true);
+    expect(shortcuts()).not.toBeInTheDocument();
+  });
+
+  it("stays shut over a native modal dialog, which has no role attribute", async () => {
+    vi.stubGlobal("WebSocket", OpenRoomSocket);
+    showWorkspace("/rooms/general");
+    await roomHeading();
+    const modal = document.createElement("dialog");
+    const button = document.createElement("button");
+    button.textContent = "Allow";
+    modal.append(button);
+    document.body.append(modal);
+    modal.showModal();
+    try {
+      expect(fireEvent.keyDown(button, { key: "/", ctrlKey: true })).toBe(true);
+      expect(shortcuts()).not.toBeInTheDocument();
+    } finally {
+      modal.remove();
+    }
+  });
+});
+
 describe("Welcome card for administrators, until they dismiss it", () => {
   const invited = { ...roomList(rooms), invitation: { roomId: "general", joinCode: "aB3d-Ef5h-iJ7k" } };
   const card = () => screen.queryByRole("heading", { name: "Welcome to Ember" });
