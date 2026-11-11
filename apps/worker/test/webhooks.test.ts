@@ -646,10 +646,10 @@ describe("Webhook replies", () => {
     client.close();
   });
 
-  it("keeps none of a file a bot says back when the Workspace can't be asked about the bot once it has arrived", async () => {
+  it("keeps none of a file a bot says back when the Workspace can't be asked about the bot once it has arrived, nor its preview", async () => {
     const { ada, general } = await setUp();
     const bot = await addBot(ada, "Build Bot", "https://bots.example.com/build");
-    const file = sendingFileWhenLet();
+    const file = sendingFileWhenLet(storedPng(1600, 1200), "image/png");
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const client = await connect(general, ada);
 
@@ -664,6 +664,7 @@ describe("Webhook replies", () => {
     file.send();
     await vi.waitFor(() => expect(errors).toHaveBeenCalledWith(`Bot::WebhookJob of message ${sent.id} to bot ${bot.id} failed:`, unreachable));
     expect((await files().list({ prefix: "files/" })).objects).toEqual([]);
+    expect((await files().list({ prefix: "previews/" })).objects).toEqual([]);
     client.close();
   });
 });

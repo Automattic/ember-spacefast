@@ -1171,7 +1171,7 @@ export class ChatRoom extends DurableObject<Env> {
     const found = await workspace(this.env)
       .botWebhook(roomId, webhook.bot.id)
       .catch(async (error: unknown) => {
-        if ("kept" in reply) await this.env.FILES?.delete(objectKey(reply.kept.key));
+        if ("kept" in reply) await this.env.FILES?.delete([objectKey(reply.kept.key), previewKey(reply.kept.key)]);
         throw error;
       });
     const access = found?.url === webhook.url ? found : null;
