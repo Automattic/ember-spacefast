@@ -34,6 +34,7 @@ import { AccountContext } from "@/hooks/use-account";
 import { PeopleContext } from "@/hooks/use-directory";
 import { navigate, WORKSPACE_SETTINGS_PATH } from "@/hooks/use-route";
 import { ApiError } from "@/lib/api";
+import { timeLabel } from "@/lib/messages";
 // Ember's own Update Ember workflow, which the card offers a copy without one: the copy beside the deploy
 // script, which CI keeps the same as .github's, since a copy's .github keeps its own workflow, or none.
 import EMBERS_WORKFLOW from "../../../../worker/scripts/update-ember.yml?raw";
@@ -282,6 +283,7 @@ const spies = () => ({
   onFailed: vi.fn(),
   onSharedOrderSaved: vi.fn(),
   onSessionChanged: vi.fn(),
+  onCheckForUpdates: vi.fn(async () => {}),
 });
 type Callbacks = ReturnType<typeof spies>;
 
@@ -291,6 +293,8 @@ let socketSays: (person: DirectoryUser) => void;
 let workspaceSays: (account: Account) => void;
 /** Changes the rooms the page shows, and the shared order, as the sidebar's list does. */
 let sidebarSays: (rooms: SidebarRoom[] | null, sharedOrder?: RoomId[]) => void;
+/** Changes what the page shows of Ember's releases, as the workspace's release check does once the Worker answers. */
+let releaseSays: (check: ReleaseCheck) => void;
 
 /**
  * The page, with the workspace, the people directory and the sidebar's rooms as the app keeps them:
@@ -301,7 +305,9 @@ function Page({ me, listed, rooms: listedRooms, callbacks }: { me: Me; listed: D
   const [people, setPeople] = useState(() => new Map(listed.map((person) => [person.id, person])));
   const [account, setAccount] = useState<Account>({ ...asAdministrator.account, name: "Ember" });
   const [sidebar, setSidebar] = useState<{ rooms: SidebarRoom[] | null; sharedOrder: RoomId[] }>({ rooms: listedRooms, sharedOrder: [] });
+  const [releaseCheck, setReleaseCheck] = useState(release);
   socketSays = (person) => setPeople((people) => new Map(people).set(person.id, person));
+  releaseSays = setReleaseCheck;
   workspaceSays = setAccount;
   sidebarSays = (rooms, sharedOrder = []) => setSidebar({ rooms, sharedOrder });
   const personChanged = (person: DirectoryUser) => {
@@ -332,7 +338,7 @@ function Page({ me, listed, rooms: listedRooms, callbacks }: { me: Me; listed: D
               rooms={sidebar.rooms}
               sharedOrder={sidebar.sharedOrder}
               onSharedOrderSaved={sharedOrderSaved}
-              release={release}
+              release={releaseCheck}
             />
           </Sheet>
         </FlashProvider>
@@ -453,11 +459,21 @@ describe("Community settings page", () => {
 describe("Version", () => {
   /** Ember 0.2's page on GitHub, with its notes. */
   const NOTES = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0";
+  /** When GitHub named the newest release to the Worker, just now, and what the card says of it. */
+  const CHECKED_AT = new Date().toISOString();
+  const LAST_CHECKED = `Last checked today at ${timeLabel(new Date(CHECKED_AT))}.`;
   const card = () => screen.findByRole("region", { name: /^Ember \d(?!.* is out to try$)/ });
   /** The box under it that offers a beta to try, apart from it. */
   const betaBox = () => screen.queryByRole("region", { name: / is out to try$/ });
   /** What the Worker says of a copy on GitHub, as its deploy told it, while Ember 0.2 is out, if `copy` is given. */
-  const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, newestBeta: null, copy });
+  const newerFor = (copy: CopyOnGitHub | null = null): ReleaseCheck => ({
+    release: "0.1",
+    beta: false,
+    newest: { release: "0.2", notes: NOTES, newer: true },
+    checkedAt: CHECKED_AT,
+    newestBeta: null,
+    copy,
+  });
   /** The card's links, by name, which each open in a new tab. */
   function linksIn(shown: HTMLElement): Record<string, string | null> {
     const links = within(shown).getAllByRole("link");
@@ -471,10 +487,10 @@ describe("Version", () => {
   it.each([null, { repository: "someone/my-ember", branch: "main", workflow: true, betaWorkflow: true }])(
     "shows administrators which release this is once the Worker has said, at the end of General (copy: %j)",
     async (copy) => {
-      release = { release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta: null, copy };
+      release = { release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, checkedAt: CHECKED_AT, newestBeta: null, copy };
       showPage();
       const shown = await card();
-      expect(shown).toHaveTextContent(/^Ember 0\.1This is the newest release\.$/);
+      expect(shown.textContent).toBe(`Ember 0.1This is the newest release.Check for updates${LAST_CHECKED}`);
       expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
       const general = screen.getByRole("region", { name: "Basic community settings" });
       expect(general.lastElementChild).toBe(shown);
@@ -515,23 +531,23 @@ describe("Version", () => {
   });
 
   it("says when GitHub didn't say whether a newer release is out", async () => {
-    release = { release: "0.1", beta: false, newest: null, newestBeta: null, copy: null };
+    release = { release: "0.1", beta: false, newest: null, checkedAt: null, newestBeta: null, copy: null };
     showPage();
-    expect(await card()).toHaveTextContent(/^Ember 0\.1GitHub didn't say whether a newer release is out\.$/);
+    expect((await card()).textContent).toBe("Ember 0.1GitHub didn't say whether a newer release is out.Check for updates");
   });
 
   it("says a beta is one, ahead of the newest release, until its release is out", async () => {
     const releaseNotes = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.1.0";
-    release = { release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: releaseNotes, newer: false }, newestBeta: null, copy: null };
+    release = { release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: releaseNotes, newer: false }, checkedAt: CHECKED_AT, newestBeta: null, copy: null };
     showPage();
     let shown = await card();
-    expect(shown).toHaveTextContent(/^Ember 0\.2 beta 1This is a beta, ahead of Ember 0\.1, the newest release\.$/);
+    expect(shown.textContent).toBe(`Ember 0.2 beta 1This is a beta, ahead of Ember 0.1, the newest release.Check for updates${LAST_CHECKED}`);
     expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
     cleanup();
 
-    release = { release: "0.2 beta 1", beta: true, newest: null, newestBeta: null, copy: null };
+    release = { release: "0.2 beta 1", beta: true, newest: null, checkedAt: null, newestBeta: null, copy: null };
     showPage();
-    expect(await card()).toHaveTextContent(/^Ember 0\.2 beta 1This is a beta\. GitHub didn't say whether its release is out\.$/);
+    expect((await card()).textContent).toBe("Ember 0.2 beta 1This is a beta. GitHub didn't say whether its release is out.Check for updates");
     cleanup();
 
     release = { ...newerFor(), release: "0.2 beta 1", beta: true };
@@ -550,6 +566,7 @@ describe("Version", () => {
       release: "0.2",
       beta: false,
       newest: { release: "0.2", notes: NOTES, newer: false },
+      checkedAt: CHECKED_AT,
       newestBeta: { release: "0.3 beta 1", notes: BETA_NOTES, newer: true },
       copy,
     });
@@ -564,7 +581,7 @@ describe("Version", () => {
       release = betaOutFor({ repository: "someone/my-ember", branch: "main", workflow: true, betaWorkflow: true });
       showPage();
       const shown = await card();
-      expect(shown).toHaveTextContent(/^Ember 0\.2This is the newest release\.$/);
+      expect(shown.textContent).toBe(`Ember 0.2This is the newest release.Check for updates${LAST_CHECKED}`);
       expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
       const box = shownBetaBox();
       expect(shown.nextElementSibling).toBe(box);
@@ -613,7 +630,8 @@ describe("Version", () => {
       release = { ...betaOutFor(), release: "0.3 beta 1", beta: true, newestBeta: { release: "0.3 beta 1", notes: BETA_NOTES, newer: false } };
       showPage();
       shown = await card();
-      expect(shown).toHaveTextContent(/^Ember 0\.3 beta 1This is a beta, ahead of Ember 0\.2, the newest release\.$/);
+      // The newest beta, as no newer one is out.
+      expect(shown.textContent).toBe(`Ember 0.3 beta 1This is the newest beta, ahead of Ember 0.2, the newest release.Check for updates${LAST_CHECKED}`);
       expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
       expect(betaBox()).not.toBeInTheDocument();
     });
@@ -628,6 +646,62 @@ describe("Version", () => {
       expect(shown).toHaveTextContent(HOW_THIS_COPY_UPDATES);
       expect(betaBox()).not.toBeInTheDocument();
       expect(linksIn(shown)).toEqual({ "What's new": nextNotes, "Open GitHub action to update": "https://github.com/someone/my-ember/actions/workflows/update-ember.yml" });
+    });
+  });
+
+  describe("Check for updates", () => {
+    /** What the Worker says once GitHub names Ember 0.2, a minute after it named 0.1. */
+    const heardOfNewer = (): ReleaseCheck => ({ ...newerFor(), checkedAt: new Date(Date.parse(CHECKED_AT) + 60_000).toISOString() });
+
+    it("asks the Worker again, saying it's checking until it has answered, then when GitHub last named the newest release", async () => {
+      release = { release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, checkedAt: CHECKED_AT, newestBeta: null, copy: null };
+      const callbacks = spies();
+      let answer = () => {};
+      callbacks.onCheckForUpdates.mockImplementation(() => new Promise<void>((resolve) => (answer = resolve)));
+      const { user } = showPage(asAda, everyone, callbacks);
+      const shown = await card();
+      const status = within(shown).getByRole("status");
+      expect(status).toHaveTextContent(LAST_CHECKED);
+      const check = within(shown).getByRole("button", { name: "Check for updates" });
+      await user.click(check);
+      expect(callbacks.onCheckForUpdates).toHaveBeenCalledOnce();
+      expect(check).toBeDisabled();
+      expect(status).toHaveTextContent(/^Checking for updates…$/);
+
+      // The workspace hears of Ember 0.2 as the Worker answers, which the card says, and when.
+      act(() => releaseSays(heardOfNewer()));
+      expect(status).toHaveTextContent(/^Checking for updates…$/);
+      await act(async () => answer());
+      expect(within(shown).getByRole("heading", { level: 2 })).toHaveTextContent("Ember 0.2 is available");
+      expect(Object.keys(linksIn(shown))).toEqual(["What's new", "How to update"]);
+      expect(within(shown).getAllByRole("button").at(-1)).toBe(check);
+      expect(check).toBeEnabled();
+      expect(status).toHaveTextContent(`Last checked today at ${timeLabel(new Date(heardOfNewer().checkedAt!))}.`);
+      expect(callbacks.onFailed).not.toHaveBeenCalled();
+    });
+
+    it("says why asking failed, as the workspace's alerts do, for it to be pressed again", async () => {
+      release = newerFor();
+      const callbacks = spies();
+      const error = new ApiError(500, "Something went wrong");
+      callbacks.onCheckForUpdates.mockRejectedValueOnce(error);
+      const { user } = showPage(asAda, everyone, callbacks);
+      const shown = await card();
+      const check = within(shown).getByRole("button", { name: "Check for updates" });
+      await user.click(check);
+      await waitFor(() => expect(callbacks.onFailed).toHaveBeenCalledWith(error));
+      expect(check).toBeEnabled();
+      expect(within(shown).getByRole("status")).toHaveTextContent(LAST_CHECKED);
+      await user.click(check);
+      expect(callbacks.onCheckForUpdates).toHaveBeenCalledTimes(2);
+    });
+
+    it("says nothing of when while GitHub hasn't named a release", async () => {
+      release = { release: "0.1", beta: false, newest: null, checkedAt: null, newestBeta: null, copy: null };
+      showPage();
+      const shown = await card();
+      expect(within(shown).getByRole("button", { name: "Check for updates" })).toBeEnabled();
+      expect(within(shown).getByRole("status")).toBeEmptyDOMElement();
     });
   });
 

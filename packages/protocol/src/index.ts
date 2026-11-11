@@ -802,16 +802,18 @@ export const TRYING_BETAS = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#
 
 /**
  * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
- * /api/account/release_checks`, which opening Admin makes to have the Worker ask GitHub afresh: the
- * release this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release
- * of Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
- * one, or null when GitHub didn't name one.
+ * /api/account/release_checks`, which opening Admin, and its Check for updates, make to have the Worker
+ * ask GitHub afresh: the release this Ember is, named without its version's trailing ".0", such as "0.1",
+ * and the newest release of Ember on GitHub, named so too, with the address of its notes there and
+ * whether it's newer than this one, or null when GitHub didn't name one.
  */
 export interface ReleaseCheck {
   release: string;
   /** Whether this Ember is a beta, such as "0.5 beta 1", ahead of the newest release, which GitHub never names a beta. */
   beta: boolean;
   newest: { release: string; notes: string; newer: boolean } | null;
+  /** When GitHub named that release, as an ISO time, which General says it last checked, or null with it. */
+  checkedAt: string | null;
   /**
    * Ember's newest beta while it's ahead of the newest release, named as "0.6 beta 1", with its notes and
    * whether it's newer than this one, or null when it isn't ahead, or GitHub didn't say: what General

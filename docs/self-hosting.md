@@ -137,7 +137,8 @@ on GitHub, where **Run workflow** opens the pull request now, or, while the copy
 **Add GitHub action to update** opens GitHub's editor with it filled in, as the build log's link does.
 To know, the Worker asks GitHub for the page of Ember's latest release once an administrator has Ember
 open, telling it nothing but the version it is, and keeps the answer for six hours, but asks again
-each time an administrator opens Admin, at most once a minute.
+each time an administrator opens Admin, or presses **Check for updates** on General's Ember card, at
+most once a minute. Under the button, the card says when GitHub last named the newest release.
 
 A new GitHub repository doesn't let workflows open pull requests, so until yours does, the workflow
 opens an issue instead, with a link that opens the pull request for you to merge. To have it open them
@@ -217,9 +218,11 @@ To try a beta:
 A copy that runs a beta is offered the betas after it, then the release, each as a pull request like
 any update's, and from then on releases alone, until it asks for a beta again. A pull request for a
 beta it asked for stays open until a release passes it. Its General says it's a beta, ahead of the
-newest release, and that the next beta, then the release, is available, as Admin's dot does. A beta's
-migrations count as released ones, so a copy goes from beta to beta to release as it does from
-release to release, and reverting a beta's update leaves tables the release before it still works with.
+newest release, and the newest beta until a later one is out, which it says is available, then the
+release, as Admin's dot does. General learned of betas in 0.5 beta 2, so 0.5 beta 1's says nothing of
+the betas after it, though Update Ember and the beta workflow bring them. A beta's migrations count as
+released ones, so a copy goes from beta to beta to release as it does from release to release, and
+reverting a beta's update leaves tables the release before it still works with.
 
 ### The build's token
 
