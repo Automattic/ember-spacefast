@@ -3344,8 +3344,8 @@ export class WorkspaceStore {
 
   /**
    * Applies `events` from room `roomId`'s log, in order and in one transaction, with `viewerIds`, who
-   * is viewing the room: a message marks it unread for the members who aren't, and a read clears the
-   * reader's mark. The latest message also records when the room was last active. A reply sent only to
+   * is viewing the room, or for a message whose event names its own `viewerIds`, those: a message marks
+   * it unread for the members who aren't, and a read clears the reader's mark. The latest message also records when the room was last active. A reply sent only to
    * its thread does neither, and isn't pushed to those its event's `viewerIds` say are viewing the thread,
    * in place of those viewing the room. Those the Workspace has applied before change nothing. Answers
    * whose marks changed, and whether each is now unread, and, when a message has come in a DM, when the
@@ -3364,12 +3364,12 @@ export class WorkspaceStore {
     const statements: Statement[] = [];
     const applied = events.map((event) => {
       const { seq, kind, userId, at } = event;
-      const mark = isNewMessage(event) ? (event.threadOnly ? null : statement(MARK_UNREAD, at, roomId, userId, viewers, seq)) : statement(MARK_READ, roomId, userId, seq);
+      const seeing = event.viewerIds === undefined ? viewers : JSON.stringify(event.viewerIds);
+      const mark = isNewMessage(event) ? (event.threadOnly ? null : statement(MARK_UNREAD, at, roomId, userId, seeing, seq)) : statement(MARK_READ, roomId, userId, seq);
       const marks = mark && statements.push(mark) - 1;
       const mentions = event.message ? JSON.stringify(event.message.mentionIds) : null;
       const followers = JSON.stringify(event.message?.followerIds ?? []);
       const inRoom = event.threadOnly ? 0 : 1;
-      const seeing = event.viewerIds === undefined ? viewers : JSON.stringify(event.viewerIds);
       const pushes = pushing && mentions !== null ? statements.push(statement(MESSAGE_PUSHES, roomId, userId, seeing, mentions, seq, guests ? 1 : 0, inRoom, followers)) - 1 : null;
       // A bot's reply is never delivered to webhooks, as Campfire posts one without delivering it, nor is
       // @ember's answer, which is a reply too.

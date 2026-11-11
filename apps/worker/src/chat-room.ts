@@ -54,7 +54,7 @@ import { base36, sortableId } from "./ids";
 import { sendPushes } from "./push/delivery";
 import { urlOf } from "./request-url";
 import { addressTag, EVERYONE, REVOCATIONS_KEPT_MS, Revocations, sessionTag, type Revocation } from "./revocations";
-import { RoomLog } from "./room-log";
+import { RoomLog, type RoomEvent } from "./room-log";
 import { searchIndex } from "./search-index";
 import { CLOSE_REASONS, closedAtOnce, closeTooLarge, isTooLarge, MAX_ROOM_FRAME_SIZE, RESERVED_CLOSE_CODES } from "./sockets";
 import { MessageStore, type Deletion, type InThread, type PageCursor, type PostedFile, type StoredBody } from "./store";
@@ -242,6 +242,13 @@ export class ChatRoom extends DurableObject<Env> {
    * isn't logged.
    */
   private readonly readers = new Set<UserId>();
+  /**
+   * Who was viewing the room as each of its new messages in the room came, by the message's id, until its
+   * event goes to the Workspace. Someone who saw a message come in has seen it, though they may have left
+   * the room by the time the Workspace hears of it. Kept in memory only: a message the object restarted
+   * since is judged by who's viewing as it's sent, as before.
+   */
+  private readonly seenBy = new Map<string, UserId[]>();
   /** The room's huddle, whose sockets it keeps beside the room's own. */
   private readonly huddle: Huddle;
 
@@ -897,6 +904,7 @@ export class ChatRoom extends DurableObject<Env> {
     // Before the batch, which on D1 may save the message even when it fails.
     if (!inThread || inThread.alsoSend) this.readers.clear();
     const { message, seq, parent } = await store.create(sortableId(), clientMessageId, user, body, now, kind, posted, inThread);
+    if (!inThread || inThread.alsoSend) this.seenBy.set(message.id, viewersOf(this.ctx));
     this.broadcast({ type: "message.created", message, seq });
     if (parent) this.broadcast({ type: "message.updated", ...parent });
     const couriers = this.couriersFor(store.roomId);
@@ -1113,21 +1121,31 @@ export class ChatRoom extends DurableObject<Env> {
   private async sendEvents(roomId: RoomId): Promise<number> {
     const log = this.logFor(roomId);
     const logged = await log.undelivered(ENTRIES_PER_CALL);
-    if (logged.length === 0) return 0;
+    if (logged.length === 0) {
+      this.seenBy.clear();
+      return 0;
+    }
     const now = Date.now();
+    const viewers = viewersOf(this.ctx, now);
     const threads = new Map<string, UserId[]>();
     const viewingThread = (parentId: string) => {
       if (!threads.has(parentId)) threads.set(parentId, viewersOf(this.ctx, now, parentId));
       return threads.get(parentId)!;
     };
-    const events = logged.map((event) => (event.threadOnly && event.message?.parentId !== undefined ? { ...event, viewerIds: viewingThread(event.message.parentId) } : event));
-    const { pushes, webhooks, asks } = await workspace(this.env).applyRoomEvents(roomId, events, viewersOf(this.ctx, now));
+    // A message in the room goes with everyone who was viewing it as it came, as well as those viewing it now.
+    const seeing = (event: RoomEvent): RoomEvent => {
+      const seen = event.message && this.seenBy.get(event.message.id);
+      return seen ? { ...event, viewerIds: [...new Set([...seen, ...viewers])] } : event;
+    };
+    const events = logged.map((event) => (event.threadOnly && event.message?.parentId !== undefined ? { ...event, viewerIds: viewingThread(event.message.parentId) } : seeing(event)));
+    const { pushes, webhooks, asks } = await workspace(this.env).applyRoomEvents(roomId, events, viewers);
     // The Workspace answers a message's pushes, webhooks and question for @ember once, so they're sent
     // whatever happens next, and the log's next call doesn't wait on push services, bots or models.
     if (pushes.length > 0) this.ctx.waitUntil(this.push(pushes));
     for (const webhook of webhooks) this.ctx.waitUntil(this.deliver(roomId, webhook));
     for (const question of asks) this.ctx.waitUntil(this.answer(roomId, question));
     await log.delivered(events.at(-1)!.seq);
+    for (const { message } of events) if (message) this.seenBy.delete(message.id);
     return events.length;
   }
 

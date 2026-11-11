@@ -18,12 +18,16 @@ test.describe("Who's here", () => {
 });
 
 test.describe("New line", () => {
-  test("draws New over the first message that came while a room was unread, and none on the next visit", async ({ members, rooms }) => {
+  test("draws New over the first message that came while a room was unread, and none on the next visit", async ({ members }) => {
     const ada = await members.signIn("Ada");
-    await ada.send("Before you left");
-    const grace = await members.signIn("Grace", { path: `/rooms/${rooms.random.id}` });
+    const grace = await members.signIn("Grace");
     const rows = grace.page.getByRole("region", { name: "Rooms" });
     const general = rows.getByRole("link", { name: "general" });
+    await ada.send("Before you left");
+    await expect(grace.message("Before you left")).toBeVisible();
+    await rows.getByRole("link", { name: "random" }).click();
+    // Gone from general, so what comes next marks it unread for her.
+    await expect(ada.presence()).toHaveText("1 here now");
 
     await ada.send("While you were away");
     await ada.send("And another");
