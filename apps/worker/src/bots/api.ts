@@ -17,9 +17,9 @@ import { BLANK, EMPTY, FORBIDDEN, NOT_FOUND, type BotPage } from "../chat-room";
 import { originFor } from "../custom-domain";
 import type { Env } from "../env";
 import { etagOf, isFresh } from "../etag";
-import { objectKey } from "../files/blobs";
+import { objectKey, previewKey } from "../files/blobs";
 import { FormError, formBoundaryOf, FormReader, isFormType } from "../files/form-parts";
-import { storeArriving } from "../files/streamed";
+import { storeArriving, withPreview } from "../files/streamed";
 import { NO_STORAGE } from "../files/uploads";
 import { urlOf } from "../request-url";
 import type { PageCursor } from "../store";
@@ -386,12 +386,13 @@ async function postFile(
   if (typeof started === "string") return started;
   const stored = await storeArriving(files, objectKey(started.key), file);
   if (!stored) return exception(413);
+  const kept = { key: started.key, file: await withPreview(env, files, started.key, filename, stored) };
   // Again now the file has arrived, as `createMessage` checks text.
   const arrived = await botIn(env, roomId, key);
-  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, { key: started.key, file: stored }, messageId, threadId);
+  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, kept, messageId, threadId);
   // A file that isn't posted goes from R2 at once, since a room deleted meanwhile had R2 delete its files
   // before this one was there. The room's alarm forgets the upload, as it does a browser's never finished.
-  if (finished instanceof Response || typeof finished === "string") await files.delete(objectKey(started.key));
+  if (finished instanceof Response || typeof finished === "string") await files.delete([objectKey(started.key), previewKey(started.key)]);
   return finished;
 }
 
