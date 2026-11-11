@@ -574,17 +574,6 @@ describe("Suggested people", () => {
     expect([...suggestionRows()[0]!.querySelectorAll("img")].map((img) => img.getAttribute("class"))).toEqual([expect.stringContaining("size-6")]);
   });
 
-  it("badges @ember as an agent where it's suggested", () => {
-    renderSidebar({ suggestions: [{ id: "ember", name: "Ember" }, linus!] });
-    expect(suggestionRows().map((row) => row.textContent)).toEqual(["Start a direct message with Ember Agent", "Start a direct message with Linus"]);
-  });
-
-  it("badges any agent where it's suggested, as the people directory lists it", () => {
-    const recap = agent("u8", "Recap");
-    renderSidebar({ suggestions: [{ id: recap.id, name: recap.name }, linus!] }, EMBER, [recap]);
-    expect(suggestionRows().map((row) => row.textContent)).toEqual(["Start a direct message with Recap Agent", "Start a direct message with Linus"]);
-  });
-
   it("leaves out the people in your DMs, suggesting one fewer for each, as soon as a DM lists them", () => {
     const many: User[] = Array.from({ length: 20 }, (_, i) => ({ id: `p${i}`, name: `Person ${i}` }));
     const { rerender } = renderSidebar({ suggestions: many });

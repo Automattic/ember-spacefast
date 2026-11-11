@@ -1390,12 +1390,13 @@ const DIRECT_WITH_KEY = `SELECT rooms.id AS room_id, ${ACTIVE_AT}, users.id, use
 
 /**
  * The people the sidebar suggests ?1 start a DM with, before it leaves out as many as their DMs take:
- * the active people with the oldest accounts who share no DM with them, never them. The people in their
- * DMs come from a subquery, and the index on users' age lets it stop at the last one it needs rather
- * than sorting everyone.
+ * the active people with the oldest accounts who share no DM with them, never them. Unlike Campfire's,
+ * it suggests no bots, nor @ember and the agents, whose rows among the DMs would look like DMs nobody
+ * started. The people in their DMs come from a subquery, and the index on users' age lets it stop at
+ * the last one it needs rather than sorting everyone.
  */
 export const SUGGESTED_FOR_USER = `SELECT id, name FROM users
-  WHERE status = ${ACTIVE} AND id <> ?1 AND id NOT IN (
+  WHERE status = ${ACTIVE} AND role <> ${BOT} AND id <> ?1 AND id NOT IN (
     SELECT members.user_id FROM memberships AS mine JOIN rooms ON rooms.id = mine.room_id
       JOIN memberships AS members ON members.room_id = mine.room_id
     WHERE mine.user_id = ?1 AND rooms.kind = 'direct')

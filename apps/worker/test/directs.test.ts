@@ -297,10 +297,10 @@ describe("Suggested people", () => {
     expect(await suggestedTo(grace)).toEqual(names(1, 17));
   });
 
-  it("suggests bots too", async () => {
+  it("suggests no bots, though Campfire does, for their rows among your DMs would look like DMs nobody started", async () => {
     await twentyFive();
     await person("Robot", "2025-01-01T00:00:00.000Z", 2);
-    expect((await suggestedTo(await signIn("Ada")))[0]).toBe("Robot");
+    expect(await suggestedTo(await signIn("Ada"))).toEqual(names(1, 19));
   });
 
   it("walks people from the oldest account through an index, without sorting everyone", async () => {
