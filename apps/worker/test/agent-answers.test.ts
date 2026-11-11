@@ -16,6 +16,8 @@ const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api
 const CLOUDFLARE_API = `https://api.cloudflare.com/client/v4/accounts/${SETUP.accountId}/ai/v1`;
 /** Workers AI's models, which take Chat Completions, whose turns AI Gateway is sent as they are, and Anthropic's, which take Messages and can search the web. */
 const [GLM, GEMMA, GPT_OSS, HAIKU, SONNET] = ["@cf/zai-org/glm-4.7-flash", "@cf/google/gemma-4-26b-a4b-it", "@cf/openai/gpt-oss-120b", "anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5"];
+/** xAI's model that takes Chat Completions but no thinking level. */
+const GROK = "xai/grok-4.20-0309-reasoning";
 
 /** An agent as New agent sends it: Scout, on Gemma, in every open room, thinking not at all and answering briefly. */
 const SCOUT: NewAgent = {
@@ -70,6 +72,15 @@ function answerTo({ url, body }: Pick<Asked, "url" | "body">, text: string): Res
 
 /** Cloudflare's answer to a request it refuses with `status`, in its own shape. */
 const refusal = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
+
+/**
+ * A Grok model's answer saying `text`, as AI Gateway answers once xAI has refused a thinking level, with
+ * its code for a request the provider refuses, which Cloudflare's API answers an account it can't route to with too.
+ */
+const unthinkingGrok = (text: string) => ({ body }: Asked) =>
+  body.reasoning_effort === undefined
+    ? chatAnswer(text)
+    : refusal(400, 7003, `Model execution failed (User Input Error): {"code":"invalid-argument","error":"Model grok-4.20-0309-reasoning does not support parameter reasoningEffort."}`);
 
 /** Stands in for AI Gateway, whose model answers each question with what `answer` makes of it, keeping the questions in the order they came. */
 function internet(answer: (asked: Asked) => Response | Promise<Response>): Asked[] {
@@ -389,6 +400,23 @@ describe("An AI agent", () => {
     expect(errors).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^Agent ${scout.id}'s model ${GEMMA.replaceAll(".", "\\.")} didn't answer message ${question.id}: .*Insufficient credits`)));
     client.close();
   });
+
+  it("asks its model again without a thinking level when the model's provider refuses one, rather than saying Ember AI's account is gone", async () => {
+    const { ada, general } = await setUp();
+    const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(unthinkingGrok("The Packers won."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(grok)} who won the latest Packers game?</p>`);
+    expect(await nextFrom(client, grok)).toMatchObject({ plainText: "The Packers won." });
+    expect(questions.map(({ url, body }) => [url, body.reasoning_effort])).toEqual([
+      [`${CLOUDFLARE_API}/chat/completions`, "low"],
+      [`${CLOUDFLARE_API}/chat/completions`, undefined],
+    ]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${GROK} again without a thinking level`));
+    client.close();
+  });
 });
 
 describe("@ember", () => {
@@ -487,6 +515,18 @@ describe("Try it", () => {
     expect(((await response.json()) as AgentTrialAnswer).body).toBe("<p>In Messages.</p>");
     // Chat Completions first, as for any model whose ID doesn't say it's Anthropic's or OpenAI's, asked again without thinking.
     expect(questions.map(({ url }) => url.slice(CLOUDFLARE_API.length))).toEqual(["/chat/completions", "/chat/completions", "/messages"]);
+  });
+
+  it("asks a saved agent's model again without a thinking level when the model's provider refuses one, as it would in a room", async () => {
+    const { ada } = await setUp();
+    const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(unthinkingGrok("The Packers won."));
+
+    const response = await tryIt(ada, grok.id, { ...TRIAL, name: "Grok", model: GROK, thinking: "low", question: "who won the latest packers game" });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(((await response.json()) as AgentTrialAnswer).body).toBe("<p>The Packers won.</p>");
+    expect(questions.map(({ body }) => body.reasoning_effort)).toEqual(["low", undefined]);
   });
 
   it("refuses Search the web for a model that can't search, as saving would, and says on the model's field why it didn't answer", async () => {
