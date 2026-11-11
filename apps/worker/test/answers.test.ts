@@ -570,9 +570,9 @@ const ADA: User = { id: "ada", name: "Ada Lovelace" };
 const IN_GENERAL = { community: "Fernwood", roomName: "general", inThread: false };
 const NOW = new Date("2026-10-31T12:00:00Z");
 /** @ember as it answers, without instructions administrators added. */
-const ASSISTANT: Answerer = { ...EMBER, instructions: "" };
+const ASSISTANT: Answerer = { ...EMBER, instructions: "", promptTemplate: null };
 /** An agent as it answers. */
-const SCOUT: Answerer = { id: "scout", name: "Scout", instructions: "Find what's current on the web, and say where it's from." };
+const SCOUT: Answerer = { id: "scout", name: "Scout", instructions: "Find what's current on the web, and say where it's from.", promptTemplate: null };
 
 describe("What people wrote in what @ember read", () => {
   it("is the plain text of each message it read that one of them wrote, not its own answers, bots', or what's deleted", () => {

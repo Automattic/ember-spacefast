@@ -221,6 +221,7 @@ function serve(settings: WorkspaceSettings, { saved, regenerated, roleChanged, r
           most: assistant?.most ?? TOP_LEVELS,
           webTools: null,
           instructions: assistant?.instructions ?? "",
+          promptTemplate: assistant?.promptTemplate ?? null,
           avatarUrl: assistant?.avatarUrl ?? EMBER_FLAME,
           avatar: assistant?.avatar ?? false,
         };
@@ -1877,6 +1878,7 @@ describe("Ember AI", () => {
     most: TOP_LEVELS,
     webTools: null,
     instructions: "",
+    promptTemplate: null,
     avatarUrl: EMBER_FLAME,
     avatar: false,
   };

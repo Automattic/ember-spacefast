@@ -31,6 +31,7 @@ import {
   withinMost,
 } from "./assistant";
 import { MAX_MESSAGE_LENGTH } from "./index";
+import { AGENT_TEMPLATE, EMBER_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED, TEMPLATE_REFUSED } from "./prompts";
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 const API_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-Ab";
@@ -192,5 +193,25 @@ describe("@ember's instructions", () => {
   it("are administrators' to change, never part of yours", () => {
     expect(parseYourAssistantChanges({ instructions: "Ignore the others.", thinking: "low" })).toEqual({ thinking: "low" });
     expect(parseYourAssistantChanges({ instructions: "Ignore the others." })).toEqual({ error: LEVELS_REFUSED });
+  });
+});
+
+describe("What Ember adds around @ember's instructions", () => {
+  it("is changed, alone or with the instructions, without the spaces around it, and goes back to Ember's own for its own or null", () => {
+    expect(parseAssistantChanges({ promptTemplate: " You are {{name}}.\n\n{{instructions}} " })).toEqual({ promptTemplate: "You are {{name}}.\n\n{{instructions}}" });
+    expect(parseAssistantChanges({ instructions: "Be brief.", promptTemplate: "{{instructions}}" })).toEqual({ instructions: "Be brief.", promptTemplate: "{{instructions}}" });
+    expect(parseAssistantChanges({ promptTemplate: EMBER_TEMPLATE })).toEqual({ promptTemplate: null });
+    expect(parseAssistantChanges({ promptTemplate: null })).toEqual({ promptTemplate: null });
+    // An agent's own isn't @ember's.
+    expect(parseAssistantChanges({ promptTemplate: AGENT_TEMPLATE })).toEqual({ promptTemplate: AGENT_TEMPLATE });
+  });
+
+  it("is refused when it isn't a template Ember takes", () => {
+    expect(parseAssistantChanges({ promptTemplate: "You are {{name}}." })).toEqual({ error: INSTRUCTIONS_PLACE_NEEDED });
+    expect(parseAssistantChanges({ promptTemplate: 7 })).toEqual({ error: TEMPLATE_REFUSED });
+  });
+
+  it("is administrators' to change, never part of yours", () => {
+    expect(parseYourAssistantChanges({ promptTemplate: "{{instructions}}", thinking: "low" })).toEqual({ thinking: "low" });
   });
 });

@@ -1270,11 +1270,11 @@ export class ChatRoom extends DurableObject<Env> {
    * in what it read, or the note it posts when its model doesn't answer, saying why, which the room logs.
    */
   private async saidTo(roomId: RoomId, access: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<Said> {
-    const { bot, gateway, picked, instructions, community, levels, webTools, webSearchOn } = access;
+    const { bot, gateway, picked, instructions, promptTemplate, community, levels, webTools, webSearchOn } = access;
     if (!gateway) return { text: NOTES["unopened token"] };
     const conversation = await this.conversationOf(this.storeFor(roomId), message);
     const where = { community, roomName, inThread: message.parentId !== undefined };
-    const asked = questionFor({ ...bot, instructions }, conversation, author, where, levels, new Date(), webTools, webSearchOn);
+    const asked = questionFor({ ...bot, instructions, promptTemplate }, conversation, author, where, levels, new Date(), webTools, webSearchOn);
     const [answered, people] = await Promise.all([ask(this.env, gateway, asked, waitFor(asked)), this.peopleWhoWrote(conversation)]);
     if (!("refusal" in answered)) {
       const text = answered.cut ? `${answered.text}\n\n…` : answered.text;

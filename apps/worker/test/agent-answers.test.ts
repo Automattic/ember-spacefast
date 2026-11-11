@@ -1,6 +1,7 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type User, type UserId } from "@ember/protocol";
 import { agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_REFUSED, QUESTION_NEEDED, type AgentAnswer, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
 import { ASSISTANT_OFF, maxTokensAt } from "@ember/protocol/assistant";
+import { unknownPlaceholder } from "@ember/protocol/prompts";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENT_NOTES, NOTES } from "../src/assistant/answers";
@@ -228,6 +229,23 @@ describe("An AI agent", () => {
     client.close();
   });
 
+  it("is told what an administrator changed what Ember adds around its instructions to, each placeholder filled in", async () => {
+    const { ada, general } = await setUp();
+    const template = "You are {{name}} of {{community}}, asked in {{where}} by {{asker}}.\n\n{{instructions}}\n\nWrite at most {{words}} words. {{web}} Today is {{today}}.";
+    const scout = await makeAgent(ada, { ...SCOUT, promptTemplate: template });
+    expect(scout.promptTemplate).toBe(template);
+    const questions = internet(() => chatAnswer("Sunny."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(scout)} what's the forecast?</p>`);
+    expect(await nextFrom(client, scout)).toMatchObject({ plainText: "Sunny." });
+    const told = questions[0]!.body.messages[0]!.content;
+    expect(told).toMatch(new RegExp(`^You are Scout of .+, asked in the room "general" by Ada Lovelace\\.\n\n${SCOUT.instructions.replace(/[.,]/g, "\\$&")}\n\nWrite at most 150 words\\. You can't search the web or open links\\.`));
+    expect(told).toMatch(/ Today is \w+, \w+ \d+, \d{4}\.$/);
+    expect(told).not.toContain("{{");
+    client.close();
+  });
+
   it("answers a reply in a thread in the thread, only there, reading its own answers there as its own", async () => {
     const { ada, general } = await setUp();
     const scout = await makeAgent(ada, SCOUT);
@@ -407,6 +425,20 @@ describe("@ember", () => {
     expect(JSON.parse(metadata!)).toEqual({ user_id: ada.user.id, agent_id: ASSISTANT_ID });
     client.close();
   });
+
+  it("answers within what administrators changed what Ember adds around its instructions to", async () => {
+    const { ada, general } = await setUp();
+    const promptTemplate = "{{instructions}}\n\nYou are {{name}}. Answer {{asker}}, in {{where}}.";
+    const changed = await api("/api/account/assistant", { method: "PATCH", headers: { Cookie: ada.cookie }, body: JSON.stringify({ instructions: "Be brief.", promptTemplate }) });
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    const questions = internet(() => chatAnswer("Fine."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(EMBER)} how's the launch?</p>`);
+    expect(await nextFrom(client, EMBER)).toMatchObject({ plainText: "Fine." });
+    expect(questions[0]!.body.messages[0]!.content).toBe(`Be brief.\n\nYou are Ember. Answer Ada Lovelace, in the room "general".`);
+    client.close();
+  });
 });
 
 describe("Try it", () => {
@@ -433,6 +465,21 @@ describe("Try it", () => {
     expect(body.messages.slice(1)).toEqual([{ role: "user", content: "Ada Lovelace: Is it sunny? https://example.com/sky.png" }]);
     // Nothing's saved, and nobody else hears of it.
     expect(await workspaceSql("SELECT count(*) AS n FROM agents")).toEqual([{ n: 0 }]);
+  });
+
+  it("asks the agent with what Ember adds around its instructions as the page has it, saved or not", async () => {
+    const { ada } = await setUp();
+    const scout = await makeAgent(ada, { ...SCOUT, promptTemplate: "Saved. {{instructions}}" });
+    const questions = internet(() => chatAnswer("Sunny."));
+
+    expect((await tryIt(ada, scout.id, { ...TRIAL, promptTemplate: "You are {{name}}, in {{where}}. {{instructions}}" })).status).toBe(200);
+    expect(questions[0]!.body.messages[0]!.content).toBe(`You are Scout, in a direct message. ${SCOUT.instructions}`);
+    // Ember's own, for none.
+    expect((await tryIt(ada, scout.id, TRIAL)).status).toBe(200);
+    expect(questions[1]!.body.messages[0]!.content).toMatch(/^You are Scout, an AI agent in the team chat/);
+    const refused = await tryIt(ada, scout.id, { ...TRIAL, promptTemplate: "{{instructions}} in {{room}}" });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: unknownPlaceholder("room"), field: "promptTemplate" }]);
+    expect(questions).toHaveLength(2);
   });
 
   it("asks a saved agent in the format, and with the web tools, its tests found, while its model is the same, labeled as its", async () => {

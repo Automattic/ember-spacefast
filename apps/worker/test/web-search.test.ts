@@ -745,7 +745,7 @@ const QUESTION: Message = {
 describe("What @ember is told of the web", () => {
   it("says what it may do there, and that it writes its answer after it last searches, as the chat lists its sources", () => {
     const told = (webTools: Array<"search" | "read">, webSearchOn?: boolean) =>
-      questionFor({ ...EMBER, instructions: "" }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools, webSearchOn).instructions;
+      questionFor({ ...EMBER, instructions: "", promptTemplate: null }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), webTools, webSearchOn).instructions;
     expect(told(["search", "read"])).toContain("You can search the web, and read the pages people link to or your searches find, when a question needs what's current");
     expect(told(["search"])).toContain("You can search the web when a question needs what's current");
     expect(told(["search"])).toContain("Only what you write after you last search or read is posted");
@@ -754,7 +754,7 @@ describe("What @ember is told of the web", () => {
   });
 
   it("says, while Search the web is on, that the model the asker picked can't search, and that they can pick one that can", () => {
-    const told = questionFor({ ...EMBER, instructions: "" }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), [], true).instructions;
+    const told = questionFor({ ...EMBER, instructions: "", promptTemplate: null }, [QUESTION], ADA, IN_GENERAL, { thinking: "low", length: "medium" }, new Date(), [], true).instructions;
     expect(told).toContain("You can't search the web or open links with the model Ada Lovelace picked for your answers to them.");
     expect(told).toContain("When they ask you to, say so, and that they can pick one that can, Anthropic's or OpenAI's, under Ember AI on their profile.");
     expect(told).not.toContain("an administrator");

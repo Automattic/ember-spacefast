@@ -572,8 +572,9 @@ browser goes on showing the old picture it keeps for half an hour.
 
 @ember follows Ember's own instructions, and Instructions, on its page, adds an administrator's to
 them, up to 10,000 characters, such as how the team likes answers written or what to leave to people.
-What Ember adds around them shows the whole prompt @ember is given, from the Worker's own code. They're
-kept while Ember AI is off.
+What Ember adds around them shows the whole prompt @ember is given, from the Worker's own code, and
+administrators can [modify it with caution](#what-ember-adds-around-the-instructions). They're kept
+while Ember AI is off.
 
 The Models list on @ember's page has the models people can pick, at most 20, starting with the one
 Set up Ember AI chose. Its radio buttons choose which answers everyone who hasn't picked another, Add
@@ -658,9 +659,10 @@ agent's page, which changes it. The page sets up:
   show, so people know when to ask it.
 - **Instructions**, its system prompt, up to 10,000 characters: its task, how to go about it, and what to
   leave alone. What Ember adds around them shows the prompt the Worker writes around them, from the
-  same code. They aren't secret, as anyone who can ask the agent could get it to repeat them, so leave
-  out keys, passwords and private links. Nor are they a boundary: someone in the conversation can talk
-  an agent out of them, so what an agent reads and does is up to Ember's code, as it is for @ember.
+  same code, which administrators can [modify with caution](#what-ember-adds-around-the-instructions).
+  They aren't secret, as anyone who can ask the agent could get it to repeat them, so leave out keys,
+  passwords and private links. Nor are they a boundary: someone in the conversation can talk an agent
+  out of them, so what an agent reads and does is up to Ember's code, as it is for @ember.
 - **How it answers**: its model, from the catalog's text models, or Another model by its ID, and its
   own Thinking and Answer length, the dials @ember has, which people can't change on their profile as
   they can for @ember. For a model outside Workers AI, the page says the most an answer at those
@@ -689,6 +691,35 @@ messages, deleted agents' too, on a DM with it alone in the sidebar and the room
 mention prompt and New direct message, and on its profile. The profile shows everyone what the agent
 does, the model it answers with, where that runs (Cloudflare's Workers AI, or the company that makes
 the model, which AI Gateway sends what it's asked to), and who set it up, but not its instructions.
+
+#### What Ember adds around the instructions
+
+Ember writes the rest of @ember's and each agent's system prompt around their instructions: who they
+are, where they're asked, how the chat shows Markdown and pictures, what they may do on the web, and
+the date. Under What Ember adds around them, on @ember's page and each agent's, a box headed Modify
+with caution keeps it as Ember writes it until Modify is pressed, as a change there can leave a model
+unsure who it is, where it's asked or what the chat can show. Modify opens the template Ember fills in
+each time it's asked, up to 10,000 characters, with what each placeholder stands for:
+
+| Placeholder | What Ember fills in |
+| --- | --- |
+| `{{name}}` | Its name |
+| `{{community}}` | The community's name |
+| `{{where}}` | The room, thread or direct message it's asked in |
+| `{{asker}}` | The name of whoever asked |
+| `{{words}}` | About how many words it may answer in, from Answer length |
+| `{{web}}` | What it may do on the web, or who could let it |
+| `{{today}}` | Today's date, in UTC |
+| `{{instructions}}` | The instructions, which it needs once |
+
+The preview above it follows what's typed, and the box says why Ember can't take a template, before
+anything's saved: one without `{{instructions}}`, or with it twice, or with a placeholder Ember doesn't
+fill in, such as a misspelt one. A template that leaves out a placeholder, such as `{{web}}` or
+`{{today}}`, is taken, though the model then isn't told what it would have said. An agent's template
+saves with Save changes, and @ember's with Save beside it, or Save instructions. Try it asks an agent
+with the template as the page has it, saved or not. Use Ember's own puts Ember's back, which Ember
+keeps as its own, so that it changes as Ember's does in later releases, where a modified template stays
+as it was saved. While it's modified, What Ember adds around them is marked Modified.
 
 ### Huddles
 
