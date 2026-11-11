@@ -1,4 +1,4 @@
-import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type User, type UserId } from "@ember/protocol";
+import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type Sidebar, type User, type UserId } from "@ember/protocol";
 import { agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_REFUSED, QUESTION_NEEDED, type AgentAnswer, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
 import { ASSISTANT_OFF, maxTokensAt } from "@ember/protocol/assistant";
 import { MENTION_CONTENT_TYPE, mentionSgid } from "@ember/richtext";
@@ -307,6 +307,21 @@ describe("An AI agent", () => {
     expect(told(GLM)).toContain("You are Ember, the AI assistant");
     expect(told(GPT_OSS)).toContain(`You are Recap, an AI agent`);
     expect(told(GPT_OSS)).toContain(RECAP.instructions);
+    client.close();
+  });
+
+  it("answers a mention in a room with no DM, which the asker's sidebar neither lists nor suggests, nor one with @ember", async () => {
+    const { ada, general } = await setUp();
+    const scout = await makeAgent(ada, SCOUT);
+    internet(() => chatAnswer("Sunny."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(scout)} ${mention(EMBER)} what's the forecast?</p>`);
+    await nextFromEach(client, [scout, EMBER]);
+    await allApplied(general);
+    const sidebar = (await (await api("/api/sidebar", { headers: { Cookie: ada.cookie } })).json()) as Sidebar;
+    expect(sidebar.rooms.filter(({ kind }) => kind === "direct")).toEqual([]);
+    expect(sidebar.suggestions).toEqual([]);
     client.close();
   });
 

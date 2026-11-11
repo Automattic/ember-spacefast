@@ -297,7 +297,7 @@ export interface Sidebar {
   invitation: Invitation | null;
   /**
    * People to start a DM with: the active people with the oldest accounts who share no DM with this
-   * person, never them, as many as `suggestedCount` says.
+   * person, never them nor a bot or AI agent, as many as `suggestedCount` says.
    */
   suggestions: User[];
   /** The huddle going on in each of `rooms` that has one, by the room's id. `room.huddle` frames keep it current. */
