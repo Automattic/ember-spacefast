@@ -540,6 +540,17 @@ another. `wrangler dev` keeps files on your machine. Without the binding Ember k
 A file goes up in parts of 10 MiB, since a Worker takes at most 100 MB a request, and R2 puts them
 back together. R2 deletes the parts of an upload nobody finishes after a week.
 
+A picture's message shows its preview, a WebP, JPEG or PNG within 1200×800 that the uploader's browser
+makes and sends before the last part, or the picture itself if every browser shows it and it's at most
+5 MiB. Where neither would show it, as for a bot's picture, a HEIC from a browser that can't read one,
+or a picture a browser couldn't make a preview of in 5 seconds, the Worker has
+[Cloudflare Images](https://developers.cloudflare.com/images/optimization/binding/), bound as `IMAGES`,
+make the preview. There's nothing to set up, and its free plan makes 5,000 a month. Past those, the
+Worker's log says why it made none, and the message shows the picture as a file to download, as it
+does a picture over 20 MB, 100 megapixels or 12,000 pixels a side. An account still on Cloudflare's
+legacy Image Resizing subscription has to move to the Images one first. `wrangler dev` makes previews
+on your machine.
+
 ### Ember AI
 
 An administrator adds @ember, an AI assistant, on the AI assistant tab of community settings. Turning
@@ -919,7 +930,9 @@ pages had them in October 2026:
   are monthly and far larger, such as 50 million rows written a month, and use past them is billed at
   Cloudflare's rates.
 - **Files** go to R2, which stores 10 GB a month free, then charges $0.015 per GB a month, and never
-  charges for downloads.
+  charges for downloads. Cloudflare Images makes the previews of 5,000 pictures a month free, where
+  uploaders' browsers sent none, and on its Paid plan charges $0.50 per 1,000 after that, as
+  [Files](#files) says.
 - **Email**, if Ember sends it: Resend's free plan sends 3,000 emails a month, at most 100 a day, and
   Cloudflare Email Service includes 3,000 a month on Workers Paid, as [Sending email](#sending-email)
   says.

@@ -47,7 +47,7 @@ import { openDb, type Db } from "./db";
 import type { Env } from "./env";
 import { attachedFile, Blobs, objectKey, previewKey, type Identified, type RoomBlob, type UploadedPart } from "./files/blobs";
 import type { ImageSize } from "./files/images";
-import { storeArriving, type ArrivingFile, type StreamedFile } from "./files/streamed";
+import { storeArriving, withPreview, type ArrivingFile, type StreamedFile } from "./files/streamed";
 import { NO_STORAGE, type Uploader } from "./files/uploads";
 import { Huddle, HUDDLE_CHECK_MS, HUDDLE_TAG } from "./huddles/room";
 import { base36, sortableId } from "./ids";
@@ -931,7 +931,7 @@ export class ChatRoom extends DurableObject<Env> {
   /** `blob`, which R2 has all of now, as it came to in `file`, as the message it's posted as keeps it, at `now`. */
   private streamed(roomId: RoomId, blob: RoomBlob, file: StreamedFile, now: string): PostedFile {
     const blobs = this.blobsFor(roomId);
-    return { file: attachedFile({ ...blob, byteSize: file.byteSize }, file.identified), finished: (messageId) => blobs.streamed(blob.id, messageId, now, file) };
+    return { file: attachedFile({ ...blob, byteSize: file.byteSize, preview: file.preview ?? null }, file.identified), finished: (messageId) => blobs.streamed(blob.id, messageId, now, file) };
   }
 
   /**
@@ -1213,7 +1213,7 @@ export class ChatRoom extends DurableObject<Env> {
     });
     await this.wakeAt(roomId, startedAt + UNFINISHED_UPLOAD_KEPT_MS);
     const stored = await storeArriving(files, objectKey(key), file);
-    return stored && { key, file: stored };
+    return stored && { key, file: await withPreview(this.env, files, key, file.filename, stored) };
   }
 
   /**
@@ -1234,7 +1234,7 @@ export class ChatRoom extends DurableObject<Env> {
       await this.postFile(store, access.bot, blob, this.streamed(roomId, blob, file, now), now, { kind: "reply", inThread });
       return null;
     });
-    if (refused) await this.env.FILES?.delete(objectKey(key));
+    if (refused) await this.env.FILES?.delete([objectKey(key), previewKey(key)]);
     return refused;
   }
 

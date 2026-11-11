@@ -20,6 +20,13 @@ export interface Env {
    * answers 503 and a file's address 404.
    */
   FILES?: R2Bucket;
+  /**
+   * Cloudflare Images, which makes the preview of a picture that came without one, as from a bot or a
+   * browser that couldn't read it, where its message would otherwise show it as a file: one over 5 MiB,
+   * or that not every browser shows (files/previews.ts). It makes 5,000 a month free. Unbound, or past
+   * what the account's plan makes, such a picture shows as a file.
+   */
+  IMAGES?: ImagesBinding;
   STORAGE_BACKEND: StorageBackend;
   /**
    * Comma-separated addresses of rooms from before the Workspace kept a list, which it registers as
