@@ -140,6 +140,8 @@ export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
   assistantMost: AnswerLevels;
   /** What Ember adds to @ember's own instructions, as administrators write them, or "" for nothing, whether Ember AI is on or not. */
   assistantInstructions: string;
+  /** What Ember adds around them, as administrators changed it, or null for Ember's own, whether Ember AI is on or not. */
+  assistantPromptTemplate: string | null;
   /** The SFU app huddles run through, while an administrator has them on, or else null. */
   huddles: SavedHuddles | null;
   /** Where a deploy puts Ember, as the latest page opened there told it, or null until one has (`EmberAddresses.deployed`). */
@@ -384,13 +386,15 @@ export interface NewStoredBot {
 }
 
 /**
- * What makes a bot an agent, as the agents table keeps it: what it does, its instructions, the model it
- * answers with, what that's called and the format it took its test question in, how much it thinks and
- * how long it answers, and what it may do on the web.
+ * What makes a bot an agent, as the agents table keeps it: what it does, its instructions and what Ember
+ * adds around them, the model it answers with, what that's called and the format it took its test
+ * question in, how much it thinks and how long it answers, and what it may do on the web.
  */
 export interface AgentSetup {
   description: string;
   instructions: string;
+  /** What Ember adds around the instructions, as an administrator changed it, or null for Ember's own. */
+  promptTemplate: string | null;
   model: string;
   modelName: string;
   format: ModelFormat;
@@ -398,8 +402,11 @@ export interface AgentSetup {
   webTools: WebTool[];
 }
 
-/** An agent as a question for it finds it: its name, its instructions, its model and that model's format, its levels and what it may do on the web. */
-export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "model" | "format" | "levels" | "webTools"> {
+/**
+ * An agent as a question for it finds it: its name, its instructions and what Ember adds around them, its
+ * model and that model's format, its levels and what it may do on the web.
+ */
+export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "promptTemplate" | "model" | "format" | "levels" | "webTools"> {
   name: string;
 }
 
@@ -933,6 +940,7 @@ interface AgentRow extends DirectoryRow {
 /** An agent as its page shows it, as `AGENT` reads it. */
 interface AgentSettingsRow extends AgentRow, AvatarColumns {
   instructions: string;
+  prompt_template: string | null;
   format: string;
   thinking: string;
   answer_length: string;
@@ -951,12 +959,16 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
   rooms: row.every_open_room === 1 ? null : rooms,
 });
 
-/** How an agent answers, as the agents table keeps it: its instructions, its model's format, its levels and what it may do on the web. */
-type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "format" | "thinking" | "answer_length" | "web_tools">;
+/**
+ * How an agent answers, as the agents table keeps it: its instructions and what Ember adds around them,
+ * its model's format, its levels and what it may do on the web.
+ */
+type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "prompt_template" | "format" | "thinking" | "answer_length" | "web_tools">;
 
 /** How an agent answers, as `row` keeps it. What can't be a format or a level, as nothing Ember writes is, reads as where @ember's start. */
-const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "format" | "levels" | "webTools"> => ({
+const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "promptTemplate" | "format" | "levels" | "webTools"> => ({
   instructions: row.instructions,
+  promptTemplate: row.prompt_template,
   format: isModelFormat(row.format) ? row.format : "chat",
   levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
   webTools: webToolsIn(row.web_tools),
@@ -978,8 +990,8 @@ function webToolsIn(kept: string | null): WebTool[] {
 }
 
 /** An agent's setup's columns, as `INSERT_AGENT` and `CHANGE_AGENT` take them, in order. */
-const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools }: AgentSetup) =>
-  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null] as const;
+const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools, promptTemplate }: AgentSetup) =>
+  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null, promptTemplate] as const;
 
 /** Whether a value is `present?`: not null, false, blank, or empty. */
 function isPresent(value: unknown): boolean {
@@ -1117,6 +1129,12 @@ function assistantMostIn(settings: Record<string, unknown> | null): AnswerLevels
 function assistantInstructionsIn(settings: Record<string, unknown> | null): string {
   const kept = settings?.assistant_instructions;
   return typeof kept === "string" ? kept : "";
+}
+
+/** What Ember adds around them, which the account's settings keep as `assistant_prompt_template`, or null for Ember's own. */
+function assistantPromptTemplateIn(settings: Record<string, unknown> | null): string | null {
+  const kept = settings?.assistant_prompt_template;
+  return typeof kept === "string" ? kept : null;
 }
 
 /** `kept` as one of a dial's `levels`, or null when it isn't one. */
@@ -1702,6 +1720,7 @@ const REMEMBER_DEPLOYED_ADDRESS = rememberSetting("deployed_address");
 const REMEMBER_ASSISTANT = rememberSetting("assistant");
 const REMEMBER_ASSISTANT_LIMITS = rememberSetting("assistant_limits");
 const REMEMBER_ASSISTANT_INSTRUCTIONS = rememberSetting("assistant_instructions");
+const REMEMBER_ASSISTANT_PROMPT_TEMPLATE = rememberSetting("assistant_prompt_template");
 const REMEMBER_OTHER_ADDRESSES = rememberSetting("other_addresses");
 
 /** Navigation icon changes as the merge patch `CHANGE_NAVIGATION_ICONS` takes them: null for a slot's default. */
@@ -1920,7 +1939,7 @@ const KEPT_AGENTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
 
 /** An active agent as its page shows it, with its avatar and who last changed it. */
 const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_variant,
-    agents.instructions, agents.format, agents.thinking, agents.answer_length,
+    agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length,
     agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
   FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
   WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;
@@ -1930,7 +1949,7 @@ const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_va
  * posted: its name, its model, and how it answers. Nothing unless it's an active agent in the room, so
  * that turning Ember AI off, deleting the agent or taking it out of the room stops what's on its way.
  */
-const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.format, agents.thinking, agents.answer_length, agents.web_tools
+const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length, agents.web_tools
   FROM agents JOIN users ON users.id = agents.user_id
   WHERE agents.user_id = ?2 AND users.status = ${ACTIVE} AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = ?2)`;
 
@@ -1945,14 +1964,14 @@ const AGENTS_LISTED = `SELECT ${DIRECTORY_COLUMNS} FROM agents JOIN users ON use
 const AGENT_PROFILE = `SELECT agents.description, agents.model, agents.model_name, agents.created_by, makers.name AS created_by_name
   FROM agents JOIN users AS makers ON makers.id = agents.created_by WHERE agents.user_id = ?`;
 
-/** What makes a bot an agent, ?10 being 1 to put it in every open room, made by ?11. */
+/** What makes a bot an agent, ?11 being 1 to put it in every open room, made by ?12. */
 const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
-    every_open_room, created_by, updated_by, created_at, updated_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?12)`;
+    prompt_template, every_open_room, created_by, updated_by, created_at, updated_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13)`;
 
 /** Changes an agent's setup, and records who changed it, and when. */
 const CHANGE_AGENT = `UPDATE agents SET description = ?2, instructions = ?3, model = ?4, model_name = ?5, format = ?6, thinking = ?7, answer_length = ?8,
-  web_tools = ?9, updated_by = ?10, updated_at = ?11 WHERE user_id = ?1`;
+  web_tools = ?9, prompt_template = ?10, updated_by = ?11, updated_at = ?12 WHERE user_id = ?1`;
 
 /** Puts ?1 in the open rooms the JSON list ?2 names, of those there are, keeping the memberships it has. */
 const GRANT_PICKED_ROOMS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)
@@ -2312,6 +2331,7 @@ export class WorkspaceStore {
       assistant: assistantIn(settings),
       assistantMost: assistantMostIn(settings),
       assistantInstructions: assistantInstructionsIn(settings),
+      assistantPromptTemplate: assistantPromptTemplateIn(settings),
       huddles: huddlesIn(settings),
       deployedAddress: deployedAddressIn(settings),
       otherAddresses: otherAddressesIn(settings),
@@ -3700,14 +3720,16 @@ export class WorkspaceStore {
 
   /**
    * Changes Ember AI while it's on to `assistant`, the most each of @ember's dials goes to for anyone's
-   * questions to `most`, and what Ember adds to @ember's instructions to `instructions`, in one batch,
-   * without recording when, as no page's address goes by any of them.
+   * questions to `most`, what Ember adds to @ember's instructions to `instructions`, and what it adds
+   * around them to `promptTemplate`, null for its own, in one batch, without recording when, as no page's
+   * address goes by any of them.
    */
-  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels, instructions: string): Promise<void> {
+  async changeAssistant(assistant: SavedAssistant, most: AnswerLevels, instructions: string, promptTemplate: string | null): Promise<void> {
     await this.db.batch([
       statement(REMEMBER_ASSISTANT, assistantSetting(assistant)),
       statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most)),
       statement(REMEMBER_ASSISTANT_INSTRUCTIONS, JSON.stringify(instructions)),
+      statement(REMEMBER_ASSISTANT_PROMPT_TEMPLATE, JSON.stringify(promptTemplate)),
     ]);
   }
 

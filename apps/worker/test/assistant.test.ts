@@ -133,7 +133,7 @@ describe("Ember AI", () => {
       const response = await setUpAssistant(administrator, { ...SETUP, accountId: ` ${ACCOUNT_ID.toUpperCase()} `, apiToken: ` ${API_TOKEN}\n` });
       expect(response.status, await response.clone().text()).toBe(200);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
-      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
+      expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", promptTemplate: null, ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
 
       // Claude takes Anthropic's Messages, with the instructions as its system prompt.
       expect(requests).toEqual([{ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, gateway: "default", body: expect.any(Object) as unknown }]);
@@ -156,7 +156,7 @@ describe("Ember AI", () => {
         web_tools_asked_at: expect.any(String) as unknown,
       });
       expect(JSON.stringify(await workspaceSql("SELECT * FROM accounts"))).not.toContain(API_TOKEN);
-      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", ...WITH_THE_FLAME });
+      expect(await assistantSettings(administrator)).toEqual({ accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", promptTemplate: null, ...WITH_THE_FLAME });
       expect(await assistantSettings(member)).toBeNull();
     });
 
@@ -241,6 +241,7 @@ describe("Ember AI", () => {
         most: TOP_LEVELS,
         webTools: [],
         instructions: "",
+        promptTemplate: null,
         ...WITH_THE_FLAME,
       });
       expect(requests.map(({ url, authorization }) => [url, authorization])).toEqual([

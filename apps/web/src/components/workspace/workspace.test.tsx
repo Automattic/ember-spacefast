@@ -1966,6 +1966,7 @@ describe("Agent pages", () => {
     most: { thinking: "high", length: "long" },
     webTools: null,
     instructions: "",
+    promptTemplate: null,
     avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
     avatar: false,
   };
@@ -1982,6 +1983,7 @@ describe("Agent pages", () => {
     webTools: [],
     rooms: null,
     instructions: "Sum up the conversation so far.",
+    promptTemplate: null,
     format: "chat",
     levels: { thinking: "low", length: "medium" },
     avatar: false,

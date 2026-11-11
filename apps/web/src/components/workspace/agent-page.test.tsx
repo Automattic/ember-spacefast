@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me, SidebarRoom } from "@ember/protocol";
 import { AGENT_CHANGED, agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_TAKEN, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
 import { ASSISTANT_MODELS, ASSISTANT_OFF, MODEL_REFUSED, TOP_LEVELS, type AssistantCatalog, type AssistantModel, type AssistantSettings as Assistant } from "@ember/protocol/assistant";
+import { AGENT_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED, PLACEHOLDERS, placeholderOf, unknownPlaceholder } from "@ember/protocol/prompts";
 import defaultBotAvatar from "@/components/default-bot-avatar.svg";
 import { FlashProvider } from "@/components/flash";
 import { Sheet } from "@/components/ui/sheet";
@@ -15,6 +16,7 @@ import { dateLabel } from "@/lib/messages";
 import { AGENTS_PATH } from "./agent-list";
 import { AGENT_CHANGES, AGENT_EXPLAINED, AgentSettingsPage, cannotSearch, CONFIRM_DELETE_AGENT, INSTRUCTIONS_EXPLAINED, NewAgentPage, tryExplained } from "./agent-page";
 import { searchingWith } from "./ember-settings";
+import { cautionFor, PLACEHOLDER_MEANINGS } from "./prompt-preview";
 
 vi.mock("@/lib/previews", () => ({ avatarVariantOf: vi.fn(async () => new Blob(["variant"], { type: "image/webp" })) }));
 
@@ -38,6 +40,7 @@ const ON: Assistant = {
   most: TOP_LEVELS,
   webTools: [],
   instructions: "",
+  promptTemplate: null,
   avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
   avatar: false,
 };
@@ -65,12 +68,16 @@ const RECAP: AgentSettings = {
   webTools: [],
   rooms: [{ id: DESIGN.id, name: "design" }],
   instructions: "Sum up the conversation so far as decisions and to-dos.",
+  promptTemplate: null,
   format: "messages",
   levels: { thinking: "low", length: "medium" },
   avatar: false,
   changedBy: { id: ada.id, name: "Ada Lovelace" },
   changedAt: "2026-11-09T12:00:00.000Z",
 };
+
+/** What Ember adds around an agent's instructions, as an administrator modified it. */
+const SCRIBE = "You are {{name}}, the scribe of {{community}}.\n\n{{instructions}}\n\nAnswer {{asker}} in at most {{words}} words.";
 
 /** What Try it's model says, as a message of its keeps it, and how long it took. */
 const TRIED: AgentTrialAnswer = { body: "<p><strong>Two</strong> decisions so far.</p>", cards: [], ms: 2345 };
@@ -148,6 +155,12 @@ const chosenRooms = () => screen.getByRole("radio", { name: "Only the rooms I ch
 const tryIt = () => screen.getByRole("region", { name: "Try it" });
 const question = () => within(tryIt()).getByRole("textbox", { name: "Question" });
 const status = () => screen.getAllByRole("status").at(-1)!;
+/** What Ember adds around the instructions, the box that asks for care before it's modified, and the template, once Modify is pressed. */
+const around = () => screen.getByText("What Ember adds around them").closest("details")!;
+const caution = () => screen.getByRole("region", { name: "Modify with caution" });
+const modify = () => within(caution()).getByRole("button", { name: "Modify" });
+const templateBox = () => screen.getByRole("textbox", { name: "What Ember adds around them" });
+const useEmbersOwn = () => within(caution()).getByRole("button", { name: "Use Ember's own" });
 const avatarField = () => screen.getByLabelText("Upload the agent's avatar");
 const robot = () => new File(["robot"], "robot.png", { type: "image/png" });
 
@@ -511,12 +524,122 @@ describe("Try it", () => {
     expect(sent()).toEqual([]);
   });
 
+  it("asks with what Ember adds around the instructions as it's modified, before it's saved", async () => {
+    const { user } = showNewAgent();
+    await fillIn(user);
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste(SCRIBE);
+    await user.type(question(), "What did we decide?{Enter}");
+    await within(tryIt()).findByText("Answered in 2.3 seconds.");
+    expect(sent()).toEqual([["POST /api/account/agents/trials", expect.objectContaining({ promptTemplate: SCRIBE, question: "What did we decide?" })]]);
+  });
+
   it("asks a saved agent at its own address", async () => {
     const { user } = showSettings();
     await loaded();
     await user.type(question(), "What did we decide?{Enter}");
     await within(tryIt()).findByText("Answered in 2.3 seconds.");
     expect(sent().map(([request]) => request)).toEqual([`POST /api/account/agents/${RECAP.id}/trials`]);
+  });
+});
+
+describe("What Ember adds around them", () => {
+  it("keeps Ember's own until Modify is pressed, asking for care first, then shows it with what each placeholder stands for", async () => {
+    const { user } = showNewAgent();
+    await user.type(await loaded(), "Recap");
+    await user.click(screen.getByText("What Ember adds around them"));
+    expect(around()).toHaveAttribute("open");
+    expect(within(around()).queryByText("Modified")).toBeNull();
+    expect(within(caution()).getByRole("heading", { level: 3, name: "Modify with caution" })).toBeInTheDocument();
+    expect(caution()).toHaveTextContent(cautionFor("Recap"));
+    expect(modify()).toHaveAccessibleDescription(cautionFor("Recap"));
+    expect(screen.queryByRole("textbox", { name: "What Ember adds around them" })).toBeNull();
+
+    await user.click(modify());
+    expect(templateBox()).toHaveValue(AGENT_TEMPLATE);
+    expect(templateBox()).toHaveFocus();
+    expect(templateBox()).toHaveAttribute("maxlength", "10000");
+    expect(templateBox()).toHaveAccessibleDescription(`${cautionFor("Recap")} ${AGENT_TEMPLATE.length.toLocaleString("en-US")} of 10,000 characters`);
+    for (const placeholder of PLACEHOLDERS) expect(caution()).toHaveTextContent(`${placeholderOf(placeholder)}${PLACEHOLDER_MEANINGS[placeholder]}`);
+    expect(useEmbersOwn()).toBeDisabled();
+    expect(sent()).toEqual([]);
+  });
+
+  it("makes the agent with what Ember adds around its instructions as it's modified, shown as the agent reads it", async () => {
+    const { user } = showNewAgent();
+    await fillIn(user);
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste(SCRIBE);
+    expect(around()).toHaveTextContent("You are Recap, the scribe of Analytical Engines. Your instructions Answer Ada Lovelace in at most 400 words.");
+    expect(within(around()).getByText("Modified")).toBeInTheDocument();
+    expect(useEmbersOwn()).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    await wentBack();
+    expect(sent()).toEqual([["POST /api/account/agents", expect.objectContaining({ instructions: "Sum up the conversation so far as decisions and to-dos.", promptTemplate: SCRIBE })]]);
+  });
+
+  it("says why Ember can't take what's typed as it's typed, refusing to send the page or ask the agent until it can, opening to say so", async () => {
+    const { user } = showNewAgent();
+    await fillIn(user);
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste("You are {{name}}.");
+    expect(templateBox()).toHaveAttribute("aria-invalid", "true");
+    expect(templateBox()).toHaveAccessibleDescription(`${cautionFor("Recap")} ${INSTRUCTIONS_PLACE_NEEDED}`);
+    expect(screen.getByRole("alert")).toHaveTextContent(INSTRUCTIONS_PLACE_NEEDED);
+    // Nor does it show where the instructions would go.
+    expect(within(around()).queryByText("Your instructions")).toBeNull();
+
+    await user.type(question(), "What did we decide?{Enter}");
+    expect(within(tryIt()).getByRole("status")).toHaveTextContent(INSTRUCTIONS_PLACE_NEEDED);
+    expect(around()).not.toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(around()).toHaveAttribute("open");
+
+    await user.clear(templateBox());
+    await user.paste("{{instructions}} for {{comunity}}");
+    expect(screen.getByRole("alert")).toHaveTextContent(unknownPlaceholder("comunity"));
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(sent()).toEqual([]);
+  });
+
+  it("shows what an administrator modified, which Use Ember's own puts back, saved as Ember's own, which then changes as Ember does", async () => {
+    serve({ loaded: () => answer({ ...RECAP, promptTemplate: SCRIBE }) });
+    const { user } = showSettings();
+    await loaded();
+    expect(within(around()).getByText("Modified")).toBeInTheDocument();
+    expect(templateBox()).toHaveValue(SCRIBE);
+    expect(around()).toHaveTextContent("You are Recap, the scribe of Analytical Engines.");
+
+    await user.click(useEmbersOwn());
+    expect(templateBox()).toHaveValue(AGENT_TEMPLATE);
+    expect(useEmbersOwn()).toBeDisabled();
+    expect(within(around()).queryByText("Modified")).toBeNull();
+    expect(around()).toHaveTextContent(`You are Recap, an AI agent in the team chat "Analytical Engines".`);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await wentBack();
+    expect(sent()).toEqual([[`PATCH /api/account/agents/${RECAP.id}`, { promptTemplate: null }]]);
+  });
+
+  it("says why the server refused it in it, opening it, until it changes", async () => {
+    const refusal = "Ember can't take this.";
+    serve({ sent: () => refused(422, refusal, "promptTemplate") });
+    const { user, onFailed } = showSettings();
+    await loaded();
+    await user.click(modify());
+    await user.clear(templateBox());
+    await user.paste(SCRIBE);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(templateBox()).toHaveAttribute("aria-invalid", "true"));
+    expect(around()).toHaveAttribute("open");
+    expect(screen.getByRole("alert")).toHaveTextContent(refusal);
+    expect(onFailed).not.toHaveBeenCalled();
+    await user.type(templateBox(), " Be brief.");
+    expect(templateBox()).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
