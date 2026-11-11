@@ -583,7 +583,14 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
             />
           </div>
           <div>
-            <LevelDials name="agent-levels" levels={fields.levels} disabled={busy !== null} onChange={(levels) => change("levels", { levels: { ...fields.levels, ...levels } })} />
+            <LevelDials
+              name="agent-levels"
+              levels={fields.levels}
+              // The levels its model takes are known once it's saved with it, as saving asks it at each.
+              model={sameModel ? { name: nameOfModel, thinkingLevels: saved.thinkingLevels } : undefined}
+              disabled={busy !== null}
+              onChange={(levels) => change("levels", { levels: { ...fields.levels, ...levels } })}
+            />
             <Under id="agent-levels" field="levels" refusal={refusal} className="mt-2" />
           </div>
           {price && (

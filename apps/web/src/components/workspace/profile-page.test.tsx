@@ -742,6 +742,50 @@ describe("Your model on your profile", () => {
     expect(sent).toEqual([{ model: "openai/gpt-6.1-sol" }, { model: null }, { model: "@cf/zai-org/glm-4.7-flash" }]);
   });
 
+  it("offers only the levels of thinking your model took when it was added, saying which it can't be set to, and each for one that took none, which decides itself", async () => {
+    let yours: YourAssistant = {
+      ...PICKING,
+      model: "openai/gpt-6.1-sol",
+      levels: { thinking: "off", length: "medium" },
+      models: [
+        { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
+        { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses", thinkingLevels: ["low", "medium", "high"] },
+        { id: "xai/grok-4.20-0309-reasoning", name: "Grok 4.20 Reasoning", format: "chat", thinkingLevels: [] },
+      ],
+    };
+    serve({
+      loaded: () => Response.json({ profile: { ...profile, assistant: yours }, transferId: LOADED_LINK } satisfies ProfileAnswer),
+      leveled: ({ model, ...levels }) => {
+        yours = { ...yours, model: model === undefined ? yours.model : model, levels: { ...yours.levels, ...levels } };
+        return Response.json({ assistant: yours } satisfies YourAssistantChanged);
+      },
+    });
+    const { user } = showPage();
+    await loaded();
+    const thinking = () => within(section()).getByRole("group", { name: "Thinking" });
+    const level = (name: string) => within(thinking()).getByRole("radio", { name });
+
+    expect(level("Off")).toBeChecked();
+    expect(level("Off")).toBeDisabled();
+    for (const name of ["Low", "Medium"]) expect(level(name)).toBeEnabled();
+    expect(level("High")).toBeDisabled();
+    expect(thinking()).toHaveAccessibleDescription("GPT-6.1 Sol can't be set to Off, so it thinks at Low instead.");
+    await user.click(level("Low"));
+    await waitFor(() => expect(menu()).toBeEnabled());
+    expect(thinking()).toHaveAccessibleDescription("Thinks a little first, up to about 4,000 tokens. GPT-6.1 Sol can't be set to Off.");
+
+    await user.selectOptions(menu(), "Grok 4.20 Reasoning");
+    await waitFor(() => expect(menu()).toBeEnabled());
+    for (const name of ["Off", "Low", "Medium"]) expect(level(name)).toBeEnabled();
+    expect(thinking()).toHaveAccessibleDescription("Grok 4.20 Reasoning can't be told how much to think, so it decides for itself, up to about 4,000 tokens.");
+
+    // A model added before Ember asked models at each level is offered at every one.
+    await user.selectOptions(menu(), "Default (GLM-4.7 Flash)");
+    await waitFor(() => expect(menu()).toBeEnabled());
+    for (const name of ["Off", "Low", "Medium"]) expect(level(name)).toBeEnabled();
+    expect(thinking()).toHaveAccessibleDescription("Thinks a little first, up to about 4,000 tokens.");
+  });
+
   it("says why a model wasn't saved, showing yours as it was", async () => {
     picking(() => Response.json({ error: MODEL_NOT_LISTED }, { status: 422 }));
     const { user, onFailed } = showPage();

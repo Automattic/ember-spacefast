@@ -180,8 +180,11 @@ export interface SavedAssistant {
   webToolsAskedAt: string | null;
 }
 
-/** A model people can pick, as the account keeps it: its ID, its name, and the format it took its test question in. */
-export type SavedModel = Pick<AssistantModel, "id" | "name" | "format">;
+/**
+ * A model people can pick, as the account keeps it: its ID, its name, the format it took its test
+ * question in, and the levels of thinking it takes, once Ember has asked it at each.
+ */
+export type SavedModel = Pick<AssistantModel, "id" | "name" | "format" | "thinkingLevels">;
 
 /** The account first run creates. */
 export interface NewAccount {
@@ -387,8 +390,9 @@ export interface NewStoredBot {
 
 /**
  * What makes a bot an agent, as the agents table keeps it: what it does, its instructions and what Ember
- * adds around them, the model it answers with, what that's called and the format it took its test
- * question in, how much it thinks and how long it answers, and what it may do on the web.
+ * adds around them, the model it answers with, what that's called, the format it took its test question
+ * in and the levels of thinking it takes, how much it thinks and how long it answers, and what it may do
+ * on the web.
  */
 export interface AgentSetup {
   description: string;
@@ -398,15 +402,17 @@ export interface AgentSetup {
   model: string;
   modelName: string;
   format: ModelFormat;
+  /** The levels of thinking its model takes, or null for one Ember hasn't asked at each, as for an agent made before Ember did. */
+  thinkingLevels: ThinkingLevel[] | null;
   levels: AnswerLevels;
   webTools: WebTool[];
 }
 
 /**
  * An agent as a question for it finds it: its name, its instructions and what Ember adds around them, its
- * model and that model's format, its levels and what it may do on the web.
+ * model, that model's format and the levels of thinking it takes, its levels and what it may do on the web.
  */
-export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "promptTemplate" | "model" | "format" | "levels" | "webTools"> {
+export interface AnsweringAgent extends Pick<AgentSetup, "instructions" | "promptTemplate" | "model" | "format" | "thinkingLevels" | "levels" | "webTools"> {
   name: string;
 }
 
@@ -942,6 +948,7 @@ interface AgentSettingsRow extends AgentRow, AvatarColumns {
   instructions: string;
   prompt_template: string | null;
   format: string;
+  thinking_levels: string | null;
   thinking: string;
   answer_length: string;
   changed_by: UserId;
@@ -961,15 +968,16 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
 
 /**
  * How an agent answers, as the agents table keeps it: its instructions and what Ember adds around them,
- * its model's format, its levels and what it may do on the web.
+ * its model's format and the levels of thinking it takes, its levels and what it may do on the web.
  */
-type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "prompt_template" | "format" | "thinking" | "answer_length" | "web_tools">;
+type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "prompt_template" | "format" | "thinking_levels" | "thinking" | "answer_length" | "web_tools">;
 
-/** How an agent answers, as `row` keeps it. What can't be a format or a level, as nothing Ember writes is, reads as where @ember's start. */
-const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "promptTemplate" | "format" | "levels" | "webTools"> => ({
+/** How an agent answers, as `row` keeps it. What can't be a format or a level, as nothing Ember writes is, reads as where @ember's start, and as untested levels of thinking. */
+const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "promptTemplate" | "format" | "thinkingLevels" | "levels" | "webTools"> => ({
   instructions: row.instructions,
   promptTemplate: row.prompt_template,
   format: isModelFormat(row.format) ? row.format : "chat",
+  thinkingLevels: row.thinking_levels === null ? null : (thinkingLevelsIn(JSON.parse(row.thinking_levels)) ?? null),
   levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
   webTools: webToolsIn(row.web_tools),
 });
@@ -990,8 +998,19 @@ function webToolsIn(kept: string | null): WebTool[] {
 }
 
 /** An agent's setup's columns, as `INSERT_AGENT` and `CHANGE_AGENT` take them, in order. */
-const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools, promptTemplate }: AgentSetup) =>
-  [description, instructions, model, modelName, format, levels.thinking, levels.length, webTools.length > 0 ? JSON.stringify(webTools) : null, promptTemplate] as const;
+const agentColumns = ({ description, instructions, model, modelName, format, levels, webTools, promptTemplate, thinkingLevels }: AgentSetup) =>
+  [
+    description,
+    instructions,
+    model,
+    modelName,
+    format,
+    levels.thinking,
+    levels.length,
+    webTools.length > 0 ? JSON.stringify(webTools) : null,
+    promptTemplate,
+    thinkingLevels && JSON.stringify(thinkingLevels),
+  ] as const;
 
 /** Whether a value is `present?`: not null, false, blank, or empty. */
 function isPresent(value: unknown): boolean {
@@ -1080,8 +1099,9 @@ function huddlesIn(settings: Record<string, unknown> | null): SavedHuddles | nul
 /**
  * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
  * `{ account_id, api_token, model, format, models, web_tools, web_tools_asked_at }`, the API token sealed,
- * or null while it's off. Its models are `[{ id, name, format }]`, which Ember AI set up before people
- * could pick has none of: it then has its own model alone, as it does when they leave it out. Without
+ * or null while it's off. Its models are `[{ id, name, format, thinking_levels }]`, which Ember AI set up
+ * before people could pick has none of: it then has its own model alone, as it does when they leave it
+ * out. A model added before Ember asked models at each level of thinking has no `thinking_levels`. Without
  * `web_tools`, as Ember AI was kept before Search the web, @ember does nothing on the web.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
@@ -1106,14 +1126,18 @@ function assistantIn(settings: Record<string, unknown> | null): SavedAssistant |
 function savedModelsIn(kept: unknown): SavedModel[] {
   const models = new Map<string, SavedModel>();
   for (const model of Array.isArray(kept) ? kept : []) {
-    const { id, name, format } = typeof model === "object" && model !== null ? (model as Record<string, unknown>) : {};
+    const { id, name, format, thinking_levels: kept } = typeof model === "object" && model !== null ? (model as Record<string, unknown>) : {};
     if (typeof id !== "string" || modelOf(id) !== id || models.has(id) || !isModelFormat(format)) continue;
-    models.set(id, { id, name: modelNameOf(name) ?? modelName(id), format });
+    const thinkingLevels = thinkingLevelsIn(kept);
+    models.set(id, { id, name: modelNameOf(name) ?? modelName(id), format, ...(thinkingLevels && { thinkingLevels }) });
   }
   return [...models.values()];
 }
 
 const isModelFormat = (format: unknown): format is ModelFormat => (MODEL_FORMATS as readonly unknown[]).includes(format);
+
+/** The levels of thinking `kept` lists, as Ember keeps those a model takes, in order, or undefined when it isn't a list. */
+const thinkingLevelsIn = (kept: unknown): ThinkingLevel[] | undefined => (Array.isArray(kept) ? THINKING_LEVELS.filter((level) => kept.includes(level)) : undefined);
 
 /**
  * The most each of @ember's dials goes to, which the account's settings keep as `assistant_limits`,
@@ -1148,7 +1172,7 @@ const assistantSetting = (assistant: SavedAssistant | null) =>
       api_token: assistant.sealedApiToken,
       model: assistant.model,
       format: assistant.format,
-      models: assistant.models.map(({ id, name, format }) => ({ id, name, format })),
+      models: assistant.models.map(({ id, name, format, thinkingLevels }) => ({ id, name, format, ...(thinkingLevels && { thinking_levels: thinkingLevels }) })),
       web_tools: assistant.webTools,
       web_tools_asked_at: assistant.webToolsAskedAt,
     },
@@ -1939,7 +1963,7 @@ const KEPT_AGENTS_ROOMS = `SELECT memberships.user_id, rooms.id, rooms.name
 
 /** An active agent as its page shows it, with its avatar and who last changed it. */
 const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_variant,
-    agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length,
+    agents.instructions, agents.prompt_template, agents.format, agents.thinking_levels, agents.thinking, agents.answer_length,
     agents.updated_by AS changed_by, changers.name AS changed_by_name, agents.updated_at AS changed_at
   FROM agents JOIN users ON users.id = agents.user_id JOIN users AS changers ON changers.id = agents.updated_by
   WHERE agents.user_id = ? AND users.status = ${ACTIVE}`;
@@ -1949,7 +1973,8 @@ const ACTIVE_AGENT = `SELECT ${AGENT_COLUMNS}, users.avatar_key, users.avatar_va
  * posted: its name, its model, and how it answers. Nothing unless it's an active agent in the room, so
  * that turning Ember AI off, deleting the agent or taking it out of the room stops what's on its way.
  */
-const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.prompt_template, agents.format, agents.thinking, agents.answer_length, agents.web_tools
+const ANSWERING_AGENT = `SELECT users.name, agents.model, agents.instructions, agents.prompt_template, agents.format, agents.thinking_levels, agents.thinking,
+    agents.answer_length, agents.web_tools
   FROM agents JOIN users ON users.id = agents.user_id
   WHERE agents.user_id = ?2 AND users.status = ${ACTIVE} AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = ?2)`;
 
@@ -1964,14 +1989,14 @@ const AGENTS_LISTED = `SELECT ${DIRECTORY_COLUMNS} FROM agents JOIN users ON use
 const AGENT_PROFILE = `SELECT agents.description, agents.model, agents.model_name, agents.created_by, makers.name AS created_by_name
   FROM agents JOIN users AS makers ON makers.id = agents.created_by WHERE agents.user_id = ?`;
 
-/** What makes a bot an agent, ?11 being 1 to put it in every open room, made by ?12. */
+/** What makes a bot an agent, ?12 being 1 to put it in every open room, made by ?13. */
 const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
-    prompt_template, every_open_room, created_by, updated_by, created_at, updated_at)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?13)`;
+    prompt_template, thinking_levels, every_open_room, created_by, updated_by, created_at, updated_at)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?14)`;
 
 /** Changes an agent's setup, and records who changed it, and when. */
 const CHANGE_AGENT = `UPDATE agents SET description = ?2, instructions = ?3, model = ?4, model_name = ?5, format = ?6, thinking = ?7, answer_length = ?8,
-  web_tools = ?9, prompt_template = ?10, updated_by = ?11, updated_at = ?12 WHERE user_id = ?1`;
+  web_tools = ?9, prompt_template = ?10, thinking_levels = ?11, updated_by = ?12, updated_at = ?13 WHERE user_id = ?1`;
 
 /** Puts ?1 in the open rooms the JSON list ?2 names, of those there are, keeping the memberships it has. */
 const GRANT_PICKED_ROOMS = `INSERT INTO memberships (room_id, user_id, created_at, updated_at)

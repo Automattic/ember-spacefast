@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloseCode, startingInvolvement, type Account, type Bot, type DirectoryUser, type DirectRoom, type Me, type Message, type Room, type RoomId, type RoomSettings, type SharedRoom, type SidebarRoom, type TimelinePage, type WorkspaceServerFrame, type WorkspaceSettings } from "@ember/protocol";
 import type { AgentSettings } from "@ember/protocol/agents";
-import type { AssistantSettings } from "@ember/protocol/assistant";
+import { THINKING_LEVELS, type AssistantSettings } from "@ember/protocol/assistant";
 import { FlashProvider } from "@/components/flash";
 import { AccountContext } from "@/hooks/use-account";
 import { PushContext } from "@/hooks/use-push";
@@ -2049,6 +2049,7 @@ describe("Agent pages", () => {
     promptTemplate: null,
     format: "chat",
     levels: { thinking: "low", length: "medium" },
+    thinkingLevels: [...THINKING_LEVELS],
     avatar: false,
     changedBy: { id: ada.id, name: ada.name },
     changedAt: "2026-11-09T12:00:00.000Z",

@@ -24,6 +24,7 @@ import {
   type AssistantForgotten,
   type AssistantSaved,
   type ModelFormat,
+  type ThinkingLevel,
   type WebSearchChanged,
   type WebTool,
   type YourAssistantChanged,
@@ -37,7 +38,7 @@ import { NO_STORAGE } from "../files/uploads";
 import { formAnswer } from "../pages";
 import { workspace, type Credentials } from "../workspace";
 import { catalogOf } from "./catalog";
-import { askInTurn, askOnce, formatsFor, type Gateway, type GatewayRefusal, type Question } from "./gateway";
+import { askInTurn, askOnce, formatsFor, thinkingLevelsOf, type Gateway, type GatewayRefusal, type Question } from "./gateway";
 
 // Ember AI's setup, as administrators turn it on, change it and turn it off on the AI assistant tab of
 // workspace settings, the models people can pick, which administrators add there from Cloudflare's
@@ -131,12 +132,12 @@ export async function listAssistantModels(request: Request, env: Env): Promise<R
 /**
  * `PUT /api/account/assistant`, `{ accountId, apiToken, model, modelName? }`: turns Ember AI on, or
  * changes it, once the model has answered a test question through AI Gateway with the account and API
- * token given, or the API token Ember has, when none is, answering Ember AI as it is then and what the
- * model said. The model answers anyone who hasn't picked another, in place of the one that did among the
- * models people can pick. Someone who isn't an administrator hears so before anything they sent is read.
- * A field that can't be what it's for, or that AI Gateway refuses, is refused on that field, as is the
- * API token Ember had once it no longer has it, so that turning Ember AI off while the model answers
- * stays done.
+ * token given, or the API token Ember has, when none is, and again at each level of thinking, to find
+ * those it takes (`greetingFrom`), answering Ember AI as it is then and what the model said. The model
+ * answers anyone who hasn't picked another, in place of the one that did among the models people can
+ * pick. Someone who isn't an administrator hears so before anything they sent is read. A field that
+ * can't be what it's for, or that AI Gateway refuses, is refused on that field, as is the API token
+ * Ember had once it no longer has it, so that turning Ember AI off while the model answers stays done.
  */
 export async function saveAssistant(request: Request, env: Env): Promise<Response> {
   const credentials = await administratorOf(request, env);
@@ -149,7 +150,8 @@ export async function saveAssistant(request: Request, env: Env): Promise<Respons
   if (!apiToken) return formAnswer({ error: API_TOKEN_NEEDED, field: "apiToken" }, 422);
   const answered = await greetingFrom(env, { accountId: setup.accountId, apiToken, model: setup.model });
   if ("refusal" in answered) return refused(answered);
-  const chosen = { accountId: setup.accountId, apiToken, model: setup.model, format: answered.format, ...(setup.modelName && { name: setup.modelName }) };
+  const { format, thinkingLevels } = answered;
+  const chosen = { accountId: setup.accountId, apiToken, model: setup.model, format, thinkingLevels, ...(setup.modelName && { name: setup.modelName }) };
   const saved = await ember.changeAssistant(credentials, chosen, kept !== undefined);
   if (!saved) return problem(401, NOT_SIGNED_IN);
   if (saved === "changed") return formAnswer({ error: API_TOKEN_CHANGED, field: "apiToken" }, 422);
@@ -160,10 +162,10 @@ export async function saveAssistant(request: Request, env: Env): Promise<Respons
 /**
  * `POST /api/account/assistant/models`, `{ model, modelName? }`: adds the model to those people can pick,
  * as Add a model on the Ember AI card does, once it has answered a test question through Ember AI's
- * account, answering Ember AI as it is then and what the model said. Someone who isn't an administrator
- * hears so before anything they sent is read. A model that can't be one, or that AI Gateway refuses, is
- * refused on its field, and one that answered through Ember AI as it was before it was set up again isn't
- * added.
+ * account, and again at each level of thinking (`greetingFrom`), answering Ember AI as it is then and
+ * what the model said. Someone who isn't an administrator hears so before anything they sent is read. A
+ * model that can't be one, or that AI Gateway refuses, is refused on its field, and one that answered
+ * through Ember AI as it was before it was set up again isn't added.
  */
 export async function addAssistantModel(request: Request, env: Env): Promise<Response> {
   const credentials = await administratorOf(request, env);
@@ -175,7 +177,8 @@ export async function addAssistantModel(request: Request, env: Env): Promise<Res
   if (!gateway) return problem(409, ASSISTANT_OFF);
   const answered = await greetingFrom(env, { accountId: gateway.accountId, apiToken: gateway.apiToken, model: added.model });
   if ("refusal" in answered) return refused(answered);
-  const saved = await ember.addAssistantModel(credentials, { id: added.model, name: added.modelName ?? modelName(added.model), format: answered.format }, gateway);
+  const model = { id: added.model, name: added.modelName ?? modelName(added.model), format: answered.format, thinkingLevels: answered.thinkingLevels };
+  const saved = await ember.addAssistantModel(credentials, model, gateway);
   if (!saved) return problem(401, NOT_SIGNED_IN);
   if (saved === "forbidden") return problem(403, ASSISTANT_FORBIDDEN);
   if (saved === "off") return problem(409, ASSISTANT_OFF);
@@ -338,14 +341,24 @@ export async function changeYourAssistant(request: Request, env: Env): Promise<R
 /** What to answer when the model didn't answer its test question: why, on the field it's about, if one is. */
 const refused = ({ refusal, field, status }: GatewayRefusal) => formAnswer({ error: refusal, ...(field && { field }) }, status);
 
+/** What a model found when it was asked a test question: the format it took it in, the levels of thinking it takes in that, and what it said. */
+export interface Greeting {
+  format: ModelFormat;
+  thinkingLevels: ThinkingLevel[];
+  greeting: string;
+}
+
 /**
- * What the model `gateway` names says to the test question, @ember's unless it's another `question`, and
- * the format it took it in, trying each format in turn while the model is refused in one (`formatsFor`),
- * or why it didn't answer: the first format's refusal, unless another's says more.
+ * What the model `gateway` names says to the test question, @ember's unless it's another `question`, the
+ * format it took it in, trying each format in turn while the model is refused in one (`formatsFor`), and
+ * the levels of thinking it takes in that format, as it answers the question again at each
+ * (`thinkingLevelsOf`), or why it didn't answer: the first format's refusal, unless another's says more.
  */
-export async function greetingFrom(env: Env, gateway: Omit<Gateway, "format">, question = TEST_QUESTION): Promise<{ format: ModelFormat; greeting: string } | GatewayRefusal> {
+export async function greetingFrom(env: Env, gateway: Omit<Gateway, "format" | "thinkingLevels">, question = TEST_QUESTION): Promise<Greeting | GatewayRefusal> {
   const answered = await askInTurn(env, gateway, formatsFor(gateway.model), () => question, TEST_TIMEOUT_MS);
-  return "refusal" in answered ? answered : { format: answered.format, greeting: shownOf(answered.text) };
+  if ("refusal" in answered) return answered;
+  const thinkingLevels = await thinkingLevelsOf(env, { ...gateway, format: answered.format }, question, TEST_TIMEOUT_MS);
+  return { format: answered.format, thinkingLevels, greeting: shownOf(answered.text) };
 }
 
 /** `text` cut to what the dialog, or the card, shows. */

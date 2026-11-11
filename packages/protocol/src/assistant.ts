@@ -21,6 +21,11 @@ export interface AssistantModel {
   name: string;
   format: ModelFormat;
   price?: ModelPrice;
+  /**
+   * The levels of thinking it takes, as asking it at each found when an administrator added it, since
+   * nothing else says reliably: left out for one Ember hasn't asked at each, which is asked at any.
+   */
+  thinkingLevels?: ThinkingLevel[];
 }
 
 /** What a model costs through AI Gateway, in US dollars for each million tokens it reads and writes. */
@@ -109,8 +114,11 @@ export interface AnswerLevels {
   length: AnswerLength;
 }
 
+/** The most tokens of thinking an answer at `thinking` may take, as even one asked for none may think a little. */
+export const thinkingTokensAt = (thinking: ThinkingLevel) => (thinking === "off" ? UNTHINKING_TOKENS : THINKING_TOKENS[thinking]);
+
 /** The most tokens an answer at `levels` may take: its thinking's, which counts toward them, and then its words'. */
-export const maxTokensAt = ({ thinking, length }: AnswerLevels) => (thinking === "off" ? UNTHINKING_TOKENS : THINKING_TOKENS[thinking]) + ANSWER_TOKENS[length];
+export const maxTokensAt = ({ thinking, length }: AnswerLevels) => thinkingTokensAt(thinking) + ANSWER_TOKENS[length];
 
 /** Each level, as its dial names it. */
 export const LEVEL_NAMES: Record<ThinkingLevel | AnswerLength, string> = { off: "Off", low: "Low", medium: "Medium", high: "High", short: "Short", long: "Long" };
@@ -125,6 +133,19 @@ export const TOP_LEVELS: AnswerLevels = { thinking: "high", length: "long" };
 export function withinMost(levels: AnswerLevels, most: AnswerLevels): AnswerLevels {
   const lower = <T>(order: readonly T[], level: T, highest: T) => order[Math.min(order.indexOf(level), order.indexOf(highest))]!;
   return { thinking: lower(THINKING_LEVELS, levels.thinking, most.thinking), length: lower(ANSWER_LENGTHS, levels.length, most.length) };
+}
+
+/**
+ * The level of thinking a model that takes `taken` is asked for in place of `level`: `level` when it
+ * takes it, as a model Ember hasn't asked at each level (undefined) is taken to, or else the nearest
+ * below it that it takes, or else above it, as one that can't think as little as `level` is asked for as
+ * little as it can, or null for one that takes none, which thinks as much as it decides.
+ */
+export function thinkingTaken(level: ThinkingLevel, taken: readonly ThinkingLevel[] | null | undefined): ThinkingLevel | null {
+  if (!taken || taken.includes(level)) return level;
+  const index = THINKING_LEVELS.indexOf(level);
+  const below = THINKING_LEVELS.slice(0, index).reverse();
+  return below.find((lower) => taken.includes(lower)) ?? THINKING_LEVELS.slice(index + 1).find((higher) => taken.includes(higher)) ?? null;
 }
 
 /** A change to one of @ember's dials, or both: the most each goes to, or your own levels. */

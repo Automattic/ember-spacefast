@@ -81,6 +81,7 @@ import {
   withinMost,
   type AnswerLevels,
   type AssistantChanges,
+  type ThinkingLevel,
   type WebTool,
   type YourAssistant,
   type YourAssistantChanges,
@@ -339,6 +340,9 @@ const levelsOf = (picked: AssistantPicks | null, most: AnswerLevels): AnswerLeve
  */
 const pickedModelOf = (assistant: SavedAssistant, picked: AssistantPicks | null): SavedModel | null => assistant.models.find(({ id }) => id === picked?.model) ?? null;
 
+/** The model that answers someone, as the models people can pick list it: the one they `picked` (`pickedModelOf`), or else the one that answers everyone. */
+const answeringModelOf = (assistant: SavedAssistant, picked: SavedModel | null): SavedModel | undefined => picked ?? assistant.models.find(({ id }) => id === assistant.model);
+
 /**
  * @ember's answers to someone who `picked` their levels and model, as their profile shows them with
  * `account`'s most and models, or null while Ember AI is off.
@@ -355,9 +359,9 @@ function yourAssistantOf(account: Pick<JoinableAccount, "assistant" | "assistant
  * twice, or `chosen` alone, as when Ember AI was off, so that the models stay as many as administrators
  * added. `chosen` is called by the name it's given, or else as it was listed, or as Ember knows it.
  */
-function modelsAfterSetup(previous: SavedAssistant | null, { model, format, name }: AssistantChoice): SavedModel[] {
+function modelsAfterSetup(previous: SavedAssistant | null, { model, format, thinkingLevels, name }: AssistantChoice): SavedModel[] {
   const models = previous?.models ?? [];
-  const chosen = { id: model, name: name ?? models.find(({ id }) => id === model)?.name ?? modelName(model), format };
+  const chosen = { id: model, name: name ?? models.find(({ id }) => id === model)?.name ?? modelName(model), format, ...(thinkingLevels && { thinkingLevels }) };
   const others = models.filter(({ id }) => id !== previous?.model);
   if (others.some(({ id }) => id === model)) return others.map((kept) => (kept.id === model ? chosen : kept));
   return others.toSpliced(Math.max(0, models.findIndex(({ id }) => id === previous?.model)), 0, chosen);
@@ -365,10 +369,10 @@ function modelsAfterSetup(previous: SavedAssistant | null, { model, format, name
 
 /**
  * What asking an agent's model found, through the Cloudflare account and API token `through` names: the
- * model, what it's called, the format it took its test question in, and what it may do on the web, as
- * Search the web found it, or nothing while that's off.
+ * model, what it's called, the format it took its test question in, the levels of thinking it takes, and
+ * what it may do on the web, as Search the web found it, or nothing while that's off.
  */
-export interface AskedModel extends Pick<AgentSetup, "model" | "modelName" | "format" | "webTools"> {
+export interface AskedModel extends Pick<AgentSetup, "model" | "modelName" | "format" | "thinkingLevels" | "webTools"> {
   through: Pick<Gateway, "accountId" | "apiToken">;
 }
 
@@ -383,8 +387,12 @@ export const asksModel = (agent: Pick<AgentSetup, "model" | "webTools">, changes
 /** An agent's setup, of what it does, its instructions and what Ember adds around them, and its levels, with its model as `asked` found it. */
 const setupOf = (
   { description, instructions, promptTemplate, levels }: Pick<AgentSetup, "description" | "instructions" | "promptTemplate" | "levels">,
-  { model, modelName, format, webTools }: Pick<AgentSetup, "model" | "modelName" | "format" | "webTools">,
-): AgentSetup => ({ description, instructions, promptTemplate, model, modelName, format, levels, webTools });
+  { model, modelName, format, thinkingLevels, webTools }: Pick<AgentSetup, "model" | "modelName" | "format" | "thinkingLevels" | "webTools">,
+): AgentSetup => ({ description, instructions, promptTemplate, model, modelName, format, thinkingLevels, levels, webTools });
+
+/** Whether two lists of the levels of thinking a model takes are the same, null for a model Ember hasn't asked at each. */
+const sameLevels = (levels: ThinkingLevel[] | null, others: ThinkingLevel[] | null): boolean =>
+  levels === null || others === null ? levels === others : levels.length === others.length && levels.every((level) => others.includes(level));
 
 /** Whether two setups of an agent are the same, so that saving one in place of the other changes nothing. */
 const sameSetup = (setup: AgentSetup, other: AgentSetup): boolean =>
@@ -394,6 +402,7 @@ const sameSetup = (setup: AgentSetup, other: AgentSetup): boolean =>
   setup.model === other.model &&
   setup.modelName === other.modelName &&
   setup.format === other.format &&
+  sameLevels(setup.thinkingLevels, other.thinkingLevels) &&
   setup.levels.thinking === other.levels.thinking &&
   setup.levels.length === other.levels.length &&
   setup.webTools.length === other.webTools.length &&
@@ -513,7 +522,7 @@ export interface AgentTrialAccess {
   through: Pick<Gateway, "accountId" | "apiToken">;
   community: string;
   addresses: string[];
-  saved: Pick<StoredAgentSettings, "id" | "model" | "modelName" | "format" | "webTools"> | null;
+  saved: Pick<StoredAgentSettings, "id" | "model" | "modelName" | "format" | "thinkingLevels" | "webTools"> | null;
 }
 
 /** How Set up Ember AI has Ember AI ask AI Gateway (`Gateway`), with the name of its model, if it was given one. */
@@ -2862,7 +2871,7 @@ export class Workspace extends DurableObject<Env> {
     const agent = agentId === null ? null : await this.store.activeAgent(agentId);
     if (agentId !== null && !agent) return "not found";
     const through = { accountId: opened.accountId, apiToken: opened.apiToken };
-    const saved = agent && { id: agent.id, model: agent.model, modelName: agent.modelName, format: agent.format, webTools: agent.webTools };
+    const saved = agent && { id: agent.id, model: agent.model, modelName: agent.modelName, format: agent.format, thinkingLevels: agent.thinkingLevels, webTools: agent.webTools };
     return { asker: { id: user.id, name: user.name }, through, community: account.name, addresses: addressesOf(account), saved };
   }
 
@@ -3554,7 +3563,8 @@ export class Workspace extends DurableObject<Env> {
     if (!account?.assistant || !member) return null;
     const opened = await this.openedAssistant(account);
     const picked = pickedModelOf(account.assistant, picks);
-    const gateway = opened && picked ? { ...opened, model: picked.id, format: picked.format } : opened;
+    const thinkingLevels = answeringModelOf(account.assistant, picked)?.thinkingLevels;
+    const gateway = opened && { ...opened, ...(picked && { model: picked.id, format: picked.format }), thinkingLevels };
     const levels = levelsOf(picks, account.assistantMost);
     const { format } = picked ?? account.assistant;
     const webTools = account.assistant.webTools.filter((tool) => WEB_TOOLS_IN[format].includes(tool));
@@ -3575,7 +3585,7 @@ export class Workspace extends DurableObject<Env> {
     const [account, agent] = await Promise.all([this.joinableAccount(), this.store.answeringAgent(roomId, agentId)]);
     if (!account?.assistant || !agent) return null;
     const opened = await this.openedAssistant(account);
-    const gateway = opened && { ...opened, model: agent.model, format: agent.format };
+    const gateway = opened && { ...opened, model: agent.model, format: agent.format, thinkingLevels: agent.thinkingLevels ?? undefined };
     const webTools = agent.webTools.filter((tool) => WEB_TOOLS_IN[agent.format].includes(tool));
     const bot = { id: agentId, name: agent.name };
     const { instructions, promptTemplate, levels } = agent;

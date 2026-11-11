@@ -117,10 +117,10 @@ const refusedReading = (text: string) => (asked: Asked) =>
 
 /**
  * Makes `agent` as `administrator`, its model answering its test question, and searching the web when
- * it's given a tool for it, but refused the tool for reading pages (`refusedReading`).
+ * it's given a tool for it, but refused the tool for reading pages (`refusedReading`), or as `answer` has it.
  */
-async function makeAgent(administrator: Session, agent: NewAgent): Promise<AgentSettings> {
-  internet(refusedReading("Hello, team!"));
+async function makeAgent(administrator: Session, agent: NewAgent, answer = refusedReading("Hello, team!")): Promise<AgentSettings> {
+  internet(answer);
   const response = await api("/api/account/agents", { method: "POST", headers: { Cookie: administrator.cookie }, body: JSON.stringify(agent) });
   expect(response.status, await response.clone().text()).toBe(201);
   vi.restoreAllMocks();
@@ -434,7 +434,23 @@ describe("An AI agent", () => {
     client.close();
   });
 
-  it("asks its model again without a thinking level when the model's provider refuses one, rather than saying Ember AI's account is gone", async () => {
+  it("asks its model at no thinking level, once, when the model refused each as the agent was made, as xAI refuses each for Grok 4.20 Reasoning", async () => {
+    const { ada, general } = await setUp();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" }, unthinkingGrok("Hello, team!"));
+    expect(grok.thinkingLevels).toEqual([]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const questions = internet(unthinkingGrok("The Packers won."));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(grok)} who won the latest Packers game?</p>`);
+    expect(await nextFrom(client, grok)).toMatchObject({ plainText: "The Packers won." });
+    expect(questions.map(({ url, body }) => [url, body.reasoning_effort])).toEqual([[`${CLOUDFLARE_API}/chat/completions`, undefined]]);
+    expect(errors).not.toHaveBeenCalled();
+    client.close();
+  });
+
+  it("asks its model again without a thinking level when the model's provider refuses one it took when the agent was made, rather than saying Ember AI's account is gone", async () => {
     const { ada, general } = await setUp();
     const grok = await makeAgent(ada, { ...SCOUT, name: "Grok", model: GROK, thinking: "low" });
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
