@@ -264,10 +264,11 @@ export const startingInvolvement = (room: Room): Involvement => (room.kind === "
 
 /**
  * A room in someone's sidebar, with whether a message has come since they last had it open in a shown
- * tab, which marks it unread for them until they do again, and their level in it. A room they've
- * hidden is listed too, since they can still open it, but their sidebar leaves it out.
+ * tab, which marks it unread for them until they do again, when the first of those messages came, while
+ * it's marked, and their level in it. A room they've hidden is listed too, since they can still open it,
+ * but their sidebar leaves it out.
  */
-export type SidebarRoom = Room & { unread: boolean; involvement: Involvement };
+export type SidebarRoom = Room & { unread: boolean; unreadSince?: string; involvement: Involvement };
 
 /**
  * The rooms someone has starred, which their sidebar lists first, in the order they starred them.
@@ -297,7 +298,7 @@ export interface Sidebar {
   invitation: Invitation | null;
   /**
    * People to start a DM with: the active people with the oldest accounts who share no DM with this
-   * person, never them, as many as `suggestedCount` says.
+   * person, never them nor a bot or AI agent, as many as `suggestedCount` says.
    */
   suggestions: User[];
   /** The huddle going on in each of `rooms` that has one, by the room's id. `room.huddle` frames keep it current. */
@@ -797,30 +798,43 @@ export interface CustomStyles {
 /** Ember's repository, which publishes its releases, and its docs on updating a deployment to one. */
 export const EMBER_REPOSITORY = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare";
 export const UPDATING_EMBER = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#updating`;
+/** Ember's docs on its betas, and on trying one. */
+export const TRYING_BETAS = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#betas`;
 
 /**
  * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
- * /api/account/release_checks`, which opening Admin makes to have the Worker ask GitHub afresh: the
- * release this Ember is, named without its version's trailing ".0", such as "0.1", and the newest release
- * of Ember on GitHub, named so too, with the address of its notes there and whether it's newer than this
- * one, or null when GitHub didn't name one.
+ * /api/account/release_checks`, which opening Admin, and its Check for updates, make to have the Worker
+ * ask GitHub afresh: the release this Ember is, named without its version's trailing ".0", such as "0.1",
+ * and the newest release of Ember on GitHub, named so too, with the address of its notes there and
+ * whether it's newer than this one, or null when GitHub didn't name one.
  */
 export interface ReleaseCheck {
   release: string;
+  /** Whether this Ember is a beta, such as "0.5 beta 1", ahead of the newest release, which GitHub never names a beta. */
+  beta: boolean;
   newest: { release: string; notes: string; newer: boolean } | null;
+  /** When GitHub named that release, as an ISO time, which General says it last checked, or null with it. */
+  checkedAt: string | null;
+  /**
+   * Ember's newest beta while it's ahead of the newest release, named as "0.6 beta 1", with its notes and
+   * whether it's newer than this one, or null when it isn't ahead, or GitHub didn't say: what General
+   * offers a release to try, and a beta to update to (docs/self-hosting.md#betas).
+   */
+  newestBeta: { release: string; notes: string; newer: boolean } | null;
   /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
   copy: CopyOnGitHub | null;
 }
 
 /**
  * A copy of Ember on GitHub, as its deploy tells the Worker: its repository, as `owner/name`, the branch
- * that deploys, and whether it has the Update Ember workflow, for General's release card to link to
- * running it, or to adding it.
+ * that deploys, and whether it has the Update Ember workflow, and the beta workflow, Update Ember to its
+ * newest beta, for General's release card to link to running each, or to adding it.
  */
 export interface CopyOnGitHub {
   repository: string;
   branch: string;
   workflow: boolean;
+  betaWorkflow: boolean;
 }
 
 /** The roles an administrator can give someone with the crown on workspace settings. Bots stay bots. */
@@ -1615,8 +1629,11 @@ export type WorkspaceClientFrame = { type: "ping" };
 export type WorkspaceServerFrame =
   /** Sent as the Workspace lets the socket in: who its session signs in, and the workspace as it is then. */
   | { type: "welcome"; you: Me; account: Account }
-  /** A room of theirs has a message they haven't seen, which marks it unread. Sent only to the person marked, as their mark changes. */
-  | { type: "room.unread"; roomId: RoomId }
+  /**
+   * A room of theirs has a message they haven't seen, which marks it unread, as of `at`, when that message
+   * came. Sent only to the person marked, as their mark changes.
+   */
+  | { type: "room.unread"; roomId: RoomId; at: string }
   /** They've read a room marked unread, in this tab or another. */
   | { type: "room.read"; roomId: RoomId }
   /**

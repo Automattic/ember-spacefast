@@ -84,7 +84,7 @@ describe("The most @ember thinks and writes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const most: AnswerLevels = { thinking: "medium", length: "long" };
-    expect(await response.json()).toEqual({ assistant: { accountId: SETUP.accountId, model: SETUP.model, models: MODELS, most, webTools: null, instructions: "", ...WITH_THE_FLAME } } satisfies AssistantChanged);
+    expect(await response.json()).toEqual({ assistant: { accountId: SETUP.accountId, model: SETUP.model, models: MODELS, most, webTools: null, instructions: "", promptTemplate: null, ...WITH_THE_FLAME } } satisfies AssistantChanged);
     expect(await mostShown(ada)).toEqual(most);
     expect(await (await limit(ada, { length: "short" })).json()).toMatchObject({ assistant: { most: { thinking: "medium", length: "short" } } });
     const [{ settings }] = (await workspaceSql("SELECT settings FROM accounts")) as [{ settings: string }];

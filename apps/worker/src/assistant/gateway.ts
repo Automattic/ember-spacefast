@@ -441,8 +441,7 @@ export function refusalOf(status: number, body: unknown): GatewayRefusal {
     const refusal = said("Cloudflare didn't take that API token for this account. Check the account ID, and that the token has the Workers AI Read permission.");
     return { status: 422, reason: "token", field: "apiToken", refusal };
   }
-  // "Could not route to /client/v4/accounts/…, perhaps your object identifier is invalid?"
-  if (codes.includes(7003) || codes.includes(7000)) {
+  if (isUnroutable(codes, message)) {
     return { status: 422, reason: "account", field: "accountId", refusal: said("Cloudflare has no account with that ID that the token can reach.") };
   }
   const blocked = BLOCKS.find(({ code }) => codes.includes(code));
@@ -459,6 +458,15 @@ export function refusalOf(status: number, body: unknown): GatewayRefusal {
   if (status === 429) return { status: 429, reason: "busy", refusal: said("AI Gateway is turning requests away for now, or a spend limit was reached. Try again later.") };
   return { status: 502, reason: "unanswered", refusal: said(GATEWAY_UNANSWERED) };
 }
+
+/**
+ * Whether Cloudflare's API couldn't route a request to the account, as for an ID it has no account
+ * with: 7000, "No route for that URI", or 7003, "Could not route to /client/v4/accounts/…, perhaps your
+ * object identifier is invalid?". AI Gateway answers 7003 too, as its code for a request it or the
+ * model's provider refuses as invalid, "Model execution failed (User Input Error): …", as xAI refuses a
+ * thinking level for a model that doesn't take one, which is the model's doing, not the account's.
+ */
+const isUnroutable = (codes: number[], message: string | null) => codes.includes(7000) || (codes.includes(7003) && /^Could not route to /.test(message ?? ""));
 
 /**
  * What the gateway's Guardrails and Data Loss Prevention block, by the code of the error AI Gateway

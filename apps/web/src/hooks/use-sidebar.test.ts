@@ -6,6 +6,8 @@ import { RELOAD_AFTER_HIDDEN_MS, RELOAD_SPREAD_MS, useSidebar } from "./use-side
 const ada: Me = { id: "u1", name: "Ada", administrator: false };
 const grace: Me = { id: "u2", name: "Grace", administrator: true };
 const design = { id: "r1", name: "Design", kind: "open", icon: null, unread: false, involvement: "mentions" } satisfies SidebarRoom;
+/** When a message came that marks a room unread. */
+const NOON = "2026-10-15T12:00:00.000Z";
 const general = { id: "r2", name: "general", kind: "open", icon: null, unread: false, involvement: "mentions" } satisfies SidebarRoom;
 /** Ada's sidebar with `rooms`, none of them starred. */
 const unstarred = (rooms: SidebarRoom[]): Sidebar => ({ rooms, favorites: { rooms: [], version: 0 }, sharedOrder: [], invitation: null, suggestions: [], huddles: {} });
@@ -238,10 +240,10 @@ describe("Live sidebar updates", () => {
     socket().receive({ type: "room.saved", room: { id: general.id, name: "general", kind: "open", icon: null } });
     expect(result.current.list?.rooms).toEqual([design, general]);
 
-    socket().receive({ type: "room.unread", roomId: design.id });
+    socket().receive({ type: "room.unread", roomId: design.id, at: NOON });
     socket().receive({ type: "room.involvement", roomId: design.id, involvement: "nothing" });
     socket().receive({ type: "room.saved", room: { id: design.id, name: "Roadmap", kind: "closed", icon: "rocket" } });
-    expect(result.current.list?.rooms).toEqual([{ id: design.id, name: "Roadmap", kind: "closed", icon: "rocket", unread: true, involvement: "nothing" }, general]);
+    expect(result.current.list?.rooms).toEqual([{ id: design.id, name: "Roadmap", kind: "closed", icon: "rocket", unread: true, unreadSince: NOON, involvement: "nothing" }, general]);
   });
 
   it("takes out each room the workspace socket says is gone, saying which", async () => {
@@ -305,8 +307,8 @@ describe("Unread rooms", () => {
     const { result } = await showSidebar();
     socket().connect();
     await settle();
-    socket().receive({ type: "room.unread", roomId: design.id });
-    expect(result.current.list?.rooms).toEqual([{ ...design, unread: true }]);
+    socket().receive({ type: "room.unread", roomId: design.id, at: NOON });
+    expect(result.current.list?.rooms).toEqual([{ ...design, unread: true, unreadSince: NOON }]);
     socket().receive({ type: "room.read", roomId: design.id });
     expect(result.current.list?.rooms).toEqual([design]);
   });
@@ -315,10 +317,10 @@ describe("Unread rooms", () => {
     const { result } = await showSidebar();
     const release = holdAnswers();
     socket().connect();
-    socket().receive({ type: "room.unread", roomId: design.id });
+    socket().receive({ type: "room.unread", roomId: design.id, at: NOON });
     await release();
     await settle();
-    expect(result.current.list?.rooms).toEqual([{ ...design, unread: true }]);
+    expect(result.current.list?.rooms).toEqual([{ ...design, unread: true, unreadSince: NOON }]);
   });
 });
 

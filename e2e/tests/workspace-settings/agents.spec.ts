@@ -161,6 +161,45 @@ test.describe("Agents", () => {
     expect(gone!.status()).toBe(404);
   });
 
+  test("the administrator modifies what Ember adds around an agent's instructions, with caution, which Ember keeps until Use Ember's own puts its own back", async ({ page, request }) => {
+    const scout = await makeAgent(request, "Scout");
+    const card = await openAgents(page);
+    await card.getByRole("link", { name: "Edit Scout" }).click();
+    await page.getByText("What Ember adds around them").click();
+    const caution = page.getByRole("region", { name: "Modify with caution" });
+    await expect(caution).toContainText("Every answer Scout gives starts from these words.");
+    await caution.getByRole("button", { name: "Modify" }).click();
+    const template = page.getByRole("textbox", { name: "What Ember adds around them" });
+    await expect(template).toBeFocused();
+    await expect(template).toHaveValue(/^You are \{\{name\}\}, an AI agent in the team chat "\{\{community\}\}"\./);
+    await template.fill("You are {{name}}, the scout of {{community}}.\n\n{{instructions}}\n\nAnswer {{asker}} in {{where}}.");
+    await expect(page.locator("details")).toContainText("You are Scout, the scout of");
+
+    // Try it asks with it before it's saved.
+    const tryIt = page.getByRole("region", { name: "Try it" });
+    await tryIt.getByRole("textbox", { name: "Question" }).fill("What did we decide?");
+    await tryIt.getByRole("button", { name: "Ask" }).click();
+    await expect(tryIt).toContainText(HELLO);
+    expect(gateway.asked.at(-1)!.body.system).toMatch(/^You are Scout, the scout of [^\n]+\.\n\nSum up the conversation so far as decisions and to-dos\.\n\nAnswer Ada Lovelace in a direct message\.$/);
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(rowOf(card, "Scout")).toBeVisible();
+    // Ember keeps it.
+    await page.goto(`/account/agents/${scout.id}/edit`);
+    await expect(page.getByText("Modified", { exact: true })).toBeVisible();
+    await page.getByText("What Ember adds around them").click();
+    await expect(template).toHaveValue("You are {{name}}, the scout of {{community}}.\n\n{{instructions}}\n\nAnswer {{asker}} in {{where}}.");
+
+    await page.getByRole("button", { name: "Use Ember's own" }).click();
+    await expect(page.getByText("Modified", { exact: true })).toBeHidden();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(rowOf(card, "Scout")).toBeVisible();
+    await page.goto(`/account/agents/${scout.id}/edit`);
+    await page.getByText("What Ember adds around them").click();
+    await expect(page.getByRole("region", { name: "Modify with caution" }).getByRole("button", { name: "Modify" })).toBeVisible();
+    await expect(page.getByText("Modified", { exact: true })).toBeHidden();
+  });
+
   test("an agent's name has the Agent badge in the mention prompt and on its answers, and its profile says what it does and runs on", async ({ page, request }) => {
     const recap = await makeAgent(request, "Recap");
     await useOwnAddress(page);

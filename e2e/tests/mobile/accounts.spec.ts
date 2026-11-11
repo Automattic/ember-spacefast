@@ -2,6 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import type { BotAnswer, Bots, BotSettings } from "@ember/protocol";
 import type { AgentAnswer, Agents, AgentSettings, AgentTrialAnswer } from "@ember/protocol/agents";
 import { TOP_LEVELS, type AssistantCatalog, type AssistantSettings } from "@ember/protocol/assistant";
+import { AGENT_TEMPLATE } from "@ember/protocol/prompts";
 import { changeTheWorkspace, fakeTurnstile, isolateRoom, listing, openRoom, signInAs, signInAsAdministrator, TURNSTILE_WIDGET, useOwnAddress, type Passes } from "../../fixtures";
 import { auditScreen, settle } from "./audits";
 import { expect, hasDrawerLayout, SWITCHES, test } from "./fixtures";
@@ -268,6 +269,7 @@ const ASSISTANT: AssistantSettings = {
   most: TOP_LEVELS,
   webTools: [],
   instructions: "",
+  promptTemplate: null,
   avatarUrl: "/assistant-avatar.svg",
   avatar: false,
 };
@@ -284,7 +286,8 @@ const CATALOG: AssistantCatalog = {
 
 /**
  * An agent named as long as names go, saying as much as it can of what it does, kept to rooms named as
- * long, and last changed by someone named so, as the AI assistant tab lists it and its page shows it.
+ * long, with what Ember adds around its instructions modified, and last changed by someone named so, as
+ * the AI assistant tab lists it and its page shows it.
  */
 const AGENT: AgentSettings = {
   id: "0mgk3x2a9b4c60",
@@ -299,6 +302,7 @@ const AGENT: AgentSettings = {
   webTools: ["search", "read"],
   rooms: [1, 2, 3, 4].map((n) => ({ id: `0mgk3x2a9b4c5${n}`, name: `${LONG_NAME}-${n}` })),
   instructions: "You sum up conversations for the team.\n\nList the decisions made, then the questions still open, then the to-dos, each with who took it on.",
+  promptTemplate: `${AGENT_TEMPLATE}\n\nSign off as ${LONG_NAME}.`,
   format: "messages",
   levels: { thinking: "medium", length: "long" },
   avatar: true,
@@ -323,6 +327,22 @@ async function showTheAgents(page: Page): Promise<void> {
 }
 
 /** Scrolls to each of the agent's page's cards in turn, which fit the phone. */
+/**
+ * Opens What Ember adds around the instructions and presses Modify, unless what's there is `modified`
+ * already, checking the screen at the box that asks for care, at the template and at what's under it.
+ */
+async function modifyingFits(scope: Page | Locator, screenIsFine: (options?: { denseTargets?: string[] }) => Promise<void>, modified = false) {
+  await scope.getByText("What Ember adds around them").tap();
+  const caution = scope.getByRole("region", { name: "Modify with caution" });
+  await caution.scrollIntoViewIfNeeded();
+  await screenIsFine({ denseTargets: [SWITCHES] });
+  if (!modified) await caution.getByRole("button", { name: "Modify" }).tap();
+  for (const part of [caution.getByRole("textbox", { name: "What Ember adds around them" }), caution.getByRole("button", { name: "Use Ember's own" })]) {
+    await part.scrollIntoViewIfNeeded();
+    await screenIsFine({ denseTargets: [SWITCHES] });
+  }
+}
+
 async function eachCardFits(page: Page, screenIsFine: (options?: { denseTargets?: string[] }) => Promise<void>) {
   for (const name of ["Instructions", "How it answers", "Search the web", "Rooms", "Try it"]) {
     await page.getByRole("region", { name, exact: true }).scrollIntoViewIfNeeded();
@@ -342,14 +362,14 @@ test("an administrator's AI assistant tab, listing an agent named as long as nam
   await screenIsFine({ denseTargets: [SWITCHES] });
 });
 
-test("New agent fits the phone, card by card, with what Ember adds around the instructions and Try it's answer", async ({ page, screenIsFine }) => {
+test("New agent fits the phone, card by card, with what Ember adds around the instructions, modified, and Try it's answer", async ({ page, screenIsFine }) => {
   await useOwnAddress(page);
   await showTheAgents(page);
   await page.goto("/account/agents/new");
   await signInAsAdministrator(page);
   await expect(page.getByRole("textbox", { name: "Name" })).toBeVisible();
   await screenIsFine({ denseTargets: [SWITCHES] });
-  await page.getByText("What Ember adds around them").tap();
+  await modifyingFits(page, screenIsFine);
   await page.getByRole("radio", { name: "Only the rooms I choose" }).tap();
   const tryIt = page.getByRole("region", { name: "Try it", exact: true });
   await tryIt.getByRole("textbox", { name: "Question" }).fill("What did we decide?");
@@ -360,7 +380,7 @@ test("New agent fits the phone, card by card, with what Ember adds around the in
   await screenIsFine({ denseTargets: [SWITCHES] });
 });
 
-test("an agent's settings fit the phone, with who last changed it and Delete agent", async ({ page, screenIsFine }) => {
+test("an agent's settings fit the phone, with what Ember adds around its instructions modified, who last changed it and Delete agent", async ({ page, screenIsFine }) => {
   await useOwnAddress(page);
   await showTheAgents(page);
   await page.goto("/account/edit#assistant-settings");
@@ -370,6 +390,7 @@ test("an agent's settings fit the phone, with who last changed it and Delete age
   await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue(LONG_NAME);
   await expect(page.getByRole("button", { name: "Remove avatar" })).toBeVisible();
   await screenIsFine({ denseTargets: [SWITCHES] });
+  await modifyingFits(page, screenIsFine, true);
   await eachCardFits(page, screenIsFine);
   await page.getByRole("button", { name: `Delete ${LONG_NAME}` }).scrollIntoViewIfNeeded();
   await screenIsFine({ denseTargets: [SWITCHES] });
@@ -383,7 +404,7 @@ test("@ember's page fits the phone", async ({ page, screenIsFine }) => {
   const ember = page.getByRole("region", { name: "@ember", exact: true });
   await expect(ember.getByRole("textbox", { name: "Instructions" })).toBeVisible();
   await screenIsFine({ denseTargets: [SWITCHES] });
-  await ember.getByText("What Ember adds around them").tap();
+  await modifyingFits(ember, screenIsFine);
   for (const heading of ["Instructions", "Models", "Search the web", "Limits"]) {
     await ember.getByRole("heading", { name: heading, exact: true }).scrollIntoViewIfNeeded();
     await screenIsFine({ denseTargets: [SWITCHES] });

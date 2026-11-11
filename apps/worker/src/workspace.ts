@@ -292,10 +292,10 @@ const accountOf = (
 });
 
 /** The parts of the account that Ember AI's settings are made of. */
-type AssistantAccount = Pick<JoinableAccount, "assistant" | "assistantMost" | "assistantInstructions">;
+type AssistantAccount = Pick<JoinableAccount, "assistant" | "assistantMost" | "assistantInstructions" | "assistantPromptTemplate">;
 
 /** Ember AI as the AI assistant tab shows `account`'s to administrators, but for @ember's avatar, or null while it's off. */
-const assistantSettingsOf = ({ assistant, assistantMost, assistantInstructions }: AssistantAccount): Omit<AssistantSettings, "avatarUrl" | "avatar"> | null =>
+const assistantSettingsOf = ({ assistant, assistantMost, assistantInstructions, assistantPromptTemplate }: AssistantAccount): Omit<AssistantSettings, "avatarUrl" | "avatar"> | null =>
   assistant && {
     accountId: assistant.accountId,
     model: assistant.model,
@@ -303,6 +303,7 @@ const assistantSettingsOf = ({ assistant, assistantMost, assistantInstructions }
     most: assistantMost,
     webTools: WEB_TOOLS_IN[assistant.format].length === 0 ? null : assistant.webTools,
     instructions: assistantInstructions,
+    promptTemplate: assistantPromptTemplate,
   };
 
 /**
@@ -379,16 +380,17 @@ export interface AskedModel extends Pick<AgentSetup, "model" | "modelName" | "fo
 export const asksModel = (agent: Pick<AgentSetup, "model" | "webTools">, changes: AgentChanges): boolean =>
   (changes.model !== undefined && changes.model !== agent.model) || (changes.webSearch === true && agent.webTools.length === 0);
 
-/** An agent's setup, of what it does, its instructions and its levels, with its model as `asked` found it. */
+/** An agent's setup, of what it does, its instructions and what Ember adds around them, and its levels, with its model as `asked` found it. */
 const setupOf = (
-  { description, instructions, levels }: Pick<AgentSetup, "description" | "instructions" | "levels">,
+  { description, instructions, promptTemplate, levels }: Pick<AgentSetup, "description" | "instructions" | "promptTemplate" | "levels">,
   { model, modelName, format, webTools }: Pick<AgentSetup, "model" | "modelName" | "format" | "webTools">,
-): AgentSetup => ({ description, instructions, model, modelName, format, levels, webTools });
+): AgentSetup => ({ description, instructions, promptTemplate, model, modelName, format, levels, webTools });
 
 /** Whether two setups of an agent are the same, so that saving one in place of the other changes nothing. */
 const sameSetup = (setup: AgentSetup, other: AgentSetup): boolean =>
   setup.description === other.description &&
   setup.instructions === other.instructions &&
+  setup.promptTemplate === other.promptTemplate &&
   setup.model === other.model &&
   setup.modelName === other.modelName &&
   setup.format === other.format &&
@@ -488,6 +490,8 @@ export interface AssistantAccess extends BotAccess {
   picked: boolean;
   /** An agent's instructions, or those administrators added to @ember's. */
   instructions: string;
+  /** What Ember adds around them, as administrators changed it, or null for Ember's own. */
+  promptTemplate: string | null;
   community: string;
   levels: AnswerLevels;
   /** What the gateway's model may do on the web: what Search the web lets @ember do, of what that model's format has tools for. */
@@ -1174,8 +1178,8 @@ export class Workspace extends DurableObject<Env> {
    * Takes room `roomId`'s word for who's in its huddle, as the room reported it at `at` by its own clock:
    * `huddle`, or null once nobody is. Everyone in the room hears of a report that changes what the
    * Workspace keeps, in the huddle or not. A room's reports can arrive out of order, and one made no
-   * later than the one kept counts for nothing: this answers when the one kept was made, for the room
-   * to report again after it, and null otherwise.
+   * later than the latest the Workspace has heard counts for nothing, whatever that one said: this
+   * answers when that one was made, for the room to report again after it, and null otherwise.
    */
   async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<number | null> {
     const { memberIds, outdatedBy } = await this.store.reportHuddle(roomId, at, huddle);
@@ -1218,15 +1222,15 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * Changes the most each of @ember's dials goes to for anyone's questions, which of the models people
-   * can pick it answers everyone else with, and what Ember adds to its instructions, by `changes`, as the
-   * administrator `credentials` signs in, answering Ember AI as the AI assistant tab then shows it: "off"
-   * while it's off, "not listed" for a model people can't pick, "forbidden" for anyone else, and null
-   * without a valid session. Choosing another model turns Search the web off, as Set up Ember AI choosing
-   * one does (`webToolsKept`).
+   * can pick it answers everyone else with, what Ember adds to its instructions, and what it adds around
+   * them, by `changes`, as the administrator `credentials` signs in, answering Ember AI as the AI
+   * assistant tab then shows it: "off" while it's off, "not listed" for a model people can't pick,
+   * "forbidden" for anyone else, and null without a valid session. Choosing another model turns Search
+   * the web off, as Set up Ember AI choosing one does (`webToolsKept`).
    */
   async changeAssistantSettings(
     credentials: Credentials,
-    { model, instructions, ...levels }: AssistantChanges,
+    { model, instructions, promptTemplate, ...levels }: AssistantChanges,
   ): Promise<{ assistant: AssistantSettings } | "off" | "not listed" | "forbidden" | null> {
     return this.administerAccount(credentials, async (account) => {
       if (!account.assistant) return "off";
@@ -1234,7 +1238,7 @@ export class Workspace extends DurableObject<Env> {
       if (chosen === undefined) return "not listed";
       const asked = chosen && { accountId: account.assistant.accountId, model: chosen.id, format: chosen.format };
       const assistant = asked ? { ...account.assistant, ...asked, ...webToolsKept(account.assistant, asked, new Date().toISOString()) } : account.assistant;
-      return this.storeAssistant(account, assistant, { ...account.assistantMost, ...levels }, instructions);
+      return this.storeAssistant(account, assistant, { ...account.assistantMost, ...levels }, instructions, promptTemplate);
     });
   }
 
@@ -1307,17 +1311,19 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * Stores Ember AI as `assistant` has it, while it's on, the most of each dial as `most`, and what Ember
-   * adds to @ember's instructions as `instructions`, answering Ember AI as the AI assistant tab then shows it.
+   * Stores Ember AI as `assistant` has it, while it's on, the most of each dial as `most`, what Ember adds
+   * to @ember's instructions as `instructions`, and what it adds around them as `promptTemplate`,
+   * answering Ember AI as the AI assistant tab then shows it.
    */
   private async storeAssistant(
     account: JoinableAccount,
     assistant: SavedAssistant,
     most = account.assistantMost,
     instructions = account.assistantInstructions,
+    promptTemplate = account.assistantPromptTemplate,
   ): Promise<{ assistant: AssistantSettings }> {
-    const changed = await this.storeAccount({ ...account, assistant, assistantMost: most, assistantInstructions: instructions }, () =>
-      this.store.changeAssistant(assistant, most, instructions),
+    const changed = await this.storeAccount({ ...account, assistant, assistantMost: most, assistantInstructions: instructions, assistantPromptTemplate: promptTemplate }, () =>
+      this.store.changeAssistant(assistant, most, instructions, promptTemplate),
     );
     return { assistant: (await this.assistantSettings(changed))! };
   }
@@ -1631,6 +1637,7 @@ export class Workspace extends DurableObject<Env> {
       assistant: null,
       assistantMost: TOP_LEVELS,
       assistantInstructions: "",
+      assistantPromptTemplate: null,
       huddles: null,
       deployedAddress: null,
       otherAddresses: [],
@@ -2879,7 +2886,7 @@ export class Workspace extends DurableObject<Env> {
       if ((await this.store.agentEntries()).length >= MAX_AGENTS) return "full";
       if ((await this.store.namesInUse(null)).some((name) => sameName(name, agent.name))) return "name taken";
       const id = sortableId();
-      const setup = setupOf({ ...agent, levels: { thinking: agent.thinking, length: agent.length } }, asked);
+      const setup = setupOf({ ...agent, promptTemplate: agent.promptTemplate ?? null, levels: { thinking: agent.thinking, length: agent.length } }, asked);
       await this.store.createAgent({ id, name: agent.name, rooms: agent.rooms, avatar, createdBy: user.id, ...setup }, new Date().toISOString());
       await this.publishPerson(id);
       return this.shownAgentSettings((await this.store.activeAgent(id))!);
@@ -2916,7 +2923,8 @@ export class Workspace extends DurableObject<Env> {
         // What Cloudflare's catalog calls a model can change while the model doesn't.
         const model = asked ?? { ...agent, modelName: changes.modelName ?? agent.modelName, webTools: changes.webSearch === false ? [] : agent.webTools };
         const levels = { thinking: changes.thinking ?? agent.levels.thinking, length: changes.length ?? agent.levels.length };
-        const setup = setupOf({ description: changes.description ?? agent.description, instructions: changes.instructions ?? agent.instructions, levels }, model);
+        const promptTemplate = changes.promptTemplate === undefined ? agent.promptTemplate : changes.promptTemplate;
+        const setup = setupOf({ description: changes.description ?? agent.description, instructions: changes.instructions ?? agent.instructions, promptTemplate, levels }, model);
         const rooms = changes.rooms === undefined || sameRooms(agent.rooms, changes.rooms) ? undefined : changes.rooms;
         // Taking away an avatar that isn't there changes nothing.
         const picture = avatar && (avatar.picture !== null || agent.avatar !== null) ? avatar.picture : undefined;
@@ -3399,7 +3407,7 @@ export class Workspace extends DurableObject<Env> {
     if (events.length === 0) return { pushes: [], webhooks: [], asks: [] };
     const { on: pushing } = await webPush(this.env);
     const { marks, active, pushes, webhooks, asks } = await this.store.applyRoomEvents(roomId, events, viewerIds, pushing, guestSignIn(this.env));
-    for (const [userId, unread] of marks) this.tell([userId], { type: unread ? "room.unread" : "room.read", roomId });
+    for (const [userId, at] of marks) this.tell([userId], at === null ? { type: "room.read", roomId } : { type: "room.unread", roomId, at });
     if (active) this.tell(active.userIds, { type: "room.active", roomId, at: active.at });
     return { pushes, webhooks, asks };
   }
@@ -3534,10 +3542,10 @@ export class Workspace extends DurableObject<Env> {
   /**
    * @ember in room `roomId`, with when this checked, how it asks AI Gateway, or null while its API token
    * doesn't open (`assistantGateway`), with the model whoever asked, `askerId`, picked, while people can
-   * pick it, the instructions administrators added, the community's name, what @ember may do on the web,
-   * with whichever model answers, of what its format has tools for, and Ember's addresses: null once
-   * Ember AI is off or @ember isn't in the room, so that turning Ember AI off, or taking @ember out of a
-   * room, stops what's on its way there.
+   * pick it, the instructions administrators added and what Ember adds around them, the community's
+   * name, what @ember may do on the web, with whichever model answers, of what its format has tools for,
+   * and Ember's addresses: null once Ember AI is off or @ember isn't in the room, so that turning Ember
+   * AI off, or taking @ember out of a room, stops what's on its way there.
    */
   private async assistantIn(roomId: RoomId, askerId: UserId): Promise<AssistantAccess | null> {
     // Before anything is read, as `roomAccess` takes it.
@@ -3552,15 +3560,15 @@ export class Workspace extends DurableObject<Env> {
     const webTools = account.assistant.webTools.filter((tool) => WEB_TOOLS_IN[format].includes(tool));
     const webSearchOn = account.assistant.webTools.includes("search");
     const bot = { id: ASSISTANT_ID, name: ASSISTANT_NAME };
-    const { assistantInstructions: instructions } = account;
-    return { bot, authorizedAt, gateway, picked: picked !== null, instructions, community: account.name, levels, webTools, webSearchOn, addresses: addressesOf(account) };
+    const { assistantInstructions: instructions, assistantPromptTemplate: promptTemplate } = account;
+    return { bot, authorizedAt, gateway, picked: picked !== null, instructions, promptTemplate, community: account.name, levels, webTools, webSearchOn, addresses: addressesOf(account) };
   }
 
   /**
    * Agent `agentId` in room `roomId`, as `assistantIn` finds @ember: asking AI Gateway through Ember AI's
-   * account and API token, with its own model, instructions and levels, and what it may do on the web,
-   * of what its model's format has tools for: null once Ember AI is off, or the agent is deleted or taken
-   * out of the room.
+   * account and API token, with its own model, instructions, what Ember adds around them, and levels, and
+   * what it may do on the web, of what its model's format has tools for: null once Ember AI is off, or
+   * the agent is deleted or taken out of the room.
    */
   private async agentIn(roomId: RoomId, agentId: UserId): Promise<AssistantAccess | null> {
     const authorizedAt = Date.now();
@@ -3570,7 +3578,8 @@ export class Workspace extends DurableObject<Env> {
     const gateway = opened && { ...opened, model: agent.model, format: agent.format };
     const webTools = agent.webTools.filter((tool) => WEB_TOOLS_IN[agent.format].includes(tool));
     const bot = { id: agentId, name: agent.name };
-    return { bot, authorizedAt, gateway, picked: false, instructions: agent.instructions, community: account.name, levels: agent.levels, webTools, webSearchOn: webTools.includes("search"), addresses: addressesOf(account) };
+    const { instructions, promptTemplate, levels } = agent;
+    return { bot, authorizedAt, gateway, picked: false, instructions, promptTemplate, community: account.name, levels, webTools, webSearchOn: webTools.includes("search"), addresses: addressesOf(account) };
   }
 
   /**

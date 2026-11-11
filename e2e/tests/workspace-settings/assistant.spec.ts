@@ -7,17 +7,17 @@ import { FOUND, HELLO, SOURCE, startFakeGateway, type FakeGateway } from "./fake
 // The AI assistant tab's Ember AI card and Set up Ember AI, @ember's page, with Add a model, and @ember
 // answering, on the second test server, which lists Cloudflare's model catalog and asks models through
 // the AI Gateway this spec fakes. Each test leaves the workspace as a new one is: Ember AI off, its dials
-// where they start, with no model picked, nothing added to @ember's instructions, and @ember's avatar
-// Ember's flame.
+// where they start, with no model picked, nothing added to @ember's instructions, Ember's own around
+// them, and @ember's avatar Ember's flame.
 
 let gateway: FakeGateway;
 test.beforeAll(async () => void (gateway = await startFakeGateway()));
 test.afterAll(() => gateway.close());
 test.afterEach(async ({ request }) => {
   const headers = await asAdministrator(request);
-  // Ember keeps the dials, @ember's instructions and the model someone picked while Ember AI is off, so
-  // they go back first, the most and the instructions only while it's on.
-  const unlimited = await request.patch("/api/account/assistant", { data: { ...TOP_LEVELS, instructions: "" }, headers });
+  // Ember keeps the dials, @ember's instructions, what Ember adds around them and the model someone picked
+  // while Ember AI is off, so they go back first, the most and the instructions only while it's on.
+  const unlimited = await request.patch("/api/account/assistant", { data: { ...TOP_LEVELS, instructions: "", promptTemplate: null }, headers });
   expect([200, 409], await unlimited.text()).toContain(unlimited.status());
   const unpicked = await request.patch("/api/users/me/assistant", { data: { ...DEFAULT_LEVELS, model: null }, headers });
   expect(unpicked.status(), await unpicked.text()).toBe(200);
@@ -284,6 +284,35 @@ test.describe("Ember AI", () => {
     await askEmber(page, "Colour or color?");
     const [told] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
     expect(told!.content).toMatch(/^You are Ember, [^\n]+\n\nAnswer in British English\.\n\nYou're asked in the room "general"\./);
+  });
+
+  test("the administrator modifies what Ember adds around @ember's instructions, with caution, which @ember follows once it's saved", async ({ page, request }) => {
+    const saved = await request.put("/api/account/assistant", { data: { ...AI_GATEWAY_ACCOUNT, model: "@cf/zai-org/glm-4.7-flash" }, headers: await asAdministrator(request) });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const card = await openEmber(page);
+    await card.getByText("What Ember adds around them").click();
+    const caution = card.getByRole("region", { name: "Modify with caution" });
+    await expect(caution).toContainText("Every answer @ember gives starts from these words.");
+    await caution.getByRole("button", { name: "Modify" }).click();
+    const template = card.getByRole("textbox", { name: "What Ember adds around them" });
+    await expect(template).toBeFocused();
+    const scribe = "You are {{name}}, the scribe of {{community}}.\n\n{{instructions}}\n\nYou're asked in {{where}}. Answer {{asker}} in at most {{words}} words.";
+    await template.fill(scribe);
+    await expect(card.locator("details")).toContainText("You are Ember, the scribe of");
+    await caution.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("alert")).toHaveText("Changes saved.");
+    await expect(caution.getByRole("button", { name: "Save" })).toBeDisabled();
+    // Ember keeps it.
+    await page.reload();
+    const kept = page.getByRole("region", { name: "@ember", exact: true });
+    await expect(kept.getByText("Modified", { exact: true })).toBeVisible();
+    await kept.getByText("What Ember adds around them").click();
+    await expect(kept.getByRole("textbox", { name: "What Ember adds around them" })).toHaveValue(scribe);
+
+    // Without instructions added, nor the space they'd take.
+    await askEmber(page, "Colour or color?");
+    const [told] = gateway.asked.at(-1)!.body.messages as Array<{ role: string; content: string }>;
+    expect(told!.content).toMatch(/^You are Ember, the scribe of [^\n]+\.\n\nYou're asked in the room "general"\. Answer Ada Lovelace in at most [\d,]+ words\.$/);
   });
 
   test("the administrator turns Ember AI off, once they're sure", async ({ page, request }) => {

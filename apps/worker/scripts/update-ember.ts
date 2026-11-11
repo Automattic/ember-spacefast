@@ -10,7 +10,11 @@
 // pull request whose merge deploys the update (docs/self-hosting.md#updating). Without --publish, as
 // for a copy on GitLab, run it in a clone of the copy, then push the branch it makes:
 //
-//   node apps/worker/scripts/update-ember.ts [--publish]
+//   node apps/worker/scripts/update-ember.ts [--publish] [--beta]
+//
+// Ember's betas, such as v1.2.0-beta.1, which come before its releases, come only to a copy that asks
+// for one, with --beta or the workflow's box for it, and to one that runs a beta already, which is
+// brought the betas after it until a release passes it (docs/self-hosting.md#betas).
 
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
@@ -30,13 +34,16 @@ const EMBER_REPOSITORY = process.env.EMBER_REPOSITORY || `${EMBER}.git`;
  */
 const EMBER_REFS = "refs/ember/";
 const EMBER_MAIN = `${EMBER_REFS}main`;
-const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+/** A release's tag, such as v1.2.3, or a beta's of it, such as v1.2.3-beta.4, which comes before the release. */
+const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/;
 /**
  * What names the release an update brought: the trailer in its commit's message, or the title of
  * its pull request, which a squash merge may keep alone.
  */
-const RELEASE_NAMED = /^(?:Ember-Release: |Update Ember to )(v\d+\.\d+\.\d+)\b/gm;
-const UPDATE_TITLE = /^Update Ember to v\d+\.\d+\.\d+$/;
+const RELEASE_NAMED = /^(?:Ember-Release: |Update Ember to )(v\d+\.\d+\.\d+(?:-beta\.\d+)?)\b/gm;
+const UPDATE_TITLE = /^Update Ember to v\d+\.\d+\.\d+(?:-beta\.\d+)?$/;
+/** The release that an update's branch, update-ember/v1.2.3, or its issue's title, Update Ember to v1.2.3, offers. */
+const OFFERED = /^(?:update-ember\/|Update Ember to )(v\d+\.\d+\.\d+(?:-beta\.\d+)?)$/;
 /** The trailer an update's commit has for each conflict git couldn't mark, which nothing in its file shows. */
 const NOTED_CONFLICT = /^Ember-Conflict: (.+)$/gm;
 /** A workflow's token can't change workflows, so a published update leaves the copy's as they are. */
@@ -44,6 +51,8 @@ const WORKFLOWS = ".github/workflows";
 const UPDATE_WORKFLOW = `${WORKFLOWS}/update-ember.yml`;
 /** The Worker's settings, where Deploy to Cloudflare writes what the deployer chose in its form. */
 const WRANGLER = "wrangler.jsonc";
+/** What Deploy to Cloudflare changes in what it copies: it writes names into the Worker's settings and the package's, and leaves out .github. */
+const BUTTONS_CHANGES = [WRANGLER, "package.json", ".github"];
 /** The settings Deploy to Cloudflare's form writes outside any binding: the Worker's name, and where its messages live. */
 const DEPLOYERS_SETTINGS = ["name", "vars.STORAGE_BACKEND"];
 /**
@@ -69,6 +78,7 @@ const GIT_NEEDED = [2, 40, 0];
 interface Release {
   tag: string;
   commit: string;
+  /** Its numbers, then its beta's, which is Infinity for a release, as it comes after its betas. */
   version: number[];
 }
 
@@ -115,7 +125,20 @@ const gitSays = (args: string[]) => run("git", args).status === 0;
 const isAncestor = (older: string, newer: string) => gitSays(["merge-base", "--is-ancestor", older, newer]);
 const lastLine = (output: string) => output.trim().split("\n").at(-1) ?? "";
 
-const compareVersions = (a: number[], b: number[]) => a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]!;
+/** Orders versions by their numbers, first to last, so that a beta, whose last is its number, comes before its release. */
+function compareVersions(a: number[], b: number[]): number {
+  const at = a.findIndex((number, place) => number !== b[place]);
+  return at === -1 ? 0 : a[at]! < b[at]! ? -1 : 1;
+}
+
+/** A tag's version, as `Release` has it, if it names one. */
+function versionOf(tag: string): number[] | undefined {
+  const [, ...numbers] = RELEASE_TAG.exec(tag) ?? [];
+  return numbers.length > 0 ? numbers.map((number) => (number === undefined ? Infinity : Number(number))) : undefined;
+}
+
+const isBeta = (version: number[]) => version[3] !== Infinity;
+const kindOf = (release: Release) => (isBeta(release.version) ? "beta" : "release");
 
 function requireGit(): void {
   const version = git(["--version"]);
@@ -129,7 +152,7 @@ function fetchEmber(): void {
   git(["fetch", "--quiet", "--no-tags", "--force", EMBER_REPOSITORY, `+refs/heads/main:${EMBER_MAIN}`, `+refs/tags/v*:${EMBER_REFS}v*`]);
 }
 
-/** Ember's releases, oldest first: its tags named for a version. */
+/** Ember's releases and betas, oldest first: its tags named for a version. */
 function releases(): Release[] {
   const listing = git(["for-each-ref", "--format=%(refname:lstrip=2) %(objectname) %(*objectname)", EMBER_REFS]);
   return listing
@@ -137,31 +160,56 @@ function releases(): Release[] {
     .flatMap((line) => {
       // A lightweight tag's object is its commit; an annotated tag's commit is the one it points at.
       const [tag = "", object = "", tagged] = line.split(" ");
-      const version = RELEASE_TAG.exec(tag)?.slice(1).map(Number);
+      const version = versionOf(tag);
       return version ? [{ tag, commit: tagged || object, version }] : [];
     })
     .sort((a, b) => compareVersions(a.version, b.version));
 }
 
 /**
- * The commit of Ember's main that Deploy to Cloudflare copied: the last one before the copy's first
- * commit was made, since that commit's date is all that ties the copy to Ember's history.
+ * The commit of Ember's that Deploy to Cloudflare copied. A copy of a release or a beta, as a button
+ * that names its tag makes, holds just what the tag does but for what the button changes, so it's the
+ * commit of the tag that the copy's first commit says it's at. Any other is a copy of Ember's main,
+ * made from the last commit there before the copy's first was made, since that commit's date is all
+ * that ties the copy to Ember's history.
  */
-function madeFrom(): string | undefined {
+function madeFrom(all: Release[]): string | undefined {
   const roots = git(["rev-list", "--max-parents=0", "HEAD"]).split("\n");
-  const dates = git(["show", "--no-patch", "--format=%ct %cI", ...roots]).split("\n").map((line) => line.split(" "));
-  const [, created] = dates.sort(([a], [b]) => Number(a) - Number(b))[0]!;
+  const dates = git(["show", "--no-patch", "--format=%ct %cI %H", ...roots]).split("\n").map((line) => line.split(" "));
+  const [, created, first = ""] = dates.sort(([a], [b]) => Number(a) - Number(b))[0]!;
+  const tagged = all.find((release) => release.tag === tagAt(first));
+  if (tagged && holdsTheSame(first, tagged.commit)) return tagged.commit;
   return git(["rev-list", "-1", "--first-parent", `--before=${created}`, EMBER_MAIN]) || undefined;
 }
 
-/** The version the copy's code is at, as Ember's own file says, if it says one. */
-function versionHere(): number[] | undefined {
+/** Whether the copy's commit `copied` holds just what Ember's `commit` does, but for what Deploy to Cloudflare changes. */
+const holdsTheSame = (copied: string, commit: string) =>
+  gitSays(["diff", "--quiet", commit, copied, "--", ...BUTTONS_CHANGES.map((changed) => `:(top,exclude)${changed}`)]);
+
+/** The tag of the version that Ember's own file says `revision` is at, such as v1.2.3, if it says one. */
+function tagAt(revision: string): string | undefined {
   try {
-    const { version } = JSON.parse(fileAt("HEAD", VERSION_FILE) ?? "") as { version?: unknown };
-    return RELEASE_TAG.exec(`v${String(version)}`)?.slice(1).map(Number);
+    const { version } = JSON.parse(fileAt(revision, VERSION_FILE) ?? "") as { version?: unknown };
+    return versionOf(`v${String(version)}`) ? `v${String(version)}` : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** The version the copy's code is at, as Ember's own file says, if it says one. */
+const versionHere = () => versionOf(tagAt("HEAD") ?? "");
+
+/**
+ * The release to bring the copy up to: Ember's newest, or with `betas` asked for, its newest beta, where
+ * that's newer. A copy that runs a beta is brought the betas after it too, until a release passes it,
+ * which it's brought instead, and then releases alone.
+ */
+function newestFor(all: Release[], betas: boolean): Release | undefined {
+  const newestRelease = all.filter((release) => !isBeta(release.version)).at(-1);
+  const here = versionHere();
+  const passed = here !== undefined && newestRelease !== undefined && compareVersions(newestRelease.version, here) > 0;
+  const onBeta = here !== undefined && isBeta(here) && !passed;
+  return betas || onBeta ? all.at(-1) : newestRelease;
 }
 
 /**
@@ -182,7 +230,7 @@ function releasesBrought(all: Release[]): Release[] {
  */
 function baseOf(newest: Release, all: Release[]): string {
   const shared = run("git", ["merge-base", "HEAD", newest.commit]);
-  const parted = shared.status === 0 ? shared.stdout.trim() : madeFrom();
+  const parted = shared.status === 0 ? shared.stdout.trim() : madeFrom(all);
   const candidates = [parted, ...releasesBrought(all).map((release) => release.commit)];
   const known = candidates.filter((commit) => commit !== undefined);
   if (known.length === 0) throw new Error("This copy's first commit is older than Ember's, so it can't be a copy of Ember.");
@@ -379,6 +427,13 @@ function details(update: Update): string[] {
     `What's new: ${update.releases.map(releaseLink).join(", ")}, and [every change](${EMBER}/compare/${base.commit}...${release.tag}). ` +
       "Whatever your copy changed stays as it is, such as your Worker's and bucket's names, and Ember's tables bring themselves up to date as each opens after the deploy.",
   ];
+  if (isBeta(release.version)) {
+    lines.push(
+      "",
+      "**This is a beta** of Ember's next release, which a copy is offered only when it asks for one or runs one already: " +
+        "the betas after it come the same way, then the release, and from then on releases alone.",
+    );
+  }
   if (update.conflicts.length > 0) {
     lines.push(
       "",
@@ -431,20 +486,25 @@ function listed<T>(args: string[]): T[] {
 }
 
 /**
- * Closes the pull requests and issues for updates the copy needs no more: all of them once it has
- * Ember's newest release, or those for older releases than the one `offered` at `where`.
+ * Closes the pull requests and issues for updates the copy needs no more: those for older releases
+ * than `newest`, which `where` offers, or once the copy has `newest`, those up to it. One for a newer
+ * beta, which the copy asked for, stays open until a release passes it.
  */
-function closeStale(offered?: { update: Update; where: string }): void {
-  const release = offered?.update.release;
-  const reason = offered ? `Ember ${offered.update.release.tag} is out, so ${offered.where} brings this copy up to it instead.` : "This copy has Ember's newest release now.";
+function closeStale(newest: Release, where?: string): void {
+  const reason = where ? `Ember ${newest.tag} is out, so ${where} brings this copy up to it instead.` : `This copy has Ember's newest ${kindOf(newest)} now.`;
+  const isStale = (offer: string) => {
+    const version = versionOf(OFFERED.exec(offer)?.[1] ?? "");
+    const order = version ? compareVersions(version, newest.version) : -1;
+    return where ? order < 0 : order <= 0;
+  };
   for (const pull of listed<{ number: number; headRefName: string }>(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,headRefName"])) {
-    if (pull.headRefName.startsWith("update-ember/") && (!release || pull.headRefName !== branchOf(release))) {
+    if (pull.headRefName.startsWith("update-ember/") && isStale(pull.headRefName)) {
       run("gh", ["pr", "close", String(pull.number), "--delete-branch", "--comment", reason]);
     }
   }
   const issues = listed<{ number: number; title: string }>(["issue", "list", "--state", "open", "--limit", "100", "--json", "number,title"]);
   for (const issue of issues) {
-    if (UPDATE_TITLE.test(issue.title) && (!release || issue.title !== titleOf(release))) run("gh", ["issue", "close", String(issue.number), "--comment", reason]);
+    if (UPDATE_TITLE.test(issue.title) && isStale(issue.title)) run("gh", ["issue", "close", String(issue.number), "--comment", reason]);
   }
 }
 
@@ -512,7 +572,7 @@ function publish(update: Update): void {
   const branch = branchOf(update.release);
   const offer = offerOf(update.release);
   if (offer?.state === "OPEN") {
-    closeStale({ update, where: offer.url });
+    closeStale(update.release, offer.url);
     return report(`${offer.url} offers this copy Ember ${update.release.tag} already.`);
   }
   // Closed, or merged and since reverted: either way, its release is turned down.
@@ -530,7 +590,7 @@ function publish(update: Update): void {
   const opened = run("gh", ["pr", "create", "--base", main, "--head", branch, "--title", title, "--body-file", "-", ...draft], body);
   if (opened.status === 0) {
     const where = lastLine(opened.stdout);
-    closeStale({ update, where });
+    closeStale(update.release, where);
     return report(`Opened ${where}, which brings this copy up to Ember ${update.release.tag}.`);
   }
   if (!PULL_REQUESTS_NOT_PERMITTED.test(opened.stderr)) throw new Error(`gh pr create failed: ${opened.stderr.trim()}`);
@@ -541,12 +601,14 @@ function publish(update: Update): void {
     throw new Error(`gh issue create failed too: ${filed.stderr.trim()}`);
   }
   const where = lastLine(filed.stdout);
-  closeStale({ update, where });
+  closeStale(update.release, where);
   report(`GitHub doesn't let this workflow open pull requests, so ${where} links to the one that brings this copy up to Ember ${update.release.tag}.`);
 }
 
 function update(args: string[]): void {
   const publishing = args.includes("--publish");
+  // The Update Ember workflow's box for a beta, which running it from the Actions tab offers, says so as EMBER_BETA.
+  const betas = args.includes("--beta") || process.env.EMBER_BETA === "true";
   requireGit();
   process.chdir(git(["rev-parse", "--show-toplevel"]));
   if (git(["rev-parse", "--is-shallow-repository"]) === "true") {
@@ -554,12 +616,12 @@ function update(args: string[]): void {
   }
   fetchEmber();
   const all = releases();
-  const newest = all.at(-1);
+  const newest = newestFor(all, betas);
   if (!newest) return report("Ember has no releases yet.");
   const base = baseOf(newest, all);
   if (isAncestor(newest.commit, base)) {
-    if (publishing) closeStale();
-    return report(`This copy has everything in Ember's newest release, ${newest.tag}.`);
+    if (publishing) closeStale(newest);
+    return report(`This copy has everything in Ember's newest ${kindOf(newest)}, ${newest.tag}.`);
   }
   const merged = merge(base, newest);
   const wrangler = wranglerWithCopysNames(base, newest);
@@ -572,7 +634,10 @@ function update(args: string[]): void {
     return report(`Ember ${newest.tag} changes nothing this copy has${workflows.changed ? " but Ember's own workflows" : ""}.`);
   }
   const from = { commit: base, name: nameOf(base, all) };
-  const brought = all.filter((release) => compareVersions(release.version, newest.version) <= 0 && !isAncestor(release.commit, base));
+  // A release brings the releases since the base; a beta, the betas since it too.
+  const brought = all.filter(
+    (release) => compareVersions(release.version, newest.version) <= 0 && !isAncestor(release.commit, base) && (isBeta(newest.version) || !isBeta(release.version)),
+  );
   const result = { release: newest, base: from, releases: brought, commit: commitOf(tree, newest, from, conflicts), conflicts, workflows };
   if (publishing) publish(result);
   else makeBranch(result);

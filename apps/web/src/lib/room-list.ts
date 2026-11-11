@@ -105,8 +105,24 @@ export const markedUnread = (room: SidebarRoom, currentRoomId: RoomId | null) =>
  */
 export function withRoom(rooms: SidebarRoom[], room: Room): SidebarRoom[] {
   return rooms.some((r) => r.id === room.id)
-    ? rooms.map((r) => (r.id === room.id ? { ...room, ...laterActivity(r, room), unread: r.unread, involvement: r.involvement } : r))
+    ? rooms.map((r) => (r.id === room.id ? { ...room, ...laterActivity(r, room), ...markOf(r), involvement: r.involvement } : r))
     : [...rooms, { ...room, unread: false, involvement: startingInvolvement(room) }];
+}
+
+/** `listed`'s unread mark, and since when, when it's marked. */
+const markOf = ({ unread, unreadSince }: SidebarRoom): Pick<SidebarRoom, "unread" | "unreadSince"> => (unreadSince === undefined ? { unread } : { unread, unreadSince });
+
+/**
+ * `room` marked unread as of `at`, or read when that's null. The server tells of a mark only as it makes
+ * one, so a room marked already takes the new time: the read between them came in the same events as the
+ * message after it, and the server told only of the mark they leave.
+ */
+function marked(room: SidebarRoom, at: string | null): SidebarRoom {
+  if (at === null) {
+    const { unreadSince: _, ...read } = room;
+    return { ...read, unread: false };
+  }
+  return { ...room, unread: true, unreadSince: at };
 }
 
 /** `listed`'s time last active, when it's a DM and that's later than `room`'s. */
@@ -134,7 +150,7 @@ function withHuddle(huddles: Sidebar["huddles"], roomId: RoomId, huddle: LiveHud
 export type RoomChange =
   | { type: "saved"; room: Room }
   | { type: "gone"; roomId: RoomId }
-  | { type: "marked"; roomId: RoomId; unread: boolean }
+  | { type: "marked"; roomId: RoomId; at: string | null }
   | { type: "active"; roomId: RoomId; at: string }
   | { type: "huddle"; roomId: RoomId; huddle: LiveHuddle | null }
   | { type: "involved"; roomId: RoomId; involvement: Involvement }
@@ -178,7 +194,7 @@ function changed(list: Sidebar, change: SidebarChange): Sidebar {
       return { ...list, rooms: list.rooms.filter((room) => room.id !== change.roomId), favorites, huddles: withHuddle(list.huddles, change.roomId, null) };
     }
     case "marked":
-      return { ...list, rooms: list.rooms.map((room) => (room.id === change.roomId ? { ...room, unread: change.unread } : room)) };
+      return { ...list, rooms: list.rooms.map((room) => (room.id === change.roomId ? marked(room, change.at) : room)) };
     case "active":
       return { ...list, rooms: withActivity(list.rooms, change.roomId, change.at) };
     case "huddle":

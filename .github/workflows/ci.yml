@@ -19,10 +19,12 @@ jobs:
       - uses: actions/checkout@v5
       - name: Released migrations stay as they are
         # Deployments apply each migration once, by name, so a change to a released one would reach
-        # only new deployments, never those that update: a schema change goes in a new migration.
+        # only new deployments, never those that update: a schema change goes in a new migration. A
+        # beta's are released too, to the copies that take it.
         run: |
           # Apart from a pipe, so a failed lookup fails the step rather than reading as no releases.
-          releases=$(git ls-remote --tags --refs --sort=-v:refname origin 'refs/tags/v*')
+          # Newest first, with a beta, such as v1.2.0-beta.1, before its release, which has all it has.
+          releases=$(git -c versionsort.suffix=- ls-remote --tags --refs --sort=-v:refname origin 'refs/tags/v*')
           release=$(echo "$releases" | head -n 1 | cut -f 2)
           if [ -z "$release" ]; then exit 0; fi
           git fetch --quiet --no-tags --depth=1 origin "+$release:$release"

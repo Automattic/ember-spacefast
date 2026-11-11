@@ -47,7 +47,7 @@ import { openDb, type Db } from "./db";
 import type { Env } from "./env";
 import { attachedFile, Blobs, objectKey, previewKey, type Identified, type RoomBlob, type UploadedPart } from "./files/blobs";
 import type { ImageSize } from "./files/images";
-import { storeArriving, type ArrivingFile, type StreamedFile } from "./files/streamed";
+import { storeArriving, withPreview, type ArrivingFile, type StreamedFile } from "./files/streamed";
 import { NO_STORAGE, type Uploader } from "./files/uploads";
 import { Huddle, HUDDLE_CHECK_MS, HUDDLE_TAG } from "./huddles/room";
 import { base36, sortableId } from "./ids";
@@ -512,6 +512,17 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   /**
+   * The thread of the message `parentId` names, for a bot reading the room: the message and its newest
+   * replies, oldest first, or null when the room has no such message or it's a reply, which has no thread.
+   */
+  async botThread(roomId: RoomId, parentId: string): Promise<Message[] | null> {
+    return this.serially(async () => {
+      const { parent, messages } = await this.storeFor(roomId).thread(parentId, HISTORY_PAGE_SIZE);
+      return parent && [parent, ...messages];
+    });
+  }
+
+  /**
    * Replaces the text of the bot's message `messageId` with `markup`: as a socket's message.update does,
    * answering the message as it is now. Answers `NOT_FOUND` when the room turns the bot away, as
    * `createBotMessage` does, or has no such message, `FORBIDDEN` when it's someone else's, then why the
@@ -931,7 +942,7 @@ export class ChatRoom extends DurableObject<Env> {
   /** `blob`, which R2 has all of now, as it came to in `file`, as the message it's posted as keeps it, at `now`. */
   private streamed(roomId: RoomId, blob: RoomBlob, file: StreamedFile, now: string): PostedFile {
     const blobs = this.blobsFor(roomId);
-    return { file: attachedFile({ ...blob, byteSize: file.byteSize }, file.identified), finished: (messageId) => blobs.streamed(blob.id, messageId, now, file) };
+    return { file: attachedFile({ ...blob, byteSize: file.byteSize, preview: file.preview ?? null }, file.identified), finished: (messageId) => blobs.streamed(blob.id, messageId, now, file) };
   }
 
   /**
@@ -1171,7 +1182,7 @@ export class ChatRoom extends DurableObject<Env> {
     const found = await workspace(this.env)
       .botWebhook(roomId, webhook.bot.id)
       .catch(async (error: unknown) => {
-        if ("kept" in reply) await this.env.FILES?.delete(objectKey(reply.kept.key));
+        if ("kept" in reply) await this.env.FILES?.delete([objectKey(reply.kept.key), previewKey(reply.kept.key)]);
         throw error;
       });
     const access = found?.url === webhook.url ? found : null;
@@ -1213,7 +1224,7 @@ export class ChatRoom extends DurableObject<Env> {
     });
     await this.wakeAt(roomId, startedAt + UNFINISHED_UPLOAD_KEPT_MS);
     const stored = await storeArriving(files, objectKey(key), file);
-    return stored && { key, file: stored };
+    return stored && { key, file: await withPreview(this.env, files, key, file.filename, stored) };
   }
 
   /**
@@ -1234,7 +1245,7 @@ export class ChatRoom extends DurableObject<Env> {
       await this.postFile(store, access.bot, blob, this.streamed(roomId, blob, file, now), now, { kind: "reply", inThread });
       return null;
     });
-    if (refused) await this.env.FILES?.delete(objectKey(key));
+    if (refused) await this.env.FILES?.delete([objectKey(key), previewKey(key)]);
     return refused;
   }
 
@@ -1270,11 +1281,11 @@ export class ChatRoom extends DurableObject<Env> {
    * in what it read, or the note it posts when its model doesn't answer, saying why, which the room logs.
    */
   private async saidTo(roomId: RoomId, access: AssistantAccess, { author, roomName }: AssistantAsk, message: Message): Promise<Said> {
-    const { bot, gateway, picked, instructions, community, levels, webTools, webSearchOn } = access;
+    const { bot, gateway, picked, instructions, promptTemplate, community, levels, webTools, webSearchOn } = access;
     if (!gateway) return { text: NOTES["unopened token"] };
     const conversation = await this.conversationOf(this.storeFor(roomId), message);
     const where = { community, roomName, inThread: message.parentId !== undefined };
-    const asked = questionFor({ ...bot, instructions }, conversation, author, where, levels, new Date(), webTools, webSearchOn);
+    const asked = questionFor({ ...bot, instructions, promptTemplate }, conversation, author, where, levels, new Date(), webTools, webSearchOn);
     const [answered, people] = await Promise.all([ask(this.env, gateway, asked, waitFor(asked)), this.peopleWhoWrote(conversation)]);
     if (!("refusal" in answered)) {
       const text = answered.cut ? `${answered.text}\n\n…` : answered.text;

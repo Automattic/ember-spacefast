@@ -101,15 +101,29 @@ describe("Unread rooms", () => {
   const list = sidebar([room("r1", "Design"), room("r2", "general", true)]);
   const loaded = roomListReducer(NO_ROOM_LIST, { type: "loaded", list });
 
+  /** `listed`, marked unread as of `at`. */
+  const since = (listed: SidebarRoom, at = NOON): SidebarRoom => ({ ...listed, unread: true, unreadSince: at });
+
   it("marks a room unread or read, and keeps its mark when it's saved, as a new room has none", () => {
-    const marked = roomListReducer(loaded, { type: "marked", roomId: "r1", unread: true });
-    expect(marked.list!.rooms).toEqual([room("r1", "Design", true), room("r2", "general", true)]);
-    expect(roomListReducer(marked, { type: "marked", roomId: "r2", unread: false }).list!.rooms).toEqual([room("r1", "Design", true), room("r2", "general")]);
+    const marked = roomListReducer(loaded, { type: "marked", roomId: "r1", at: NOON });
+    expect(marked.list!.rooms).toEqual([since(room("r1", "Design")), room("r2", "general", true)]);
+    expect(roomListReducer(marked, { type: "marked", roomId: "r2", at: null }).list!.rooms).toEqual([since(room("r1", "Design")), room("r2", "general")]);
 
     const renamed: Room = { id: "r1", kind: "open", name: "Product design", icon: null };
-    expect(withRoom(marked.list!.rooms, renamed)).toEqual([room("r1", "Product design", true), room("r2", "general", true)]);
+    expect(withRoom(marked.list!.rooms, renamed)).toEqual([since(room("r1", "Product design")), room("r2", "general", true)]);
     const finance: Room = { id: "r3", kind: "open", name: "Finance", icon: null };
     expect(withRoom(marked.list!.rooms, finance).at(-1)).toEqual(room("r3", "Finance"));
+  });
+
+  it("takes the time the server marks a room unread as of, even over a mark whose read it never told", () => {
+    const later = "2026-10-15T12:05:00.000Z";
+    const marked = roomListReducer(loaded, { type: "marked", roomId: "r1", at: NOON });
+    // The server read the room and marked it again in one go, telling only of the new mark.
+    const again = roomListReducer(marked, { type: "marked", roomId: "r1", at: later });
+    expect(again.list!.rooms[0]).toEqual(since(room("r1", "Design"), later));
+    const read = roomListReducer(again, { type: "marked", roomId: "r1", at: null });
+    expect(read.list!.rooms[0]).toEqual(room("r1", "Design"));
+    expect(roomListReducer(read, { type: "marked", roomId: "r1", at: later }).list!.rooms[0]).toEqual(since(room("r1", "Design"), later));
   });
 
   it("marks a room's row unread unless the tab shows the room", () => {
@@ -121,7 +135,7 @@ describe("Unread rooms", () => {
 
   it("keeps a mark made while a list is on its way over the one the list has", () => {
     const asked = roomListReducer(loaded, { type: "asked" });
-    const read = roomListReducer(asked, { type: "marked", roomId: "r2", unread: false });
+    const read = roomListReducer(asked, { type: "marked", roomId: "r2", at: null });
     expect(roomListReducer(read, { type: "loaded", list }).list!.rooms).toEqual([room("r1", "Design"), room("r2", "general")]);
   });
 });

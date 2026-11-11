@@ -213,7 +213,9 @@ was made.
    [Storage](docs/self-hosting.md#storage-durable-object-sqlite-or-d1) explains; either way, a team of
    more than about 100 people a day needs Workers Paid. If Cloudflare first has you connect GitHub or
    GitLab, it comes back to a page for deploying one of your own repositories instead: click the button
-   again, and Ember's form opens with your account connected.
+   again, and Ember's form opens with your account connected. If that first build stops with
+   `No package.json ... was found`, Cloudflare built a commit from before it finished copying Ember:
+   push any commit to your copy, an edit to its README in GitHub's editor will do, and it builds again.
 3. Open your Worker's address, `https://<your Worker>`, type the setup password, and create your
    community and its administrator. Only that password opens setup, so nobody who finds the address
    first can take it over. Forgot it? Give `EMBER_SETUP_PASSWORD` a new value in the Worker's

@@ -24,6 +24,8 @@ const rooms: SharedRoom[] = [
   { id: "general", name: "general", kind: "open", icon: null },
   { id: "random", name: "random", kind: "open", icon: null },
 ];
+/** When a message came that marks a room unread. */
+const NOON = "2026-10-15T12:00:00.000Z";
 /** Ada's DM with Grace. */
 const withGrace: DirectRoom = { id: "d1", kind: "direct", members: [{ id: ada.id, name: ada.name }, { id: "u2", name: "Grace" }], activeAt: "2026-10-15T12:00:00.000Z" };
 /**
@@ -939,7 +941,7 @@ describe("New releases", () => {
     const idle = idleCallbacks();
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-      "GET /api/account/release": () => Response.json({ release: "0.1", newest: { release: "0.2", notes: NOTES, newer: true }, copy: null }),
+      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, newestBeta: null, copy: null }),
     });
     const { user } = showWorkspace("/rooms/random", asAdministrator);
     expect(await roomHeading()).toHaveTextContent("random");
@@ -959,7 +961,7 @@ describe("New releases", () => {
   it("asks afresh each time an administrator opens Admin, once the browser is idle, but not for going on within it, or leaving", async () => {
     const idle = idleCallbacks();
     let newest = "0.2";
-    const answer = () => Response.json({ release: "0.1", newest: { release: newest, notes: NOTES, newer: true }, copy: null });
+    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, notes: NOTES, newer: true }, newestBeta: null, copy: null });
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
       "GET /api/account/release": answer,
@@ -1007,7 +1009,7 @@ describe("New releases", () => {
       // Asked afresh alone, as the page opens in Admin.
       serve({
         "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-        "POST /api/account/release_checks": () => Response.json({ release: "0.1", newest, copy: null }),
+        "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, newestBeta: null, copy: null }),
       });
       const { unmount } = showWorkspace("/account/edit", asAdministrator);
       await communitySettings();
@@ -1019,6 +1021,55 @@ describe("New releases", () => {
       unmount();
       vi.mocked(fetch).mockClear();
     }
+  });
+
+  it("marks Admin for the beta after a beta's own, which Update Ember brings, but not for a beta a release could try", async () => {
+    const betaNotes = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0-beta.2";
+    const newestBeta = { release: "0.2 beta 2", notes: betaNotes, newer: true };
+    for (const [check, card, mark] of [
+      [{ release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.2 beta 2 is available", "Ember 0.2 beta 2 is available"],
+      [{ release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.1", null],
+    ] as const) {
+      const idle = idleCallbacks();
+      serve({
+        "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
+        "POST /api/account/release_checks": () => Response.json(check),
+      });
+      const { unmount } = showWorkspace("/account/edit", asAdministrator);
+      await communitySettings();
+      await vi.waitFor(() => expect(idle).toHaveLength(2));
+      act(() => idle.forEach((run) => run()));
+      expect(await screen.findByRole("region", { name: card })).toBeInTheDocument();
+      const admin = screen.getByRole("link", { name: "Admin" });
+      if (mark) expect(admin).toHaveAccessibleDescription(mark);
+      else expect(admin).not.toHaveAccessibleDescription();
+      unmount();
+      vi.mocked(fetch).mockClear();
+    }
+  });
+
+  it("asks afresh at once for General's Check for updates, marking Admin once the Worker hears of a newer release", async () => {
+    const idle = idleCallbacks();
+    let newest = { release: "0.1", notes: NOTES, newer: false };
+    serve({
+      "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
+      "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, checkedAt: new Date().toISOString(), newestBeta: null, copy: null }),
+    });
+    const { user } = showWorkspace("/account/edit", asAdministrator);
+    await communitySettings();
+    await vi.waitFor(() => expect(idle).toHaveLength(2));
+    act(() => idle.splice(0).forEach((run) => run()));
+    const card = await screen.findByRole("region", { name: "Ember 0.1" });
+    const admin = screen.getByRole("link", { name: "Admin" });
+    expect(admin).not.toHaveAccessibleDescription();
+
+    // GitHub has published 0.2 since, which Check for updates hears of without waiting for the browser to be idle.
+    newest = { release: "0.2", notes: NOTES, newer: true };
+    await user.click(within(card).getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.2 is available" })).toBeInTheDocument();
+    expect(admin).toHaveAccessibleDescription("Ember 0.2 is available");
+    expect(idle).toEqual([]);
+    expect([releaseChecks(), afreshChecks()]).toEqual([0, 2]);
   });
 
   it("asks nothing for anyone else, even as they open Workspace", async () => {
@@ -1246,7 +1297,7 @@ describe("Activity filter", () => {
       setTimeout(() => {
         this.onopen?.();
         this.onmessage?.({ data: JSON.stringify({ type: "welcome", you: ada }) });
-        this.onmessage?.({ data: JSON.stringify({ type: "room.unread", roomId: "random" }) });
+        this.onmessage?.({ data: JSON.stringify({ type: "room.unread", roomId: "random", at: NOON }) });
       });
     }
   }
@@ -1504,6 +1555,85 @@ describe("Star rooms", () => {
     expect(star().nextElementSibling).toHaveTextContent("Couldn’t save your favorite. Please try again.");
     expect(star()).toHaveAttribute("aria-pressed", "false");
     expect(sidebarRooms()).toEqual(["general", "random"]);
+  });
+});
+
+describe("New line over the messages that came while a room was unread", () => {
+  const grace = { id: "u2", name: "Grace" };
+  const said: Message = { id: "m1", clientMessageId: "m1", roomId: "random", creator: grace, body: "Morning", plainText: "Morning", mentions: [], createdAt: NOON, updatedAt: NOON, editedAt: null, boosts: [] };
+  /** The workspace socket, and rooms' sockets, which welcome Ada into random with Grace's message, and into any other room with none. */
+  class RandomSocket extends WorkspaceSocket {
+    constructor(url: string) {
+      super(url);
+      if (!url.includes("/api/rooms/")) return;
+      setTimeout(() => {
+        this.readyState = QuietSocket.OPEN;
+        this.onopen?.();
+        const messages = url.includes("/api/rooms/random/") ? [said] : [];
+        this.onmessage?.({ data: JSON.stringify({ type: "welcome", you: ada, messages, present: [ada], hasMore: false }) });
+      });
+    }
+  }
+  const newLine = () => screen.queryByRole("separator", { name: "New messages" });
+
+  it("draws New over the first message in a room opened while it's marked unread, but not once it's read and opened again", async () => {
+    vi.stubGlobal("WebSocket", RandomSocket);
+    const list = roomList(rooms);
+    serve({ "GET /api/sidebar": () => Response.json({ ...list, rooms: list.rooms.map((room) => (room.id === "random" ? { ...room, unread: true, unreadSince: NOON } : room)) }) });
+    showWorkspace("/rooms/general");
+    await roomHeading();
+    expect(newLine()).not.toBeInTheDocument();
+
+    act(() => navigate("/rooms/random"));
+    expect(await screen.findByRole("separator", { name: "New messages" })).toBeVisible();
+
+    // Opening it read it, as the server tells the tab.
+    await workspaceSends({ type: "room.read", roomId: "random" });
+    expect(newLine()).toBeVisible();
+    act(() => navigate("/rooms/general"));
+    await waitFor(() => expect(newLine()).not.toBeInTheDocument());
+    act(() => navigate("/rooms/random"));
+    expect(await screen.findByText("Morning")).toBeVisible();
+    expect(newLine()).not.toBeInTheDocument();
+  });
+});
+
+describe("Keyboard shortcuts", () => {
+  const shortcuts = () => screen.queryByRole("dialog", { name: "Keyboard shortcuts" });
+
+  it("opens on Ctrl+/ from the composer, closes on Escape, handing focus back, and stays shut over another dialog", async () => {
+    vi.stubGlobal("WebSocket", OpenRoomSocket);
+    const { user } = showWorkspace("/rooms/general");
+    await roomHeading();
+    const composer = await screen.findByRole("textbox", { name: "Write a message" });
+    await user.click(composer);
+    expect(fireEvent.keyDown(composer, { key: "/", ctrlKey: true })).toBe(false);
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(shortcuts()).not.toBeInTheDocument());
+    await waitFor(() => expect(composer).toHaveFocus());
+
+    await user.click(screen.getByRole("link", { name: "DMs" }));
+    expect(fireEvent.keyDown(screen.getByRole("combobox", { name: "Search people" }), { key: "/", ctrlKey: true })).toBe(true);
+    expect(shortcuts()).not.toBeInTheDocument();
+  });
+
+  it("stays shut over a native modal dialog, which has no role attribute", async () => {
+    vi.stubGlobal("WebSocket", OpenRoomSocket);
+    showWorkspace("/rooms/general");
+    await roomHeading();
+    const modal = document.createElement("dialog");
+    const button = document.createElement("button");
+    button.textContent = "Allow";
+    modal.append(button);
+    document.body.append(modal);
+    modal.showModal();
+    try {
+      expect(fireEvent.keyDown(button, { key: "/", ctrlKey: true })).toBe(true);
+      expect(shortcuts()).not.toBeInTheDocument();
+    } finally {
+      modal.remove();
+    }
   });
 });
 
@@ -1941,6 +2071,7 @@ describe("Agent pages", () => {
     most: { thinking: "high", length: "long" },
     webTools: null,
     instructions: "",
+    promptTemplate: null,
     avatarUrl: "/users/ember.abc/avatar?v=20261101120000",
     avatar: false,
   };
@@ -1957,6 +2088,7 @@ describe("Agent pages", () => {
     webTools: [],
     rooms: null,
     instructions: "Sum up the conversation so far.",
+    promptTemplate: null,
     format: "chat",
     levels: { thinking: "low", length: "medium" },
     avatar: false,
@@ -2024,10 +2156,10 @@ describe("App icon badge", () => {
     await roomHeading();
     await waitFor(() => expect(badges).toEqual(["cleared"]));
 
-    await workspaceSends({ type: "room.unread", roomId: "random" });
-    await workspaceSends({ type: "room.unread", roomId: withGrace.id });
+    await workspaceSends({ type: "room.unread", roomId: "random", at: NOON });
+    await workspaceSends({ type: "room.unread", roomId: withGrace.id, at: NOON });
     // The room shown counts as read.
-    await workspaceSends({ type: "room.unread", roomId: "general" });
+    await workspaceSends({ type: "room.unread", roomId: "general", at: NOON });
     await workspaceSends({ type: "room.read", roomId: "random" });
     await workspaceSends({ type: "room.read", roomId: withGrace.id });
     expect(badges).toEqual(["cleared", 1, 2, 1, "cleared"]);

@@ -18,9 +18,9 @@ import { BLANK, EMPTY, FORBIDDEN, NOT_FOUND, type BotPage } from "../chat-room";
 import { originFor } from "../custom-domain";
 import type { Env } from "../env";
 import { etagOf, isFresh } from "../etag";
-import { objectKey } from "../files/blobs";
+import { objectKey, previewKey } from "../files/blobs";
 import { FormError, formBoundaryOf, FormReader, isFormType } from "../files/form-parts";
-import { storeArriving } from "../files/streamed";
+import { storeArriving, withPreview } from "../files/streamed";
 import { NO_STORAGE } from "../files/uploads";
 import { urlOf } from "../request-url";
 import type { PageCursor } from "../store";
@@ -387,12 +387,13 @@ async function postFile(
   if (typeof started === "string") return started;
   const stored = await storeArriving(files, objectKey(started.key), file);
   if (!stored) return exception(413);
+  const kept = { key: started.key, file: await withPreview(env, files, started.key, filename, stored) };
   // Again now the file has arrived, as `createMessage` checks text.
   const arrived = await botIn(env, roomId, key);
-  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, { key: started.key, file: stored }, messageId, threadId);
+  const finished = arrived instanceof Response ? arrived : await room.finishBotUpload(roomId, arrived, kept, messageId, threadId);
   // A file that isn't posted goes from R2 at once, since a room deleted meanwhile had R2 delete its files
   // before this one was there. The room's alarm forgets the upload, as it does a browser's never finished.
-  if (finished instanceof Response || typeof finished === "string") await files.delete(objectKey(started.key));
+  if (finished instanceof Response || typeof finished === "string") await files.delete([objectKey(started.key), previewKey(started.key)]);
   return finished;
 }
 
@@ -418,12 +419,16 @@ async function bodyText(request: Request): Promise<string | null> {
  * `index` answers it: the newest 40, or the 40 before the message `?before` names or after the one
  * `?after` does, with how many the room has in `X-Total-Count` and a `Link` to the next page when the
  * room has more beyond this one. A message deleted but kept for its thread's replies has nothing to
- * read, so the page leaves it out, though the room still counts it and pages from it.
+ * read, so the page leaves it out, though the room still counts it and pages from it. A reply that wasn't
+ * also sent to the room isn't on the page, as it isn't in the room's timeline: `?thread` reads its thread
+ * (`listThread`).
  */
 async function listMessages(request: Request, env: Env, roomId: RoomId, key: string): Promise<Response> {
   const access = await botIn(env, roomId, key);
   if (access instanceof Response) return access;
   const url = urlOf(request);
+  const thread = present(url.searchParams.get("thread"));
+  if (thread !== undefined) return listThread(request, env, roomId, access, thread);
   const cursor = { before: present(url.searchParams.get("before")), after: present(url.searchParams.get("after")) };
   const page = await env.CHAT_ROOM.getByName(roomId).botPage(roomId, cursor);
   if (!page) return exception(404);
@@ -434,6 +439,24 @@ async function listMessages(request: Request, env: Env, roomId: RoomId, key: str
   const headers = new Headers({ "X-Total-Count": String(page.total), ETag: etag, "Cache-Control": REVALIDATE });
   const next = nextPage(page, cursor);
   if (next) headers.set("Link", `<${origin}/rooms/${roomId}/${key}/messages?${next}>; rel="next"`);
+  if (isFresh(request, etag)) return new Response(null, { status: 304, headers });
+  headers.set("Content-Type", JSON_TYPE);
+  return new Response(request.method === "HEAD" ? null : body, { headers });
+}
+
+/**
+ * `GET /rooms/<room id>/<bot key>/messages?thread=<message id>`: the thread of that message as JSON, the
+ * message first and then its newest 40 replies, oldest first, as the room's messages are written, so a
+ * bot that answered in a thread can read what's been said there since. 404 when the room has no such
+ * message or it's a reply, which has no thread.
+ */
+async function listThread(request: Request, env: Env, roomId: RoomId, access: BotKeyAccess, parentId: string): Promise<Response> {
+  const messages = await env.CHAT_ROOM.getByName(roomId).botThread(roomId, parentId);
+  if (!messages) return exception(404);
+  const origin = originFor(request, access.customDomain);
+  const body = railsJson(await messagesJson(env, origin, messages.filter((message) => !message.deleted)));
+  const etag = await etagOf(body);
+  const headers = new Headers({ ETag: etag, "Cache-Control": REVALIDATE });
   if (isFresh(request, etag)) return new Response(null, { status: 304, headers });
   headers.set("Content-Type", JSON_TYPE);
   return new Response(request.method === "HEAD" ? null : body, { headers });
