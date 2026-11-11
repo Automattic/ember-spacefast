@@ -1353,25 +1353,28 @@ function liveHuddlesIn(rows: SidebarRow[]): Record<RoomId, LiveHuddle> {
 /**
  * Keeps room ?1's huddle as the room reported it at ?2: started at ?3, with the people ?4 lists in it,
  * or nobody once it's over. A report no later than the one kept changes nothing, nor does one that says
- * what's kept already. Answers the room if it changed what's kept.
+ * what's kept already, but for its time (`KEEP_REPORT_TIME`). Answers the room if it changed what's kept.
  */
 const REPORT_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2, huddle_started_at = ?3, huddle_user_ids = ?4
   WHERE id = ?1 AND huddle_reported_at < ?2 AND (huddle_user_ids <> ?4 OR huddle_started_at <> ?3) RETURNING id`;
 
 /**
- * Who's in room ?1, to hear of its huddle, if the report kept of it is the one made at ?2. A room says
- * who's in its huddle again every half a minute, and a report that changes nothing reads no memberships.
+ * Who's in room ?1, to hear of its huddle, if the report kept of it is the one made at ?2, as it is once
+ * `REPORT_HUDDLE` has changed what's kept, and not yet when `KEEP_REPORT_TIME` keeps only the time. A
+ * room says who's in its huddle again every half a minute, and a report that changes nothing reads no
+ * memberships.
  */
 export const MEMBERS_TO_TELL_OF_HUDDLE = `SELECT user_id FROM memberships
   WHERE room_id = ?1 AND EXISTS (SELECT 1 FROM rooms WHERE id = ?1 AND huddle_reported_at = ?2)`;
 
 /**
- * Keeps ?2 as when room ?1, which has no huddle going on, last reported that. After `REPORT_HUDDLE` a
- * room with none still has an earlier time only when the report said so too, as one does when the
- * Workspace never heard of the huddle that's over. A report from while it went on can still arrive, and
- * the later time is what has it change nothing.
+ * Keeps ?2 as when room ?1 last reported its huddle, after `REPORT_HUDDLE` has left the time as it was
+ * for a report that says what's kept already. A report made before it can still arrive after it, as
+ * one the room gave up waiting for does, and the later time is what has that change nothing: it would
+ * otherwise show the wrong people until the room's next report, or start a huddle that's over again,
+ * with nobody left in it to say so, as when the Workspace never heard of the huddle.
  */
-const REPORT_NO_HUDDLE = `UPDATE rooms SET huddle_reported_at = ?2 WHERE id = ?1 AND huddle_reported_at < ?2 AND huddle_user_ids = '[]'`;
+const KEEP_REPORT_TIME = `UPDATE rooms SET huddle_reported_at = ?2 WHERE id = ?1 AND huddle_reported_at < ?2`;
 
 /** When the report kept of a room's huddle was made. */
 const HUDDLE_REPORTED_AT = `SELECT huddle_reported_at FROM rooms WHERE id = ?`;
@@ -3228,16 +3231,16 @@ export class WorkspaceStore {
 
   /**
    * Keeps room `roomId`'s huddle as the room reported it at `at`, by its own clock: `huddle`, or nobody
-   * in it once it's null. Answers who's in the room, to hear of it, when the report changed the huddle
-   * kept, and the time of the report kept instead, when that's no earlier than this one. A room that's
-   * gone keeps nothing.
+   * in it once it's null, and the report's time, even when the huddle kept was that already. Answers
+   * who's in the room, to hear of it, when the report changed the huddle kept, and the time of the
+   * latest report instead, when that's no earlier than this one. A room that's gone keeps nothing.
    */
   async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<ReportedHuddle> {
     const [[before], changed, members] = (await this.db.batch([
       statement(HUDDLE_REPORTED_AT, roomId),
       statement(REPORT_HUDDLE, roomId, at, huddle?.startedAt ?? "", huddle ? JSON.stringify(huddle.userIds) : NOBODY),
       statement(MEMBERS_TO_TELL_OF_HUDDLE, roomId, at),
-      statement(REPORT_NO_HUDDLE, roomId, at),
+      statement(KEEP_REPORT_TIME, roomId, at),
     ])) as [Array<{ huddle_reported_at: number }>, unknown[], UserIdRow[], unknown[]];
     if (before && before.huddle_reported_at >= at) return { memberIds: null, outdatedBy: before.huddle_reported_at };
     return { memberIds: changed.length > 0 ? userIdsOf(members) : null, outdatedBy: null };
