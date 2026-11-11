@@ -296,12 +296,16 @@ describe("Ember AI", () => {
       expect(((await storedSettings()).assistant as { format: string }).format).toBe("chat");
     });
 
-    it("refuses a model no format takes on the model's field, with Cloudflare's own words, keeping nothing", async () => {
+    it.each([
+      ["a model it doesn't have", 404, 2002, "Model not found: openai/gpt-0"],
+      // AI Gateway's code for a request it or the provider refuses as invalid, which Cloudflare's API answers an account it can't route to with too.
+      ["a question the model's provider refuses", 400, 7003, 'Model execution failed (User Input Error): {"code":"invalid-argument","error":"Model gpt-0 does not support parameter maxTokens."}'],
+    ])("refuses %s, in every format, on the model's field, with Cloudflare's own words, keeping nothing", async (_, status, code, message) => {
       const administrator = await setUp();
-      const requests = fakeGateway(refusing(404, 2002, "Model not found: openai/gpt-0"));
+      const requests = fakeGateway(refusing(status, code, message));
       const response = await setUpAssistant(administrator, { ...SETUP, model: "openai/gpt-0" });
       expect(response.status).toBe(422);
-      expect(await response.json()).toEqual({ error: "AI Gateway didn't take that model. Cloudflare says: Model not found: openai/gpt-0", field: "model" });
+      expect(await response.json()).toEqual({ error: `AI Gateway didn't take that model. Cloudflare says: ${message}`, field: "model" });
       expect(requests).toHaveLength(3);
       expect((await storedSettings()).assistant).toBeUndefined();
       expect(await storedAssistant()).toBeUndefined();

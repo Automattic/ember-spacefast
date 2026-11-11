@@ -1174,8 +1174,8 @@ export class Workspace extends DurableObject<Env> {
    * Takes room `roomId`'s word for who's in its huddle, as the room reported it at `at` by its own clock:
    * `huddle`, or null once nobody is. Everyone in the room hears of a report that changes what the
    * Workspace keeps, in the huddle or not. A room's reports can arrive out of order, and one made no
-   * later than the one kept counts for nothing: this answers when the one kept was made, for the room
-   * to report again after it, and null otherwise.
+   * later than the latest the Workspace has heard counts for nothing, whatever that one said: this
+   * answers when that one was made, for the room to report again after it, and null otherwise.
    */
   async reportHuddle(roomId: RoomId, at: number, huddle: LiveHuddle | null): Promise<number | null> {
     const { memberIds, outdatedBy } = await this.store.reportHuddle(roomId, at, huddle);
