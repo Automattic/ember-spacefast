@@ -542,6 +542,32 @@ describe("Bots read messages", () => {
     }
   });
 
+  it("answers a thread for ?thread: its message, then its replies oldest first, and 404 for a reply or a stranger", async () => {
+    const { bot, general } = await withBot();
+    const parent = await posted(bot.key, general, "Question");
+    const reply = async (body: string) => {
+      const response = await api(botPath(general, bot.key, `?thread=${parent}`), { method: "POST", body, headers: FORM_TYPE });
+      expect(response.status, await response.clone().text()).toBe(201);
+      return response.headers.get("Location")!.split("/@")[1]!;
+    };
+    const first = await reply("Answer");
+    const second = await reply("Follow-up");
+    const after = await posted(bot.key, general, "Elsewhere");
+
+    const thread = await readAs(bot.key, general, `?thread=${parent}`);
+    expect(thread.status).toBe(200);
+    expect(thread.headers.get("Content-Type")).toBe("application/json; charset=utf-8");
+    const messages = (await thread.json()) as ListedMessage[];
+    expect(messages.map(({ id }) => id)).toEqual([parent, first, second]);
+    expect(messages[2]!.url).toBe(`${origin}/rooms/${general}/threads/${parent}/@${second}`);
+
+    // The room's timeline still leaves the replies out.
+    expect(((await (await readAs(bot.key, general)).json()) as ListedMessage[]).map(({ id }) => id)).toEqual([parent, after]);
+    for (const query of [`?thread=${first}`, "?thread=0nothing000000"]) {
+      expect([query, (await readAs(bot.key, general, query)).status]).toEqual([query, 404]);
+    }
+  });
+
   it("answers [] for a room without messages, with a count of 0 and no Link", async () => {
     const { bot, general } = await withBot();
     const response = await readAs(bot.key, general);

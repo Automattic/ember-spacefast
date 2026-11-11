@@ -44,10 +44,10 @@ const HEADERS = { "Content-Type": "application/json", Accept: "*/*", "User-Agent
 /**
  * `Webhook#payload`: who wrote `message` and where, as `delivery` names them, and what it says, for
  * `webhook`'s bot. The room's address is the one the bot posts to there, with its key, which for a reply
- * in a thread posts to that thread, so a bot that answers later finds it as one that answers at once does.
- * The message's is its permalink, both without an origin, as Rails' path helpers write them. A file
- * message has no rich text, so its `html` is null, as Campfire's `message.body.body` is, and its plain text
- * is its file's name.
+ * in a thread posts to that thread, and reads it, so a bot that answers later finds it as one that
+ * answers at once does. The message's is its permalink, both without an origin, as Rails' path helpers
+ * write them. A file message has no rich text, so its `html` is null, as Campfire's `message.body.body`
+ * is, and its plain text is its file's name.
  */
 export function webhookPayload(
   roomId: RoomId,

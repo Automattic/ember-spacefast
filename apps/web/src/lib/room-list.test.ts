@@ -115,11 +115,12 @@ describe("Unread rooms", () => {
     expect(withRoom(marked.list!.rooms, finance).at(-1)).toEqual(room("r3", "Finance"));
   });
 
-  it("keeps the time a room was first marked unread as of, until it's read", () => {
+  it("takes the time the server marks a room unread as of, even over a mark whose read it never told", () => {
     const later = "2026-10-15T12:05:00.000Z";
     const marked = roomListReducer(loaded, { type: "marked", roomId: "r1", at: NOON });
+    // The server read the room and marked it again in one go, telling only of the new mark.
     const again = roomListReducer(marked, { type: "marked", roomId: "r1", at: later });
-    expect(again.list!.rooms[0]).toEqual(since(room("r1", "Design")));
+    expect(again.list!.rooms[0]).toEqual(since(room("r1", "Design"), later));
     const read = roomListReducer(again, { type: "marked", roomId: "r1", at: null });
     expect(read.list!.rooms[0]).toEqual(room("r1", "Design"));
     expect(roomListReducer(read, { type: "marked", roomId: "r1", at: later }).list!.rooms[0]).toEqual(since(room("r1", "Design"), later));
