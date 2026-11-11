@@ -6,7 +6,7 @@ import { isReservedName, MAX_USER_NAME_LENGTH, NAME_RESERVED, type DirectoryUser
 /**
  * Where a bot posts messages to a room and reads them, as Campfire's `room_bot_messages_path` gives it,
  * with the bot's key: `/rooms/<room id>/<bot key>/messages`, and with `threadId`, where it posts to that
- * message's thread.
+ * message's thread and reads it.
  */
 export const botMessagesPath = (roomId: RoomId, key: string, threadId?: string) =>
   `/rooms/${encodeURIComponent(roomId)}/${key}/messages` + (threadId === undefined ? "" : `?thread=${encodeURIComponent(threadId)}`);
