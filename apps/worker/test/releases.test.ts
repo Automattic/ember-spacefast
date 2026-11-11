@@ -375,6 +375,22 @@ describe("Checking afresh, as opening Admin does", () => {
     vi.setSystemTime(start + AFRESH_AFTER_MS + ANSWER_KEPT_MS);
     expect(await releaseCheckFor(administrator)).toMatchObject({ newest: null, checkedAt: null });
   });
+
+  it("says GitHub named the release when it did, though it lists the tags seconds after", async () => {
+    const administrator = await setUp();
+    const start = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"], now: start });
+    fakeGitHub(
+      () => redirectTo(pageOf(NEXT)),
+      async () => {
+        // Long after the release is named, which takes no time here.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        vi.setSystemTime(start + 3_000);
+        return tagsOf();
+      },
+    );
+    expect((await releaseCheckFor(administrator)).checkedAt).toBe(new Date(start).toISOString());
+  });
 });
 
 describe("Ember's newest beta", () => {

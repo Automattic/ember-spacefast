@@ -80,14 +80,17 @@ export function forgetNewestRelease(): void {
 export async function releaseCheck(env: Env, afresh = false): Promise<ReleaseCheck> {
   if (!heard || Date.now() >= heard.until || (afresh && Date.now() >= askedAt + AFRESH_AFTER_MS)) {
     askedAt = Date.now();
-    const [release, beta] = await Promise.all([
-      newestOnGitHub().catch((error: unknown) => failed("Asking GitHub for Ember's newest release failed:", error, null)),
+    const [[release, at], beta] = await Promise.all([
+      newestOnGitHub()
+        .catch((error: unknown) => failed("Asking GitHub for Ember's newest release failed:", error, null))
+        // When GitHub answered, which can be well before it lists the tags.
+        .then((release) => [release, Date.now()] as const),
       newestBetaOnGitHub().catch((error: unknown) => failed("Asking GitHub for Ember's betas failed:", error, undefined)),
     ]);
     const kept = heard && Date.now() < heard.until ? heard : undefined;
     if (kept?.release && !release) heard = beta === undefined ? kept : { ...kept, beta };
     // A beta stays a beta once tagged, so the one heard last stands, however long ago, while the tags don't say.
-    else heard = { release, at: Date.now(), beta: beta === undefined ? (heard?.beta ?? null) : beta, until: Date.now() + (release ? ANSWER_KEPT_MS : NO_ANSWER_KEPT_MS) };
+    else heard = { release, at, beta: beta === undefined ? (heard?.beta ?? null) : beta, until: at + (release ? ANSWER_KEPT_MS : NO_ANSWER_KEPT_MS) };
   }
   const { release: newest, at, beta } = heard;
   return {

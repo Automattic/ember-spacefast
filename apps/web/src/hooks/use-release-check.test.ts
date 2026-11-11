@@ -20,6 +20,16 @@ const newestIs = (newest: string, checkedAt = minutesPast(Number(newest.split(".
   copy: null,
 });
 
+/** And while this Ember is 0.5's `release`th beta, its tags name the `newestBeta`th, and GitHub named 0.4, the newest release, `checkedAt`. */
+const onBeta = (release: number, newestBeta: number, checkedAt: string): ReleaseCheck => ({
+  release: `0.5 beta ${release}`,
+  beta: true,
+  newest: { release: "0.4", notes: "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.4.0", newer: false },
+  checkedAt,
+  newestBeta: { release: `0.5 beta ${newestBeta}`, notes: `https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.5.0-beta.${newestBeta}`, newer: newestBeta > release },
+  copy: null,
+});
+
 /** The browser's idle callbacks, which run when a test says, unless they're cancelled first. */
 const idle = new Map<number, () => void>();
 let lastIdle = 0;
@@ -123,6 +133,28 @@ describe("Check for updates", () => {
     vi.mocked(checkForReleaseAfresh).mockResolvedValue({ ...newestIs("0.6"), newest: null, checkedAt: null });
     await act(() => result.current.checkAgain());
     expect(result.current.check).toEqual(newestIs("0.5", minutesPast(4)));
+  });
+
+  it("keeps an answer naming an update over one naming none, whenever each heard from GitHub, until this Ember is another release", async () => {
+    // Opening Admin's answer heard at 4:10 that beta 2, this Ember, is the newest beta. Check for updates' isolate
+    // lists beta 3 in the tags, but couldn't ask GitHub for the newest release, so it says it heard of that at 4:05.
+    vi.mocked(checkForReleaseAfresh).mockResolvedValue(onBeta(2, 2, minutesPast(10)));
+    const { result } = renderHook(() => useReleaseCheck(true, true, true));
+    becomeIdle();
+    await waitFor(() => expect(result.current.check).toEqual(onBeta(2, 2, minutesPast(10))));
+    vi.mocked(checkForReleaseAfresh).mockResolvedValue(onBeta(2, 3, minutesPast(5)));
+    await act(() => result.current.checkAgain());
+    expect(result.current.check).toEqual(onBeta(2, 3, minutesPast(5)));
+
+    // Nor does an isolate that heard of the newest release since, but couldn't list the tags, take beta 3 back.
+    vi.mocked(checkForReleaseAfresh).mockResolvedValue(onBeta(2, 2, minutesPast(15)));
+    await act(() => result.current.checkAgain());
+    expect(result.current.check).toEqual(onBeta(2, 3, minutesPast(5)));
+
+    // Once beta 3 is deployed, this Ember is it, and nothing's newer.
+    vi.mocked(checkForReleaseAfresh).mockResolvedValue(onBeta(3, 3, minutesPast(20)));
+    await act(() => result.current.checkAgain());
+    expect(result.current.check).toEqual(onBeta(3, 3, minutesPast(20)));
   });
 
   it("fails as asking does, keeping what the Worker said before", async () => {

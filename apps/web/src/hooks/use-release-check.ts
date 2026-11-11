@@ -26,9 +26,9 @@ export function useReleaseCheck(administrator: boolean, ready: boolean, inAdmin:
   const [admin, setAdmin] = useState({ open: inAdmin, openings: 0 });
   if (admin.open !== inAdmin) setAdmin({ open: inAdmin, openings: admin.openings + (inAdmin ? 1 : 0) });
   const asking = administrator && ready;
-  // Each of the Worker's isolates keeps what GitHub told it, so an answer that heard from GitHub before
-  // the one kept, as opening Admin's can, answering after Check for updates', changes nothing.
-  const heard = useCallback((answer: ReleaseCheck) => setCheck((kept) => (kept && heardBefore(answer, kept) ? kept : answer)), []);
+  // Each of the Worker's isolates keeps what GitHub told it, so answers can disagree, and opening Admin's
+  // can answer after Check for updates'.
+  const heard = useCallback((answer: ReleaseCheck) => setCheck((kept) => (kept && keeps(kept, answer) ? kept : answer)), []);
   // Not run for `inAdmin` itself, so that leaving Admin doesn't ask, but whenever this runs in Admin, it's
   // for opening it, or for the page becoming ready, or someone made an administrator, there.
   useEffect(() => {
@@ -51,5 +51,18 @@ export function useReleaseCheck(administrator: boolean, ready: boolean, inAdmin:
   return { check: administrator ? check : null, checkAgain };
 }
 
-/** Whether `answer` heard from GitHub before `kept` did, as the release each names says. */
-const heardBefore = (answer: ReleaseCheck, kept: ReleaseCheck) => (answer.checkedAt ?? "") < (kept.checkedAt ?? "");
+/**
+ * Whether the answer `kept` stands over `answer`. One that names a release or beta newer than this Ember
+ * stands over one that names none, whenever each heard from GitHub, since a release or beta once out stays
+ * out, and an isolate whose ask for the newest release failed, or for the tags, says what it heard of that
+ * before, though it heard of the other just now. Otherwise the one that heard of the newest release last
+ * stands. An answer from this Ember as another release, once one is deployed, always replaces it.
+ */
+function keeps(kept: ReleaseCheck, answer: ReleaseCheck): boolean {
+  if (answer.release !== kept.release) return false;
+  if (namesNewer(kept) !== namesNewer(answer)) return namesNewer(kept);
+  return (answer.checkedAt ?? "") < (kept.checkedAt ?? "");
+}
+
+/** Whether `check` names a release, or a beta, newer than this Ember: an update, or a beta to try. */
+const namesNewer = ({ newest, newestBeta }: ReleaseCheck) => Boolean(newest?.newer || newestBeta?.newer);
