@@ -192,7 +192,8 @@ async function triedAnswer(env: Env, { asker, through, community, saved }: Agent
   const webToolsIn = (format: ModelFormat) => (!trial.webSearch ? [] : known && known.webTools.length > 0 ? known.webTools : WEB_TOOLS_IN[format]);
   const questionIn = (format: ModelFormat) => questionFor(answerer, [{ creator: asker, plainText: trial.question }], asker, where, levels, new Date(), webToolsIn(format));
   const formats = known ? [known.format] : formatsFor(trial.model);
-  return askInTurn(env, { ...through, model: trial.model }, formats, questionIn, waitFor(questionIn(formats[0]!)));
+  const thinkingLevels = known?.thinkingLevels ?? undefined;
+  return askInTurn(env, { ...through, model: trial.model, thinkingLevels }, formats, questionIn, waitFor(questionIn(formats[0]!)));
 }
 
 /** `DELETE /api/account/agents/:id/avatar`: takes away the avatar agent `id` was given, answering it as its page then shows it. */
@@ -211,28 +212,31 @@ export async function deleteAgent(request: Request, env: Env, agentId: UserId): 
 
 /**
  * What asking `model`, called `modelName`, through Ember AI's gateway finds for the agent called `name`:
- * the format it takes the test question in, unless that's known already, and, while it's to search the
- * web (`webSearch`), what it may do there, or else why it can't, on the field it's about.
+ * the format it takes the test question in and the levels of thinking it takes, unless that's known
+ * already, and, while it's to search the web (`webSearch`), what it may do there, or else why it can't,
+ * on the field it's about.
  */
 async function askedModel(
   env: Env,
   gateway: Gateway,
   name: string,
-  { model, modelName, format: known }: { model: string; modelName: string; format?: ModelFormat },
+  known: { model: string; modelName: string } | Pick<AgentSettings, "model" | "modelName" | "format" | "thinkingLevels">,
   webSearch: boolean,
 ): Promise<AskedModel | Response> {
+  const { model, modelName } = known;
   const through = { accountId: gateway.accountId, apiToken: gateway.apiToken };
-  let format = known;
-  if (format === undefined) {
+  let tested = "format" in known ? { format: known.format, thinkingLevels: known.thinkingLevels } : null;
+  if (tested === null) {
     const answered = await greetingFrom(env, { ...through, model }, testQuestionFor(name));
     if ("refusal" in answered) return refused(answered, "model");
-    format = answered.format;
+    tested = answered;
   }
-  if (!webSearch) return { model, modelName, format, webTools: [], through };
+  const { format, thinkingLevels } = tested;
+  if (!webSearch) return { model, modelName, format, thinkingLevels, webTools: [], through };
   if (WEB_TOOLS_IN[format].length === 0) return formAnswer({ error: agentCannotSearchWith(modelName), field: "webSearch" }, 422);
   const searched = await searchedBy(env, { ...through, model, format, name: modelName }, webTestQuestionFor(name), agentAnsweredUnsearched);
   if ("refusal" in searched) return refused(searched, "webSearch");
-  return { model, modelName, format, webTools: searched.webTools, through };
+  return { model, modelName, format, thinkingLevels, webTools: searched.webTools, through };
 }
 
 /**

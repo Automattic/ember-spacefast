@@ -4,9 +4,11 @@ import {
   ASSISTANT_OFF,
   DEFAULT_LEVELS,
   LEVELS_REFUSED,
+  THINKING_LEVELS,
   TOP_LEVELS,
   type AnswerLevels,
   type AssistantChanged,
+  type AssistantModel,
   type YourAssistant,
   type YourAssistantChanged,
 } from "@ember/protocol/assistant";
@@ -18,8 +20,8 @@ import { api, cookieOf, freshDeploy, shown, WITH_THE_FLAME, workspaceSql, type S
 
 const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api-token-with-workers-ai-read_0123456", model: "@cf/zai-org/glm-4.7-flash" };
 
-/** The models people can pick once Ember AI is on: its own, alone. */
-const MODELS = [{ id: SETUP.model, name: "GLM-4.7 Flash", format: "chat" as const }];
+/** The models people can pick once Ember AI is on: its own, alone, which took its test question at each level of thinking. */
+const MODELS: AssistantModel[] = [{ id: SETUP.model, name: "GLM-4.7 Flash", format: "chat", thinkingLevels: [...THINKING_LEVELS] }];
 
 /** @ember's answers to someone at `levels`, under `most`, as their profile shows them, who leaves their model to administrators. */
 const yours = (levels: AnswerLevels, most: AnswerLevels): YourAssistant => ({ levels, most, model: null, defaultModel: SETUP.model, models: MODELS });

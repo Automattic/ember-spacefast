@@ -10,6 +10,7 @@ import {
   MODEL_NOT_LISTED,
   MODEL_REFUSED,
   MODELS_FULL,
+  THINKING_LEVELS,
   TOP_LEVELS,
   type AssistantCatalog,
   type AssistantModel,
@@ -35,10 +36,16 @@ const SETUP = { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "anthropic/cl
 const CLOUDFLARE_API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}`;
 const HELLO = "Hello, team!";
 
-/** The models people can pick, as Ember AI lists them once they've answered their test questions. */
-const CLAUDE: AssistantModel = { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages" };
-const GPT: AssistantModel = { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses" };
-const DEEPSEEK: AssistantModel = { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro", format: "chat" };
+/** The models people can pick, as Ember AI lists them once they've answered their test questions, which they did at every level of thinking. */
+const CLAUDE: AssistantModel = { id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet 5.5", format: "messages", thinkingLevels: [...THINKING_LEVELS] };
+const GPT: AssistantModel = { id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses", thinkingLevels: [...THINKING_LEVELS] };
+const DEEPSEEK: AssistantModel = { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro", format: "chat", thinkingLevels: [...THINKING_LEVELS] };
+
+/** `model` as Cloudflare's catalog lists it, which says nothing of the levels of thinking it takes, as Ember lists one it hasn't asked at each. */
+const untested = ({ thinkingLevels: _, ...model }: AssistantModel): AssistantModel => model;
+
+/** `model` as the account's settings keep it. */
+const kept = ({ thinkingLevels, ...model }: AssistantModel) => ({ ...model, thinking_levels: thinkingLevels });
 
 /** Rows of Cloudflare's catalog, as its API answers with them, of text models and others, and one twice. */
 const ROWS = [
@@ -84,9 +91,9 @@ const ROWS = [
 const LISTED: AssistantModel[] = [
   { id: "@cf/zai-org/glm-4.7-flash", name: "GLM-4.7 Flash", format: "chat" },
   { id: "@cf/meta/llama-4-scout-17b-16e-instruct", name: "llama-4-scout-17b-16e-instruct", format: "chat" },
-  { ...CLAUDE, price: { input: 2, output: 10 } },
-  { ...DEEPSEEK, price: { input: 1.74, output: 3.48 } },
-  { ...GPT, price: { input: 2, output: 10 } },
+  { ...untested(CLAUDE), price: { input: 2, output: 10 } },
+  { ...untested(DEEPSEEK), price: { input: 1.74, output: 3.48 } },
+  { ...untested(GPT), price: { input: 2, output: 10 } },
 ];
 
 const as = (session?: Session | null): Record<string, string> => (session ? { Cookie: session.cookie } : {});
@@ -281,10 +288,12 @@ describe("The models people can pick", () => {
     const { assistant } = await turnOn(ada, { ...SETUP, model: DEEPSEEK.id, modelName: ` ${DEEPSEEK.name} ` });
     expect(assistant).toEqual(settingsWith([DEEPSEEK]));
     expect(await settingsShown(ada)).toEqual(settingsWith([DEEPSEEK]));
-    expect((await storedAssistant())?.models).toEqual([DEEPSEEK]);
+    expect((await storedAssistant())?.models).toEqual([kept(DEEPSEEK)]);
     // Without a name, a model is called as Ember knows it, or else by its ID.
     expect((await turnOn(ada)).assistant.models).toEqual([CLAUDE]);
-    expect((await turnOn(ada, { ...SETUP, model: "openai/gpt-5.5" })).assistant.models).toEqual([{ id: "openai/gpt-5.5", name: "openai/gpt-5.5", format: "responses" }]);
+    expect((await turnOn(ada, { ...SETUP, model: "openai/gpt-5.5" })).assistant.models).toEqual([
+      { id: "openai/gpt-5.5", name: "openai/gpt-5.5", format: "responses", thinkingLevels: [...THINKING_LEVELS] },
+    ]);
   });
 
   it("add a model once it answers a test question through Ember AI's account, after the others", async () => {
@@ -297,8 +306,11 @@ describe("The models people can pick", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ assistant: settingsWith([CLAUDE, GPT]), greeting: "Hi, I'm GPT." } satisfies AssistantSaved);
-    expect(requests.map(({ url, authorization, body }) => [url, authorization, body?.model])).toEqual([[`${CLOUDFLARE_API}/ai/v1/responses`, `Bearer ${API_TOKEN}`, GPT.id]]);
-    expect((await storedAssistant())?.models).toEqual([CLAUDE, GPT]);
+    // Its test question, and then the same at each level of thinking.
+    expect(requests.map(({ url, authorization, body }) => [url, authorization, body?.model])).toEqual(Array(5).fill([`${CLOUDFLARE_API}/ai/v1/responses`, `Bearer ${API_TOKEN}`, GPT.id]));
+    const efforts = requests.map(({ body }) => (body?.reasoning as { effort: string } | undefined)?.effort);
+    expect([efforts[0], efforts.slice(1).sort()]).toEqual([undefined, ["high", "low", "medium", "none"]]);
+    expect((await storedAssistant())?.models).toEqual([kept(CLAUDE), kept(GPT)]);
 
     // Added again, it stays where it is, with the name it's given now.
     expect((await added(ada, { ...GPT, name: "GPT Sol" })).assistant.models).toEqual([CLAUDE, { ...GPT, name: "GPT Sol" }]);
@@ -412,8 +424,9 @@ describe("The models people can pick", () => {
     await workspaceSql("UPDATE accounts SET settings = json_remove(settings, '$.assistant.models')");
     await evictDurableObject(workspaceStub());
 
-    expect(await settingsShown(ada)).toEqual(settingsWith([CLAUDE]));
-    expect((await added(ada, GPT)).assistant.models).toEqual([CLAUDE, GPT]);
+    // Its own model, which Ember hadn't asked at each level of thinking then.
+    expect(await settingsShown(ada)).toEqual(settingsWith([untested(CLAUDE)]));
+    expect((await added(ada, GPT)).assistant.models).toEqual([untested(CLAUDE), GPT]);
   });
 
   it("are the administrators' to change, while Ember AI is on", async () => {

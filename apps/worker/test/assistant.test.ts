@@ -3,8 +3,10 @@ import {
   ACCOUNT_ID_REFUSED,
   ASSISTANT_FORBIDDEN,
   MODEL_REFUSED,
+  THINKING_LEVELS,
   TOP_LEVELS,
   type AssistantForgotten,
+  type AssistantModel,
   type AssistantSaved,
   type AssistantSetup,
 } from "@ember/protocol/assistant";
@@ -26,8 +28,10 @@ const API_TOKEN = "an-api-token-with-workers-ai-read_0123456";
 /** What Set up Ember AI sends for Claude Sonnet. */
 const SETUP = { accountId: ACCOUNT_ID, apiToken: API_TOKEN, model: "anthropic/claude-sonnet-5.5" } satisfies AssistantSetup;
 const CLOUDFLARE_API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/v1`;
-/** Claude Sonnet, as Ember lists it among the models people can pick. */
-const CLAUDE = { id: SETUP.model, name: "Claude Sonnet 5.5", format: "messages" } as const;
+/** Claude Sonnet, as Ember lists it among the models people can pick, with the levels of thinking it took its test question at, every one. */
+const CLAUDE: AssistantModel = { id: SETUP.model, name: "Claude Sonnet 5.5", format: "messages", thinkingLevels: [...THINKING_LEVELS] };
+/** The same, as the account's settings keep it. */
+const KEPT_CLAUDE = { id: SETUP.model, name: "Claude Sonnet 5.5", format: "messages", thinking_levels: [...THINKING_LEVELS] };
 const HELLO = "Hello, team! Mention @ember whenever you'd like a hand.";
 
 /** Sets Ember up with Ada as its administrator, signed in. */
@@ -108,6 +112,9 @@ function answering(text: string): GatewayAnswer {
 /** Cloudflare's answer to a request it refuses with `status`, in its own shape. */
 const refusing = (status: number, code: number, message: string): GatewayAnswer => () => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
 
+/** The test questions among `requests`, leaving out the same questions asked again at each level of thinking, which tell the model how much to think. */
+const testQuestions = (requests: SentToGateway[]) => requests.filter(({ body }) => !("thinking" in body || "reasoning" in body || "reasoning_effort" in body));
+
 /** Stands in for AI Gateway, answering each request with `answer`, and keeping what it's sent. */
 function fakeGateway(answer: GatewayAnswer = answering(HELLO)): SentToGateway[] {
   const requests: SentToGateway[] = [];
@@ -136,13 +143,15 @@ describe("Ember AI", () => {
       expect(await response.json()).toEqual({ assistant: { accountId: ACCOUNT_ID, model: SETUP.model, models: [CLAUDE], most: TOP_LEVELS, webTools: [], instructions: "", promptTemplate: null, ...WITH_THE_FLAME }, greeting: HELLO } satisfies AssistantSaved);
 
       // Claude takes Anthropic's Messages, with the instructions as its system prompt.
-      expect(requests).toEqual([{ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, gateway: "default", body: expect.any(Object) as unknown }]);
-      expect(requests[0]!.body).toEqual({
-        model: SETUP.model,
-        max_tokens: 2000,
-        system: expect.stringContaining("@ember") as unknown,
-        messages: [{ role: "user", content: "Say hello to the team in one short sentence." }],
+      expect(requests.map(({ body: _, ...sent }) => sent)).toEqual(Array(5).fill({ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, gateway: "default" }));
+      const test = { model: SETUP.model, max_tokens: 2000, system: expect.stringContaining("@ember") as unknown, messages: [{ role: "user", content: "Say hello to the team in one short sentence." }] };
+      expect(requests[0]!.body).toEqual(test);
+      // And then again at each level of thinking, all at once, Low for Off, as Anthropic's newest models don't turn thinking off.
+      const efforts = requests.slice(1).map(({ body }) => {
+        expect(body).toEqual({ ...test, thinking: { type: "adaptive" }, output_config: { effort: expect.any(String) as unknown } });
+        return (body.output_config as { effort: string }).effort;
       });
+      expect(efforts.sort()).toEqual(["high", "low", "low", "medium"]);
 
       // The database holds the API token sealed, never as it was given.
       // Searching the web waits for Search the web to be turned on.
@@ -151,7 +160,7 @@ describe("Ember AI", () => {
         api_token: expect.stringMatching(/^v1\.[\w-]{16}\.[\w-]+$/) as unknown,
         model: SETUP.model,
         format: "messages",
-        models: [CLAUDE],
+        models: [KEPT_CLAUDE],
         web_tools: [],
         web_tools_asked_at: expect.any(String) as unknown,
       });
@@ -237,7 +246,7 @@ describe("Ember AI", () => {
       expect(changed.assistant).toEqual({
         accountId: ACCOUNT_ID,
         model: "openai/gpt-6.1-sol",
-        models: [{ id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses" }],
+        models: [{ id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", format: "responses", thinkingLevels: [...THINKING_LEVELS] }],
         most: TOP_LEVELS,
         webTools: [],
         instructions: "",
@@ -245,10 +254,10 @@ describe("Ember AI", () => {
         ...WITH_THE_FLAME,
       });
       expect(requests.map(({ url, authorization }) => [url, authorization])).toEqual([
-        [`${CLOUDFLARE_API}/messages`, `Bearer ${API_TOKEN}`],
-        [`${CLOUDFLARE_API}/responses`, `Bearer ${API_TOKEN}`],
+        ...Array(5).fill([`${CLOUDFLARE_API}/messages`, `Bearer ${API_TOKEN}`]),
+        ...Array(5).fill([`${CLOUDFLARE_API}/responses`, `Bearer ${API_TOKEN}`]),
       ]);
-      expect(requests[1]!.body).toEqual({ model: "openai/gpt-6.1-sol", max_output_tokens: 2000, instructions: expect.any(String) as unknown, input: [{ role: "user", content: expect.any(String) as unknown }] });
+      expect(testQuestions(requests)[1]!.body).toEqual({ model: "openai/gpt-6.1-sol", max_output_tokens: 2000, instructions: expect.any(String) as unknown, input: [{ role: "user", content: expect.any(String) as unknown }] });
       // Sealed afresh, and the same @ember as before.
       expect(((await storedSettings()).assistant as { api_token: string }).api_token).not.toBe(sealed);
       expect(await workspaceSql("SELECT id FROM users WHERE role = 2")).toEqual([{ id: ASSISTANT_ID }]);
@@ -285,7 +294,14 @@ describe("Ember AI", () => {
 
       const { assistant } = await saved(administrator, { ...SETUP, model: "openai/gpt-5.5" });
       expect(assistant.model).toBe("openai/gpt-5.5");
-      expect(requests.map(({ url }) => url.slice(CLOUDFLARE_API.length))).toEqual(["/responses", "/messages", "/chat/completions"]);
+      expect(testQuestions(requests).map(({ url }) => url.slice(CLOUDFLARE_API.length))).toEqual(["/responses", "/messages", "/chat/completions"]);
+      // Asked at each level of thinking in the format that took it.
+      expect(requests.slice(3).map(({ url, body }) => [url.slice(CLOUDFLARE_API.length), body.reasoning_effort]).sort()).toEqual([
+        ["/chat/completions", "high"],
+        ["/chat/completions", "low"],
+        ["/chat/completions", "medium"],
+        ["/chat/completions", "none"],
+      ]);
       expect(requests[2]!.body).toEqual({
         model: "openai/gpt-5.5",
         max_completion_tokens: 2000,
@@ -295,6 +311,30 @@ describe("Ember AI", () => {
         ],
       });
       expect(((await storedSettings()).assistant as { format: string }).format).toBe("chat");
+    });
+
+    it("keeps the levels of thinking the model took its test question at, which only asking says, none for one that refuses each, as xAI's Grok 4.20 Reasoning does", async () => {
+      const administrator = await setUp();
+      const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+      const grok = "xai/grok-4.20-0309-reasoning";
+      // As AI Gateway answers once xAI has refused a thinking level.
+      const xaiRefusal = 'Model execution failed (User Input Error): {"code":"invalid-argument","error":"Model grok-4.20-0309-reasoning does not support parameter reasoningEffort."}';
+      const refusingAt =
+        (efforts: Array<string | undefined>): GatewayAnswer =>
+        (sent) =>
+          sent.body.reasoning_effort !== undefined && efforts.includes(sent.body.reasoning_effort as string) ? refusing(400, 7003, xaiRefusal)(sent) : answering(HELLO)(sent);
+
+      fakeGateway(refusingAt(["none", "low", "medium", "high"]));
+      const { assistant, greeting } = await saved(administrator, { ...SETUP, model: grok, modelName: "Grok 4.20 Reasoning" });
+      expect(greeting).toBe(HELLO);
+      expect(assistant.models).toEqual([{ id: grok, name: "Grok 4.20 Reasoning", format: "chat", thinkingLevels: [] }]);
+      expect((await storedSettings()).assistant).toMatchObject({ models: [{ id: grok, name: "Grok 4.20 Reasoning", format: "chat", thinking_levels: [] }] });
+      expect(logged).toHaveBeenCalledWith(`${grok} isn't told to think at off, low, medium, high, which it refused: ${xaiRefusal}`);
+      vi.restoreAllMocks();
+
+      // A model that can't think as little as none, nor at Medium, and one AI Gateway was too busy to ask at High, which it may take.
+      fakeGateway((sent) => (sent.body.reasoning_effort === "high" ? refusing(429, 2003, "Rate limited")(sent) : refusingAt(["none", "medium"])(sent)));
+      expect((await saved(administrator, { ...SETUP, model: grok })).assistant.models).toEqual([{ id: grok, name: "Grok 4.20 Reasoning", format: "chat", thinkingLevels: ["low", "high"] }]);
     });
 
     it.each([
@@ -420,9 +460,9 @@ describe("Ember AI", () => {
       ).toBe(200);
       expect((await setUpAssistant(administrator, SETUP, { AI_GATEWAY_URL: "https://gateway.example.com" })).status).toBe(200);
       expect(requests.map(({ url }) => url)).toEqual([
-        `${CLOUDFLARE_API}/messages`,
-        `http://127.0.0.1:8793/accounts/${ACCOUNT_ID}/ai/v1/messages`,
-        `${CLOUDFLARE_API}/messages`,
+        ...Array(5).fill(`${CLOUDFLARE_API}/messages`),
+        ...Array(5).fill(`http://127.0.0.1:8793/accounts/${ACCOUNT_ID}/ai/v1/messages`),
+        ...Array(5).fill(`${CLOUDFLARE_API}/messages`),
       ]);
     });
   });

@@ -171,6 +171,7 @@ interface ListedMessage {
   id: string;
   created_at: string;
   body: { plain_text: string; html: string };
+  attachment?: { filename: string; content_type: string; byte_size: number; url: string };
   creator: { id: string; name: string; role: string; avatar_url: string };
   room: { id: RoomId };
   url: string;
@@ -611,6 +612,35 @@ describe("Bots read messages", () => {
     const { administrator, bot, general } = await withBot();
     const message = await upload(administrator, general, "moon.jpg", recordedImage("moon-thumb.jpg"));
     expect(await listedBy(bot.key, general)).toMatchObject([{ id: message.id, body: { plain_text: "moon.jpg", html: "" } }]);
+  });
+
+  it("writes a file message's file after its body, at an address that opens it without a session or the bot's key, and nothing for a message without one", async () => {
+    const { administrator, bot, general } = await withBot();
+    const text = await posted(bot.key, general, "Here's the moon");
+    const message = await upload(administrator, general, "moon.jpg", recordedImage("moon-thumb.jpg"));
+
+    const response = await readAs(bot.key, general);
+    const body = await response.clone().text();
+    const [first, second] = (await response.json()) as ListedMessage[];
+    expect(first!.id).toBe(text);
+    expect(first).not.toHaveProperty("attachment");
+    expect(second).toMatchObject({
+      id: message.id,
+      attachment: { filename: "moon.jpg", content_type: "image/jpeg", byte_size: message.attachment.byteSize, url: `${origin}${message.attachment.url}` },
+    });
+    expect(Object.keys(second!)).toEqual(["id", "created_at", "body", "attachment", "creator", "room", "url"]);
+    expect(second!.attachment!.url).not.toContain(bot.key);
+    expect(body).not.toContain(bot.key);
+
+    const file = await apiWith({}, second!.attachment!.url);
+    expect(file.status).toBe(200);
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(recordedImage("moon-thumb.jpg"));
+
+    // A bot reads no file in a room it isn't in, as it reads nothing there.
+    const secrets = await createRoom("Secrets", { closedTo: [administrator.user.id], as: administrator });
+    await upload(administrator, secrets.id, "plans.jpg", recordedImage("moon-thumb.jpg"));
+    const refused = await readAs(bot.key, secrets.id);
+    expect([refused.status, await refused.text()]).toEqual([404, ""]);
   });
 
   it("gives addresses on the host each request came to", async () => {

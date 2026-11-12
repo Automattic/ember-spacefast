@@ -60,8 +60,9 @@ export interface Agent extends DirectoryUser {
 
 /**
  * An agent as its page shows it: as the tab lists it, with its instructions and what Ember adds around
- * them, the format its model took its test question in, how much it thinks and how long it answers,
- * whether an administrator uploaded its avatar, and who last changed it, and when.
+ * them, the format its model took its test question in, how much it thinks and how long it answers, the
+ * levels of thinking its model takes, whether an administrator uploaded its avatar, and who last changed
+ * it, and when.
  */
 export interface AgentSettings extends Agent {
   instructions: string;
@@ -69,6 +70,8 @@ export interface AgentSettings extends Agent {
   promptTemplate: string | null;
   format: ModelFormat;
   levels: AnswerLevels;
+  /** The levels of thinking its model takes (`AssistantModel.thinkingLevels`), or null for one Ember hasn't asked at each, which is asked at any. */
+  thinkingLevels: ThinkingLevel[] | null;
   /** Whether an administrator uploaded its avatar, which `DELETE /api/account/agents/<id>/avatar` takes away. */
   avatar: boolean;
   changedBy: User;

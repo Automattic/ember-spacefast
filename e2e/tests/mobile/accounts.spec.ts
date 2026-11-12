@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import type { BotAnswer, Bots, BotSettings } from "@ember/protocol";
 import type { AgentAnswer, Agents, AgentSettings, AgentTrialAnswer } from "@ember/protocol/agents";
-import { TOP_LEVELS, type AssistantCatalog, type AssistantSettings } from "@ember/protocol/assistant";
+import { THINKING_LEVELS, TOP_LEVELS, type AssistantCatalog, type AssistantSettings } from "@ember/protocol/assistant";
 import { AGENT_TEMPLATE } from "@ember/protocol/prompts";
 import { changeTheWorkspace, fakeTurnstile, isolateRoom, listing, openRoom, signInAs, signInAsAdministrator, TURNSTILE_WIDGET, useOwnAddress, type Passes } from "../../fixtures";
 import { auditScreen, settle } from "./audits";
@@ -305,6 +305,7 @@ const AGENT: AgentSettings = {
   promptTemplate: `${AGENT_TEMPLATE}\n\nSign off as ${LONG_NAME}.`,
   format: "messages",
   levels: { thinking: "medium", length: "long" },
+  thinkingLevels: [...THINKING_LEVELS],
   avatar: true,
   changedBy: { id: "0mgk3x2a9b4c5d", name: LONG_NAME },
   changedAt: "2026-11-09T12:00:00.000Z",

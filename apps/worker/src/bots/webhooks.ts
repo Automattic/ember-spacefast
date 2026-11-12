@@ -1,4 +1,4 @@
-import { MAX_MESSAGE_HTML_LENGTH, threadPath, type Message, type RoomId, type User } from "@ember/protocol";
+import { MAX_MESSAGE_HTML_LENGTH, threadPath, type Message, type RoomId, type StoredFile, type User } from "@ember/protocol";
 import { botMessagesPath } from "@ember/protocol/bots";
 import type { ArrivingFile } from "../files/streamed";
 import { trimmed } from "../trim";
@@ -47,13 +47,14 @@ const HEADERS = { "Content-Type": "application/json", Accept: "*/*", "User-Agent
  * in a thread posts to that thread, and reads it, so a bot that answers later finds it as one that
  * answers at once does. The message's is its permalink, both without an origin, as Rails' path helpers
  * write them. A file message has no rich text, so its `html` is null, as Campfire's `message.body.body`
- * is, and its plain text is its file's name.
+ * is, and its plain text is its file's name. A message's file, which Campfire leaves out, follows its
+ * body, with the path that opens it, signed as the room's links are, so the bot fetches it without its key.
  */
 export function webhookPayload(
   roomId: RoomId,
   { author, roomName }: Pick<MessageWebhook, "author" | "roomName">,
   { bot, token }: Pick<BotWebhook, "bot" | "token">,
-  message: Pick<Message, "id" | "body" | "plainText" | "mentions" | "parentId">,
+  message: Pick<Message, "id" | "body" | "plainText" | "mentions" | "parentId" | "attachment">,
 ): string {
   const plain = withoutMentionsOf(nameIn(message, bot), message.plainText);
   // A reply in a thread's permalink opens its thread at it.
@@ -61,9 +62,17 @@ export function webhookPayload(
   return railsJson({
     user: { id: author.id, name: author.name },
     room: { id: roomId, name: roomName, path: botMessagesPath(roomId, botKeyOf(bot.id, token), message.parentId) },
-    message: { id: message.id, body: { html: message.body === "" ? null : message.body, plain }, path },
+    message: {
+      id: message.id,
+      body: { html: message.body === "" ? null : message.body, plain },
+      ...(message.attachment && { attachment: attachmentJson(message.attachment) }),
+      path,
+    },
   });
 }
+
+/** A message's file as Active Storage names a blob's columns, with the path that opens it. */
+const attachmentJson = ({ name, contentType, byteSize, url }: StoredFile) => ({ filename: name, content_type: contentType, byte_size: byteSize, path: url });
 
 /**
  * The name `message`'s plain text gives `bot`: the one its mentions of it have, from when the text was

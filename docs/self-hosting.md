@@ -639,10 +639,22 @@ limit allows, with room for code and tables. The Limits on @ember's page set the
 anyone's questions, the top of each until an administrator lowers them, and each person picks their
 own levels under Ember AI on their profile, up to those, starting at Low thinking and a Medium answer.
 An agent's levels are its own, set on its page.
-A model that refuses a thinking level is asked again without one. @ember waits for its model as long
-as the levels may take, 2 minutes at the least and about 13 at High and Long. An answer its token limit
-cuts short ends with an ellipsis, and when the model thinks for all it may before writing anything,
-@ember says so and suggests less thinking.
+
+Which thinking levels a model takes is something only asking it says: Cloudflare's catalog can list a
+reasoning effort for a model whose provider refuses it, as it did Low and High for xAI's Grok 4.20
+Reasoning, which xAI refuses at every level. So when an administrator picks a model, in Set up Ember
+AI, Add a model or an agent's page, the Worker also asks it the test question once at each level, all
+at once, and keeps the levels it answered at. A level it doesn't take costs nothing, as the provider
+refuses it before the model writes anything. The Thinking dial then offers only those, on a person's
+profile for their model and on an agent's page, and says which the model can't be set to. A level
+chosen before that the model doesn't take asks it for the nearest one it does, below first, so Off
+asks a model that can't turn thinking off for Low. A model that takes no level, as Grok 4.20 Reasoning
+does, decides how much it thinks, and Thinking still sets how much it may. A model picked before Ember
+asked at each level, or one whose provider refuses a level it took then, is asked again without one.
+
+@ember waits for its model as long as the levels may take, 2 minutes at the least and about 13 at High
+and Long. An answer its token limit cuts short ends with an ellipsis, and when the model thinks for all
+it may before writing anything, @ember says so and suggests less thinking.
 
 Search the web, on @ember's page, lets @ember search the web and read pages with its model's own
 tools, which AI Gateway passes on and the model's provider runs
@@ -865,7 +877,8 @@ What a self-hoster should know, beyond keeping the setup password and link to th
   password reset, or a new password saved in another session ends it. Its id travels in the
   address's fragment, which no log sees.
 - A file's address is signed and never expires: whoever has it can open the file until its message
-  is deleted, as with Active Storage's links.
+  is deleted, as with Active Storage's links. A bot is given the addresses of the files in its rooms,
+  with the messages its webhook is sent and those the bot API answers, so it can read them.
 - A bot's webhook payload carries the bot's key, so point bots only at servers you trust. Webhooks
   go only to https, or to http on localhost, so nobody on the way reads the key; a bot saved with an
   http URL elsewhere before gets no deliveries until its URL is changed, and the Worker's log says
@@ -952,6 +965,8 @@ pages had them in October 2026:
   AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
   Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
   costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
+  Picking a model asks it a test question, then again at each Thinking level, each at most 2,000
+  tokens out.
   Each person's questions cost what the model they pick does, so add to the Models list only the
   models you're happy to pay for, and each [agent's](#ai-agents) what its own model does at its own
   dials, whose most its page says. While Search the web is on, an answer can also search up to 5 times,
