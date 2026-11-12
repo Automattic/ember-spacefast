@@ -41,7 +41,7 @@ export async function sidebar(ctx: Reader) {
  const memberships=await ctx.db.members.withIndex('by_person',q=>q.eq('personId',me.id)).take(500);
  const all=await ctx.db.rooms.withIndex('by_creation').take(500);
  const visible=all.filter(r=>!r.archived && ((!r.private && r.kind!=='direct') || memberships.some(m=>m.roomId===r.id)));
- const rooms=await Promise.all(visible.map(async r=>{const m=memberships.find(m=>m.roomId===r.id);const latest=await ctx.db.messages.withIndex('by_room',q=>q.eq('roomId',r.id)).order('desc').first();return {...await roomView(ctx,r),unread:Boolean(latest && latest.creatorId!==me.id && (!m || latest.createdAt>m.lastReadAt)),involvement:m?.involvement || (r.kind==='direct'?'everything':'mentions')};}));
+ const rooms=await Promise.all(visible.map(async r=>{const m=memberships.find(m=>m.roomId===r.id);const latest=await ctx.db.messages.withIndex('by_room',q=>q.eq('roomId',r.id)).order('desc').first();return {...await roomView(ctx,r),unread:Boolean(latest && latest.creatorId!==me.id && (!m || latest.createdAt>m.lastReadAt)),...(m?.lastReadAt ? {unreadSince:m.lastReadAt} : {}),involvement:m?.involvement || (r.kind==='direct'?'everything':'mentions')};}));
  const people=await ctx.db.people.withIndex('by_creation').take(100);
  return {rooms,favorites:favoritesView(memberships,new Set(visible.filter(r=>r.kind!=='direct').map(r=>r.id))),sharedOrder:visible.filter(r=>r.kind!=='direct').sort((a,b)=>a.order.localeCompare(b.order)).map(r=>r.id),invitation:null,suggestions:people.filter(p=>p.id!==me.id && p.status==='active' && p.role!=='bot').slice(0,20).map(p=>({id:p.id,name:p.name})),huddles:{}};
 }

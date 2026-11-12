@@ -33,7 +33,7 @@ import {
   type ModelFormat,
   type ModelPrice,
 } from "@ember/protocol/assistant";
-import { promptAround, webPromptFor, withInstructions, type Prompt } from "@ember/protocol/prompts";
+import { AGENT_TEMPLATE, promptAround, templateRefusal, webPromptFor, withInstructions, type Prompt } from "@ember/protocol/prompts";
 import { displayBody, type DisplayNode } from "@ember/richtext/dom";
 import { AUTH_FORM } from "@/components/auth-page";
 import defaultBotAvatar from "@/components/default-bot-avatar.svg";
@@ -63,7 +63,8 @@ import { UnsavedChanges } from "./unsaved-changes";
 
 // New agent and an agent's settings, for administrators while Ember AI is on, which the Agents card on
 // the AI assistant tab links to, as the project's owner chose in the mock-ups (2026-11-10): the agent's
-// avatar, name and what it does, its Instructions, with what Ember adds around them, How it answers, its
+// avatar, name and what it does, its Instructions, with what Ember adds around them, which administrators
+// may modify with caution, as the project's owner asked (2026-11-11), How it answers, its
 // model and dials, with the most an answer costs at the model's prices, Search the web, its Rooms, and
 // Try it, which asks it something as the page sets it up, saved or not. Create agent and Save changes
 // ask its model a test question first when it's new, as Set up Ember AI does, and go back to the tab once
@@ -114,6 +115,8 @@ interface Fields {
   name: string;
   description: string;
   instructions: string;
+  /** What Ember adds around the instructions, as the page shows it: Ember's own until it's modified. */
+  promptTemplate: string;
   choice: ModelChoice;
   levels: AnswerLevels;
   webSearch: boolean;
@@ -127,16 +130,17 @@ interface Refusal {
   error: string;
 }
 
-const AGENT_FIELDS: readonly string[] = ["name", "description", "instructions", "model", "levels", "webSearch", "rooms", "question"] satisfies AgentField[];
+const AGENT_FIELDS: readonly string[] = ["name", "description", "instructions", "promptTemplate", "model", "levels", "webSearch", "rooms", "question"] satisfies AgentField[];
 
 /** The field of the page an answer's `field` names, or null for none of them. */
 const fieldOf = (field: string | undefined) => (field !== undefined && AGENT_FIELDS.includes(field) ? (field as AgentField) : null);
 
-/** A new agent's page: nothing typed, @ember's model chosen, at the levels people start at, without the web, in every open room. */
+/** A new agent's page: nothing typed, Ember's own around it, @ember's model chosen, at the levels people start at, without the web, in every open room. */
 const newFields = ({ assistant, catalog }: Setup): Fields => ({
   name: "",
   description: "",
   instructions: "",
+  promptTemplate: AGENT_TEMPLATE,
   choice: modelChoiceOf(assistant, catalog.models),
   levels: DEFAULT_LEVELS,
   webSearch: false,
@@ -149,6 +153,7 @@ const fieldsOf = (agent: AgentSettings, models: readonly AssistantModel[]): Fiel
   name: agent.name,
   description: agent.description,
   instructions: agent.instructions,
+  promptTemplate: agent.promptTemplate ?? AGENT_TEMPLATE,
   choice: models.some(({ id }) => id === agent.model) ? { chosen: agent.model, typed: "" } : { chosen: ANOTHER_MODEL, typed: agent.model },
   levels: agent.levels,
   webSearch: agent.webTools.includes("search"),
@@ -173,14 +178,29 @@ function roomsToPick(rooms: readonly SidebarRoom[] | null, kept: readonly AgentR
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** What Ember adds around the instructions as `template` has it, as the page sends it: null for Ember's own. */
+const templateSent = (template: string) => (template.trim() === AGENT_TEMPLATE ? null : template);
+
 /** The name of model `model` in `models`, as the Worker keeps it, if they list it. */
 const listedName = (model: string, models: readonly AssistantModel[]) => models.find(({ id }) => id === model)?.name;
 
 /** The agent `fields` set up, as New agent sends it. */
-function newAgentOf({ name, description, instructions, choice, levels, webSearch, ...rooms }: Fields, models: readonly AssistantModel[]): NewAgent {
+function newAgentOf({ name, description, instructions, promptTemplate, choice, levels, webSearch, ...rooms }: Fields, models: readonly AssistantModel[]): NewAgent {
   const model = idOf(choice);
   const modelName = listedName(model, models);
-  return { name, description, instructions, model, ...(modelName && { modelName }), thinking: levels.thinking, length: levels.length, webSearch, rooms: roomsChosen(rooms) };
+  const template = templateSent(promptTemplate);
+  return {
+    name,
+    description,
+    instructions,
+    ...(template !== null && { promptTemplate: template }),
+    model,
+    ...(modelName && { modelName }),
+    thinking: levels.thinking,
+    length: levels.length,
+    webSearch,
+    rooms: roomsChosen(rooms),
+  };
 }
 
 /**
@@ -192,6 +212,7 @@ function changesOf(agent: AgentSettings, fields: Fields, models: readonly Assist
   if (fields.name.trim() !== agent.name) changes.name = fields.name;
   if (fields.description.trim() !== agent.description) changes.description = fields.description;
   if (fields.instructions.trim() !== agent.instructions) changes.instructions = fields.instructions;
+  if (fields.promptTemplate.trim() !== (agent.promptTemplate ?? AGENT_TEMPLATE)) changes.promptTemplate = templateSent(fields.promptTemplate);
   const model = idOf(fields.choice);
   const name = listedName(model, models);
   if (model !== agent.model) Object.assign(changes, { model }, name && { modelName: name });
@@ -341,7 +362,8 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
   // What it does on the web: what its tests found, while it has the model it has, or else what its model's format allows.
   const webTools = !fields.webSearch || !canSearch ? [] : sameModel && saved.webTools.length > 0 ? saved.webTools : [...WEB_TOOLS_IN[format]];
   const where = { community, roomName: null, inThread: false };
-  const prompt: Prompt = promptAround(saved?.id ?? null, name || "Agent", me.name, where, ANSWER_WORDS[fields.levels.length], webPromptFor(me.name, webTools, webTools.length > 0), new Date());
+  const web = webPromptFor(me.name, webTools, webTools.length > 0);
+  const prompt: Prompt = promptAround(saved?.id ?? null, name || "Agent", me.name, where, ANSWER_WORDS[fields.levels.length], web, new Date(), fields.promptTemplate.trim());
   const price = isWorkersAiModel(model) ? undefined : models.find(({ id }) => id === model)?.price;
   const changes = saved && changesOf(saved, fields, models);
   const asksModel = !saved || changes?.model !== undefined || (changes?.webSearch === true && saved.webTools.length === 0);
@@ -356,8 +378,13 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
     if (refusal?.field === field || refusal?.field === null || (field === "model" && refusal?.field === "webSearch")) setRefusal(null);
   };
 
-  /** Why the page can't be sent as it's filled in, before it is: a model that can't be one, or Search the web on for one that can't search. */
+  /**
+   * Why the page can't be sent as it's filled in, before it is: what Ember adds around the instructions
+   * a template it doesn't take, a model that can't be one, or Search the web on for one that can't search.
+   */
   const refusalBefore = (): Refusal | null => {
+    const template = templateRefusal(fields.promptTemplate.trim());
+    if (template !== null) return { field: "promptTemplate", error: template };
     if (modelOf(model) === null) return { field: "model", error: MODEL_REFUSED };
     if (fields.webSearch && !canSearch) return { field: "webSearch", error: agentCannotSearchWith(nameOfModel) };
     return null;
@@ -523,7 +550,16 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
           <Under id="agent-instructions" field="instructions" refusal={refusal} className="-mt-2 text-end">
             {lengthOf(fields.instructions)}
           </Under>
-          <PromptPreview name={called} prompt={prompt} />
+          <PromptPreview
+            name={called}
+            prompt={prompt}
+            template={fields.promptTemplate}
+            ownTemplate={AGENT_TEMPLATE}
+            refusal={refusal?.field === "promptTemplate" ? refusal : null}
+            disabled={busy !== null}
+            onChange={(promptTemplate) => change("promptTemplate", { promptTemplate })}
+            heading="h3"
+          />
         </section>
         <section aria-labelledby="agent-model-heading" className={CARD}>
           <div>
@@ -547,7 +583,14 @@ function AgentForm({ me, saved, setup, rooms, onFailed }: FormProps) {
             />
           </div>
           <div>
-            <LevelDials name="agent-levels" levels={fields.levels} disabled={busy !== null} onChange={(levels) => change("levels", { levels: { ...fields.levels, ...levels } })} />
+            <LevelDials
+              name="agent-levels"
+              levels={fields.levels}
+              // The levels its model takes are known once it's saved with it, as saving asks it at each.
+              model={sameModel ? { name: nameOfModel, thinkingLevels: saved.thinkingLevels } : undefined}
+              disabled={busy !== null}
+              onChange={(levels) => change("levels", { levels: { ...fields.levels, ...levels } })}
+            />
             <Under id="agent-levels" field="levels" refusal={refusal} className="mt-2" />
           </div>
           {price && (

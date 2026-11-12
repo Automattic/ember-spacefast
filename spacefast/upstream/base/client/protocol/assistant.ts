@@ -1,3 +1,6 @@
+import { ASSISTANT_ID } from "./index.ts";
+import { parseTemplate } from "./prompts.ts";
+
 // Ember AI, which answers as @ember through Cloudflare's AI Gateway, as administrators set it up on the
 // AI assistant tab of workspace settings through `/api/account/assistant`.
 
@@ -18,6 +21,11 @@ export interface AssistantModel {
   name: string;
   format: ModelFormat;
   price?: ModelPrice;
+  /**
+   * The levels of thinking it takes, as asking it at each found when an administrator added it, since
+   * nothing else says reliably: left out for one Ember hasn't asked at each, which is asked at any.
+   */
+  thinkingLevels?: ThinkingLevel[];
 }
 
 /** What a model costs through AI Gateway, in US dollars for each million tokens it reads and writes. */
@@ -106,8 +114,11 @@ export interface AnswerLevels {
   length: AnswerLength;
 }
 
+/** The most tokens of thinking an answer at `thinking` may take, as even one asked for none may think a little. */
+export const thinkingTokensAt = (thinking: ThinkingLevel) => (thinking === "off" ? UNTHINKING_TOKENS : THINKING_TOKENS[thinking]);
+
 /** The most tokens an answer at `levels` may take: its thinking's, which counts toward them, and then its words'. */
-export const maxTokensAt = ({ thinking, length }: AnswerLevels) => (thinking === "off" ? UNTHINKING_TOKENS : THINKING_TOKENS[thinking]) + ANSWER_TOKENS[length];
+export const maxTokensAt = ({ thinking, length }: AnswerLevels) => thinkingTokensAt(thinking) + ANSWER_TOKENS[length];
 
 /** Each level, as its dial names it. */
 export const LEVEL_NAMES: Record<ThinkingLevel | AnswerLength, string> = { off: "Off", low: "Low", medium: "Medium", high: "High", short: "Short", long: "Long" };
@@ -124,17 +135,31 @@ export function withinMost(levels: AnswerLevels, most: AnswerLevels): AnswerLeve
   return { thinking: lower(THINKING_LEVELS, levels.thinking, most.thinking), length: lower(ANSWER_LENGTHS, levels.length, most.length) };
 }
 
+/**
+ * The level of thinking a model that takes `taken` is asked for in place of `level`: `level` when it
+ * takes it, as a model Ember hasn't asked at each level (undefined) is taken to, or else the nearest
+ * below it that it takes, or else above it, as one that can't think as little as `level` is asked for as
+ * little as it can, or null for one that takes none, which thinks as much as it decides.
+ */
+export function thinkingTaken(level: ThinkingLevel, taken: readonly ThinkingLevel[] | null | undefined): ThinkingLevel | null {
+  if (!taken || taken.includes(level)) return level;
+  const index = THINKING_LEVELS.indexOf(level);
+  const below = THINKING_LEVELS.slice(0, index).reverse();
+  return below.find((lower) => taken.includes(lower)) ?? THINKING_LEVELS.slice(index + 1).find((higher) => taken.includes(higher)) ?? null;
+}
+
 /** A change to one of @ember's dials, or both: the most each goes to, or your own levels. */
 export type AnswerLevelChanges = Partial<AnswerLevels>;
 
 /**
  * What `PATCH /api/account/assistant` changes: the most one dial or both go to for anyone's questions,
- * which of the models people can pick @ember answers everyone else with, or the instructions Ember adds
- * to @ember's own, "" for none.
+ * which of the models people can pick @ember answers everyone else with, the instructions Ember adds to
+ * @ember's own, "" for none, or what Ember adds around them, null for Ember's own.
  */
 export interface AssistantChanges extends AnswerLevelChanges {
   model?: string;
   instructions?: string;
+  promptTemplate?: string | null;
 }
 
 /**
@@ -161,9 +186,10 @@ export const MAX_INSTRUCTIONS_LENGTH = 10_000;
 export const INSTRUCTIONS_TOO_LONG = `Instructions can be at most ${MAX_INSTRUCTIONS_LENGTH.toLocaleString("en-US")} characters.`;
 
 /**
- * The changes `data` gives, as the Ember AI card sends them, or why they can't be changes: they change
- * nothing, or give a level a dial doesn't have, a model that can't be one, or instructions that aren't
- * text or are longer than Ember takes. Instructions are saved without the spaces around them.
+ * The changes `data` gives, as @ember's page sends them, or why they can't be changes: they change
+ * nothing, or give a level a dial doesn't have, a model that can't be one, instructions that aren't text
+ * or are longer than Ember takes, or what Ember adds around them a template it doesn't take
+ * (`parseTemplate`). Instructions are saved without the spaces around them, and so are templates.
  */
 export function parseAssistantChanges(data: unknown): AssistantChanges | { error: string } {
   const given = objectIn(data);
@@ -171,7 +197,13 @@ export function parseAssistantChanges(data: unknown): AssistantChanges | { error
   if ("error" in levels) return levels;
   const { instructions } = given;
   if (instructions !== undefined && (typeof instructions !== "string" || instructions.trim().length > MAX_INSTRUCTIONS_LENGTH)) return { error: INSTRUCTIONS_TOO_LONG };
-  const changes: AssistantChanges = { ...levels, ...(typeof instructions === "string" && { instructions: instructions.trim() }) };
+  const template = given.promptTemplate === undefined ? undefined : parseTemplate(given.promptTemplate, ASSISTANT_ID);
+  if (template && "error" in template) return template;
+  const changes: AssistantChanges = {
+    ...levels,
+    ...(typeof instructions === "string" && { instructions: instructions.trim() }),
+    ...(template && { promptTemplate: template.template }),
+  };
   if (given.model === undefined) return Object.keys(changes).length > 0 ? changes : { error: LEVELS_REFUSED };
   const model = typeof given.model === "string" ? modelOf(given.model) : null;
   return model === null ? { error: MODEL_NOT_LISTED } : { ...changes, model };
@@ -179,10 +211,11 @@ export function parseAssistantChanges(data: unknown): AssistantChanges | { error
 
 /**
  * Your changes `data` gives, as your profile sends them, or why they can't be changes, as `parseAssistantChanges`
- * says, where a null model leaves yours to administrators. @ember's instructions aren't yours to change.
+ * says, where a null model leaves yours to administrators. @ember's instructions aren't yours to change,
+ * nor what Ember adds around them.
  */
 export function parseYourAssistantChanges(data: unknown): YourAssistantChanges | { error: string } {
-  const { instructions: _, ...given } = objectIn(data);
+  const { instructions: _, promptTemplate: __, ...given } = objectIn(data);
   if (given.model !== null) return parseAssistantChanges(given);
   const levels = levelChangesIn(given);
   return "error" in levels ? levels : { ...levels, model: null };
@@ -230,8 +263,8 @@ export function formatOf(model: string, models: readonly AssistantModel[] = []):
  * from, that one among them, in the order they were added, the most each dial goes to for anyone's
  * questions, and what @ember does on the web: what it may while Search the web is on, nothing while it's
  * off, or null when the model that answers everyone can't, as only Anthropic's and OpenAI's models have
- * tools for it that AI Gateway passes on. Then the instructions Ember adds to @ember's own, and @ember's
- * avatar.
+ * tools for it that AI Gateway passes on. Then the instructions Ember adds to @ember's own, what Ember
+ * adds around them, and @ember's avatar.
  */
 export interface AssistantSettings {
   accountId: string;
@@ -241,6 +274,8 @@ export interface AssistantSettings {
   webTools: WebTool[] | null;
   /** What Ember adds to @ember's own instructions, as administrators write them, or "" for nothing, which stays while Ember AI is off. */
   instructions: string;
+  /** What Ember adds around them (`promptAround`), as administrators changed it, or null for Ember's own, which stays while Ember AI is off too. */
+  promptTemplate: string | null;
   /** @ember's avatar, as the people directory gives it (`DirectoryUser.avatarUrl`): the picture an administrator uploaded, or Ember's flame. */
   avatarUrl: string;
   /** Whether an administrator uploaded @ember's avatar, which Use Ember's flame takes away, though one that can't be resized shows the flame. */

@@ -30,6 +30,7 @@ import { useMounted } from "@/hooks/use-mounted";
 import { newRoomPath, useHash } from "@/hooks/use-route";
 import { useTitle } from "@/hooks/use-title";
 import { changeAccount, changeLogo, changeRole, fetchWorkspaceSettings, isSignedOut, regenerateJoinCode, removeLogo, removePerson } from "@/lib/api";
+import { HUDDLE_CHAT_TITLE } from "@/lib/huddle-chat";
 import { logoVariantsOf } from "@/lib/previews";
 import { apart } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
@@ -80,22 +81,24 @@ interface Props {
   onSessionChanged: (me: Me | null) => void;
   /** For an administrator, the release this Ember is and the newest one, once the Worker has said, or else null. */
   release: ReleaseCheck | null;
+  /** Asks the Worker that afresh, as General's Check for updates does, settling once it's answered, which `release` then says. */
+  onCheckForUpdates: () => Promise<void>;
 }
 
 /**
- * Workspace settings, in five sections, of which the address's fragment shows one, all of them staying
+ * Workspace settings, in six sections, of which the address's fragment shows one, all of them staying
  * drawn so what's typed in one waits there while another shows:
  *
  * - General, where administrators change the workspace's icon, which one picked saves at once, showing it
  *   meanwhile, and Remove icon takes away, then rename the workspace, give it a tagline, and show or hide
  *   the translation buttons, which Save changes saves together, and see which release of Ember this is,
- *   and when a newer one is out. Members see its icon, name and tagline.
+ *   and when a newer one is out, which Check for updates asks GitHub again. Members see its icon, name
+ *   and tagline.
  *   The rail's icons are in Custom styles (`NavigationIconSettings`), where the project's owner moved
  *   them.
  * - Rooms and permissions: New room, which members don't get while only administrators can create
- *   rooms, then for administrators, the switch that says so, the rooms' order for everyone, each
- *   linking to its settings, and whether huddles are on, through the Realtime SFU app whose keys Set up
- *   huddles takes.
+ *   rooms, then for administrators, the switch that says so, and the rooms' order for everyone, each
+ *   linking to its settings.
  * - Membership: for administrators, who can join, with switches for Open, the join link, which they can
  *   regenerate, and Memberful, how Ember sends email, and whether Cloudflare Turnstile checks who joins,
  *   or for members, the links that let people in, then the administrators and members, whom
@@ -104,6 +107,8 @@ interface Props {
  * - AI assistant: for administrators, whether Ember's AI agents run on models through Cloudflare AI
  *   Gateway, which Set up Ember AI connects, and while they do, the agents, @ember first, each linking to
  *   its page, and New agent.
+ * - Huddles: for administrators, whether huddles are on, through the Realtime SFU app whose keys Set up
+ *   huddles takes.
  */
 export function WorkspaceSettingsPage({
   me,
@@ -118,6 +123,7 @@ export function WorkspaceSettingsPage({
   onSharedOrderSaved,
   onSessionChanged,
   release,
+  onCheckForUpdates,
 }: Props) {
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   // What's typed in Workspace name and Tagline, or null for either while it's as the workspace has it,
@@ -434,7 +440,7 @@ export function WorkspaceSettingsPage({
                   Save changes
                 </SubmitButton>
               </form>
-              <EmberVersion check={release} />
+              <EmberVersion check={release} onCheckForUpdates={onCheckForUpdates} onFailed={onFailed} />
             </>
           ) : (
             <>
@@ -473,16 +479,6 @@ export function WorkspaceSettingsPage({
               />
             </div>
             {sharedRooms && <RoomOrder rooms={sharedRooms} sharedOrder={sharedOrder} onSaved={onSharedOrderSaved} onSessionChanged={onSessionChanged} />}
-            <HuddlesSettings huddles={settings.huddles} onSetUp={() => setSettingUpHuddles(true)} onStopped={() => showHuddles(null)} onFailed={onFailed} />
-            {settingUpHuddles && (
-              <HuddlesSetup
-                huddles={settings.huddles}
-                deployedAccountId={settings.cloudflareAccountId}
-                onSaved={showHuddles}
-                onClose={() => setSettingUpHuddles(false)}
-                onFailed={onFailed}
-              />
-            )}
           </>
         ) : (
           settings && <p className="text-muted-foreground">Community admins manage room order and permissions.</p>
@@ -597,6 +593,28 @@ export function WorkspaceSettingsPage({
             </>
           ) : (
             <p className="text-muted-foreground">Community admins manage the AI assistant.</p>
+          ))}
+      </Panel>
+      <Panel id="huddles-settings" hidden={section !== "huddles-settings"} aria-labelledby="huddles-settings-heading" className="flex flex-col gap-6">
+        <PageHeading id="huddles-settings-heading" title="Huddles" className={SECTION_HEADING}>
+          {HUDDLE_CHAT_TITLE} in your rooms.
+        </PageHeading>
+        {settings &&
+          (settings.canAdminister ? (
+            <>
+              <HuddlesSettings huddles={settings.huddles} onSetUp={() => setSettingUpHuddles(true)} onStopped={() => showHuddles(null)} onFailed={onFailed} />
+              {settingUpHuddles && (
+                <HuddlesSetup
+                  huddles={settings.huddles}
+                  deployedAccountId={settings.cloudflareAccountId}
+                  onSaved={showHuddles}
+                  onClose={() => setSettingUpHuddles(false)}
+                  onFailed={onFailed}
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-muted-foreground">Community admins manage huddles.</p>
           ))}
       </Panel>
     </SettingsPage>
