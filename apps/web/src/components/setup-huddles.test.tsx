@@ -69,10 +69,10 @@ async function giveKeys(user: ReturnType<typeof userEvent.setup>) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("First run's question about huddles", () => {
-  it("asks whether to enable voice chat, starting at the question, with what it is, needs and costs", () => {
+  it("asks whether to enable audio and video chat, starting at the question, with what it is, needs and costs", () => {
     serve();
     showQuestion();
-    expect(QUESTION).toBe("Would you like to enable voice chat?");
+    expect(QUESTION).toBe("Would you like to enable audio and video chat?");
     expect(title(QUESTION)).toHaveFocus();
     const card = screen.getByRole("region", { name: QUESTION });
     expect(card).toHaveTextContent("Huddles let people in a room talk to each other live.");
@@ -80,7 +80,7 @@ describe("First run's question about huddles", () => {
       .getAllByRole("term")
       .map((term) => [term.textContent, term.nextElementSibling?.textContent]);
     expect(facts).toEqual([
-      ["What it is", "Live voice chat in any room, for up to 50 people in a huddle."],
+      ["What it is", "Live audio and video chat in any room, for up to 50 people in a huddle."],
       ["What it needs", "A Realtime SFU app in your Cloudflare account. Creating one takes a couple of minutes."],
       ["What it costs", "Cloudflare gives a free monthly allowance, then bills your account for what's sent past it."],
     ]);

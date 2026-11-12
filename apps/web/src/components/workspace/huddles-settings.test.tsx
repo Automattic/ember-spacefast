@@ -30,8 +30,8 @@ function showCard(huddles: WorkspaceSettings["huddles"]) {
   return { ...callbacks, user: userEvent.setup() };
 }
 
-const card = () => screen.getByRole("region", { name: "Voice chat" });
-const huddlesSwitch = () => within(card()).getByRole("switch", { name: "Voice chat" });
+const card = () => screen.getByRole("region", { name: "Audio and video chat" });
+const huddlesSwitch = () => within(card()).getByRole("switch", { name: "Audio and video chat" });
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -41,8 +41,8 @@ describe("Set up huddles", () => {
     const { user, onSetUp } = showCard(null);
     expect(card()).toHaveTextContent(HUDDLES_EXPLAINED);
     expect(HUDDLES_EXPLAINED).toMatch(/^Huddles let people in a room talk to each other live\./);
-    // Named for what huddles carry, which is voice alone until they have cameras.
-    expect(within(card()).getByRole("heading", { level: 2, name: "Voice chat" })).toBeVisible();
+    // Named as the project's owner worded what huddles are for.
+    expect(within(card()).getByRole("heading", { level: 2, name: "Audio and video chat" })).toBeVisible();
     expect(huddlesSwitch()).not.toBeChecked();
     expect(huddlesSwitch()).toHaveAccessibleDescription(HUDDLES_EXPLAINED);
     expect(within(card()).queryAllByRole("button")).toEqual([]);

@@ -78,11 +78,11 @@ test("an administrator's Huddles tab and Set up huddles, with a key refused, fit
   await useOwnAddress(page);
   await page.goto("/account/edit#huddles-settings");
   await signInAsAdministrator(page);
-  const card = page.getByRole("region", { name: "Voice chat", exact: true });
-  await expect(card.getByRole("switch", { name: "Voice chat" })).toBeInViewport();
+  const card = page.getByRole("region", { name: "Audio and video chat", exact: true });
+  await expect(card.getByRole("switch", { name: "Audio and video chat" })).toBeInViewport();
   await screenIsFine({ denseTargets: [SWITCHES] });
 
-  await card.getByRole("switch", { name: "Voice chat" }).tap();
+  await card.getByRole("switch", { name: "Audio and video chat" }).tap();
   const setup = page.getByRole("dialog", { name: "Set up huddles" });
   await expect(setup.getByRole("list", { name: "Steps to set up huddles" })).toBeVisible();
   await screenIsFine({ denseTargets: [SWITCHES] });
@@ -105,9 +105,9 @@ test("an administrator's Huddles tab, naming the app huddles run through, fits t
   });
   await page.goto("/account/edit#huddles-settings");
   await signInAsAdministrator(page);
-  const card = page.getByRole("region", { name: "Voice chat", exact: true });
+  const card = page.getByRole("region", { name: "Audio and video chat", exact: true });
   await card.getByRole("button", { name: "Change keys" }).scrollIntoViewIfNeeded();
-  await expect(card.getByRole("switch", { name: "Voice chat" })).toBeChecked();
+  await expect(card.getByRole("switch", { name: "Audio and video chat" })).toBeChecked();
   await screenIsFine({ denseTargets: [SWITCHES] });
 });
 

@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 // Cloudflare has started a session with the app's keys, that huddles are on, from where Ember opens. It
 // loads with the pages few visits need (pages.ts), apart from the rest of the app.
 
-/** What the question asks, as the project's owner worded it (2026-11-12), of what huddles carry. */
+/** What the question asks, as the project's owner worded it (2026-11-12). */
 export const QUESTION = `Would you like to enable ${HUDDLE_CHAT}?`;
 
 /** What the question's card says of huddles, a line each. */
@@ -60,7 +60,7 @@ function Question({ onSetUp, onSkip }: { onSetUp: () => void; onSkip: () => void
   return (
     <SetupCard startsAtTitle title={QUESTION} subtitle="Huddles let people in a room talk to each other live.">
       <div className="grid gap-6 px-5 pt-6 pb-7">
-        <dl className="grid gap-4 text-base leading-normal">
+        <dl className="grid gap-4 text-base leading-normal text-pretty">
           {FACTS.map(([label, text]) => (
             <div key={label} className="grid grid-cols-[6.75rem_minmax(0,1fr)] gap-x-4 upto-480px:grid-cols-1 upto-480px:gap-y-0.5">
               <dt className="text-muted-foreground upto-480px:text-sm">{label}</dt>

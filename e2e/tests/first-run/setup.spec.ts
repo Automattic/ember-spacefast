@@ -108,7 +108,7 @@ test.describe("Set up the workspace", () => {
     await page.getByRole("button", { name: "Continue" }).click();
 
     // The workspace is made, and before it opens, setup asks about huddles, still at its own address.
-    await expect(page.getByRole("heading", { level: 1, name: "Would you like to enable voice chat?" })).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1, name: "Would you like to enable audio and video chat?" })).toBeFocused();
     await expect(page).toHaveURL(/\/first_run$/);
     await expect(page).toHaveTitle("Set up Ember");
     const withHuddles = test.info().project.name === SETTINGS_FIRST_RUN;

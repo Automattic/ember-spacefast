@@ -80,7 +80,7 @@ test("setup's question about huddles, its two steps with a key refused, and Hudd
   await page.getByLabel("Email address").fill("pat@example.com");
   await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
   await page.getByRole("button", { name: "Continue" }).tap();
-  await expect(page.getByRole("heading", { level: 1, name: "Would you like to enable voice chat?" })).toBeFocused();
+  await expect(page.getByRole("heading", { level: 1, name: "Would you like to enable audio and video chat?" })).toBeFocused();
   await screenIsFine();
 
   await page.getByRole("button", { name: "Set up huddles" }).tap();

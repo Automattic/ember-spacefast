@@ -30,7 +30,7 @@ test.afterEach(async ({ request }) => {
 const asAdministrator = async (request: APIRequestContext) => ({ Cookie: cookieHeader(await administratorSession(request)), ...SAME_ORIGIN });
 
 /** The Huddles tab's card on the page. */
-const huddlesCard = (page: Page) => page.getByRole("region", { name: "Voice chat", exact: true });
+const huddlesCard = (page: Page) => page.getByRole("region", { name: "Audio and video chat", exact: true });
 
 /** Opens community settings' Huddles tab as the administrator, answering its card. */
 async function openHuddles(page: Page) {
@@ -44,7 +44,7 @@ test.describe("Set up huddles", () => {
   test("the administrator gives Ember an SFU app's keys, which Cloudflare starts a session with, and Ember keeps them", async ({ page }) => {
     const huddles = await openHuddles(page);
     await expect(huddles).toContainText("Huddles let people in a room talk to each other live.");
-    const huddlesSwitch = huddles.getByRole("switch", { name: "Voice chat" });
+    const huddlesSwitch = huddles.getByRole("switch", { name: "Audio and video chat" });
     await expect(huddlesSwitch).not.toBeChecked();
     await huddlesSwitch.click();
 
@@ -84,7 +84,7 @@ test.describe("Set up huddles", () => {
 
     // Ember keeps the keys, and Change keys starts from the app's ID, asking for its secret again.
     await page.reload();
-    await expect(huddlesCard(page).getByRole("switch", { name: "Voice chat" })).toBeChecked();
+    await expect(huddlesCard(page).getByRole("switch", { name: "Audio and video chat" })).toBeChecked();
     await huddlesCard(page).getByRole("button", { name: "Change keys" }).click();
     await expect(page.getByRole("dialog").getByRole("textbox", { name: "App ID" })).toHaveValue(SFU_APP.appId);
     await expect(page.getByRole("dialog").getByRole("textbox", { name: "App Secret" })).toHaveValue("");
@@ -96,14 +96,14 @@ test.describe("Set up huddles", () => {
     expect(saved.status(), await saved.text()).toBe(200);
     const huddles = await openHuddles(page);
     page.once("dialog", (dialog) => void dialog.accept());
-    const huddlesSwitch = huddles.getByRole("switch", { name: "Voice chat" });
+    const huddlesSwitch = huddles.getByRole("switch", { name: "Audio and video chat" });
     await expect(huddlesSwitch).toBeChecked();
     await huddlesSwitch.click();
     await expect(huddlesSwitch).not.toBeChecked();
     await expect(huddlesSwitch).toBeEnabled();
     await expect(huddles.getByRole("button", { name: "Change keys" })).toHaveCount(0);
     await page.reload();
-    await expect(huddlesCard(page).getByRole("switch", { name: "Voice chat" })).not.toBeChecked();
+    await expect(huddlesCard(page).getByRole("switch", { name: "Audio and video chat" })).not.toBeChecked();
   });
 });
 

@@ -6,13 +6,13 @@ import { forgetHuddles, isSignedOut } from "@/lib/api";
 import { HUDDLE_CHAT_TITLE } from "@/lib/huddle-chat";
 import { BUTTON } from "./email-settings";
 
-// The card on the Huddles tab, for administrators, named for what huddles carry: whether Ember has what
-// huddles run through, which is Cloudflare's Realtime SFU, by an SFU app in the Cloudflare account of
-// whoever runs Ember, whose keys an administrator gives it. Its switch says whether it has, as
-// Turnstile's does. Turning it on opens Set up huddles (`HuddlesSetup`), as switches open setup that's
-// missing, as the project's owner asked (2026-10-26), and turning it off forgets the app's keys, which
-// ends any huddle going on once its room next checks, within half a minute. Change keys opens the setup
-// with the app's ID as it is.
+// The card on the Huddles tab, for administrators, named as first run's question names huddles
+// (`HUDDLE_CHAT`): whether Ember has what huddles run through, which is Cloudflare's Realtime SFU, by an
+// SFU app in the Cloudflare account of whoever runs Ember, whose keys an administrator gives it. Its
+// switch says whether it has, as Turnstile's does. Turning it on opens Set up huddles (`HuddlesSetup`),
+// as switches open setup that's missing, as the project's owner asked (2026-10-26), and turning it off
+// forgets the app's keys, which ends any huddle going on once its room next checks, within half a
+// minute. Change keys opens the setup with the app's ID as it is.
 
 /** What the card says of huddles while they're off. */
 export const HUDDLES_EXPLAINED =
