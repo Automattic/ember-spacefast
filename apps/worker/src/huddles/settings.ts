@@ -7,8 +7,8 @@ import { workspace } from "../workspace";
 import { refusalOfApp } from "./sfu";
 
 // Huddles' setup, as administrators turn huddles on, change the Realtime SFU app they run through and turn
-// them off on the Huddles card of workspace settings' Rooms and permissions. They answer JSON for the card
-// and its dialog.
+// them off on the card of workspace settings' Huddles tab, or turn them on as they set Ember up. They
+// answer JSON for the card, its dialog and first run's steps.
 
 const problem = (status: number, message: string) => Response.json({ error: message }, { status });
 

@@ -468,9 +468,9 @@ export interface Account {
    */
   navigationIcons: NavigationIcons;
   /**
-   * Whether huddles are on, which an administrator turns on in Rooms and permissions by giving Ember the
-   * keys of the Realtime SFU app they run through. Off until one does, when no room's header has a
-   * huddle button.
+   * Whether huddles are on, which an administrator turns on in community settings' Huddles tab, or as
+   * they set Ember up, by giving Ember the keys of the Realtime SFU app they run through. Off until one
+   * does, when no room's header has a huddle button.
    */
   huddles: boolean;
 }
@@ -516,7 +516,7 @@ export interface WorkspaceSettings {
   addresses: EmberAddresses;
   /** Ember AI as the AI assistant tab shows it, for administrators while it's on, and null otherwise. */
   assistant: AssistantSettings | null;
-  /** Huddles as Rooms and permissions' Huddles card shows them, for administrators while they're on, and null otherwise. */
+  /** Huddles as the Huddles tab's card shows them, for administrators while they're on, and null otherwise. */
   huddles: HuddlesSettings | null;
   /**
    * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for

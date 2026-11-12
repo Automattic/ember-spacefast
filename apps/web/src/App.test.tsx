@@ -2,6 +2,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloseCode, EMAIL_LINK_GONE, SIGN_IN_REJECTED, type Account, type AccountChanges, type Bootstrap, type Message, type WorkspaceSettings } from "@ember/protocol";
+import type { HuddlesSetup } from "@ember/protocol/huddles";
+import { QUESTION } from "@/components/setup-huddles";
 import { flashOnNextPage } from "@/lib/flash";
 import { loadPage } from "@/lib/page";
 import { setPrefersDark } from "@/test-media";
@@ -180,6 +182,10 @@ function serve({
         emailDomains: [],
         addresses: { deployed: null, others: [] },
       } satisfies WorkspaceSettings);
+    if (route === "PUT /api/account/huddles") {
+      account = { ...account, huddles: true };
+      return Response.json({ huddles: { appId: (JSON.parse(String(init?.body)) as HuddlesSetup).appId } });
+    }
     if (route === "GET /api/users") return Response.json({ users: [] });
     if (route === "GET /api/users/me/profile") return Response.json({ profile: { name: me.name, emailAddress: null, bio: null } });
     if (route === "PATCH /api/account") {
@@ -212,6 +218,8 @@ async function roomSocket(): Promise<RoomSocket> {
   return RoomSocket.all[0]!;
 }
 const signInPage = () => screen.findByRole("heading", { name: "Sign in to Ember" });
+/** What first run asks about huddles, once the workspace is made, before it opens Ember. */
+const huddlesQuestion = () => screen.findByRole("heading", { level: 1, name: QUESTION });
 
 async function signInAsAda(password = "correct horse") {
   const user = userEvent.setup();
@@ -249,9 +257,9 @@ describe("Set up the workspace", () => {
     expect(screen.queryByRole("heading")).not.toBeInTheDocument();
   });
 
-  it("sets up Ember at /first_run, then opens general signed in as its administrator", async () => {
+  it("sets up Ember at /first_run, asks about huddles, then opens general signed in as its administrator", async () => {
     history.replaceState(null, "", "/first_run");
-    serve({ signedIn: false, setup: "pending" });
+    const fetch = serve({ signedIn: false, setup: "pending" });
     render(<App />);
     const user = userEvent.setup();
     const name = await screen.findByLabelText("Name");
@@ -262,10 +270,52 @@ describe("Set up the workspace", () => {
     await user.type(screen.getByLabelText("Email address"), "ada@example.com");
     await user.type(screen.getByLabelText("Password"), "correct horse{Enter}");
 
+    // The question comes before Ember opens, still at setup's address.
+    expect(await huddlesQuestion()).toHaveFocus();
+    expect(location.pathname).toBe("/first_run");
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+
     expect(await screen.findByRole("heading", { level: 1, name: "general" })).toBeInTheDocument();
     expect(location.pathname).toBe("/rooms/r1");
     expect(screen.getAllByRole("link", { name: "Your profile" })[0]).toHaveAttribute("title", "Ada");
+    expect(fetch.mock.calls.some(([path]) => path === "/api/account/huddles")).toBe(false);
     expect(loadPage).not.toHaveBeenCalled();
+  });
+
+  it("turns huddles on as Ember is set up, with an SFU app's keys, which gives general's header its huddle button", async () => {
+    WorkspaceSocket.all = [];
+    vi.stubGlobal("WebSocket", WorkspaceSocket);
+    history.replaceState(null, "", "/first_run");
+    const fetch = serve({ signedIn: false, setup: "pending" });
+    render(<App />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct horse{Enter}");
+
+    await huddlesQuestion();
+    await user.click(screen.getByRole("button", { name: "Set up huddles" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Set up huddles" })).toHaveFocus();
+    const app = { appId: "ca11".repeat(8), appSecret: "5ec7".repeat(16) };
+    await user.type(screen.getByRole("textbox", { name: "App ID" }), app.appId);
+    await user.type(screen.getByRole("textbox", { name: "App Secret" }), app.appSecret);
+    await user.click(screen.getByRole("button", { name: "Save and continue" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Huddles are on" })).toHaveFocus();
+    const [, saved] = fetch.mock.calls.find(([path]) => path === "/api/account/huddles")!;
+    expect([saved!.method, JSON.parse(String(saved!.body))]).toEqual(["PUT", app]);
+    // Nothing has opened Ember yet.
+    expect(location.pathname).toBe("/first_run");
+    expect(WorkspaceSocket.all).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Open Ember" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "general" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/rooms/r1");
+    // The workspace says huddles are on as its socket connects.
+    expect(screen.queryByRole("button", { name: "Start huddle" })).not.toBeInTheDocument();
+    await waitFor(() => expect(WorkspaceSocket.all).toHaveLength(1));
+    act(() => WorkspaceSocket.all[0]!.welcome(ada, { ...EMBER, huddles: true }));
+    expect(screen.getByRole("button", { name: "Start huddle" })).toBeInTheDocument();
   });
 
   it("sets up Ember through its setup link, sending the link's token and taking it out of the address", async () => {
@@ -281,6 +331,8 @@ describe("Set up the workspace", () => {
     await user.type(name, "Ada");
     await user.type(screen.getByLabelText("Email address"), "ada@example.com");
     await user.type(screen.getByLabelText("Password"), "correct horse{Enter}");
+    await huddlesQuestion();
+    await user.click(screen.getByRole("button", { name: "Not now" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "general" })).toBeInTheDocument();
     const [, init] = fetch.mock.calls.find(([path, init]) => path === "/api/first_run" && init?.method === "POST")!;

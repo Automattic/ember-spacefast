@@ -5,10 +5,10 @@ import { administratorSession, cookieHeader, expect, newAddress, SAME_ORIGIN, si
 import { AI_GATEWAY_ACCOUNT, SFU_APP } from "../../projects/workspace-settings";
 import { startFakeSfu, type FakeSfu } from "./fake-sfu";
 
-// Rooms and permissions' Huddles card and Set up huddles, and a huddle itself, on the second test server,
-// which asks the Realtime SFU this spec fakes: to start a session with the keys it's given, and to carry
-// what the people in a huddle say, which the fake does through a page of its own. Each test leaves the
-// workspace as a new one is: huddles off.
+// The Huddles tab's card and Set up huddles, and a huddle itself, on the second test server, which asks
+// the Realtime SFU this spec fakes: to start a session with the keys it's given, and to carry what the
+// people in a huddle say, which the fake does through a page of its own. Each test leaves the workspace
+// as a new one is: huddles off.
 
 let sfu: FakeSfu;
 let relay: Page;
@@ -29,13 +29,13 @@ test.afterEach(async ({ request }) => {
 /** The administrator's session's headers, for the API. */
 const asAdministrator = async (request: APIRequestContext) => ({ Cookie: cookieHeader(await administratorSession(request)), ...SAME_ORIGIN });
 
-/** The Huddles card on the page. */
-const huddlesCard = (page: Page) => page.getByRole("region", { name: "Huddles", exact: true });
+/** The Huddles tab's card on the page. */
+const huddlesCard = (page: Page) => page.getByRole("region", { name: "Audio and video chat", exact: true });
 
-/** Opens Rooms and permissions as the administrator, answering its Huddles card. */
+/** Opens community settings' Huddles tab as the administrator, answering its card. */
 async function openHuddles(page: Page) {
   await useOwnAddress(page);
-  await page.goto("/account/edit#channel-settings");
+  await page.goto("/account/edit#huddles-settings");
   await signInAsAdministrator(page);
   return huddlesCard(page);
 }
@@ -43,20 +43,23 @@ async function openHuddles(page: Page) {
 test.describe("Set up huddles", () => {
   test("the administrator gives Ember an SFU app's keys, which Cloudflare starts a session with, and Ember keeps them", async ({ page }) => {
     const huddles = await openHuddles(page);
-    await expect(huddles).toContainText("Huddles let people in a room talk to each other.");
-    const huddlesSwitch = huddles.getByRole("switch", { name: "Huddles" });
+    await expect(huddles).toContainText("Huddles let people in a room talk to each other live.");
+    const huddlesSwitch = huddles.getByRole("switch", { name: "Audio and video chat" });
     await expect(huddlesSwitch).not.toBeChecked();
     await huddlesSwitch.click();
 
     const setup = page.getByRole("dialog");
     await expect(setup).toHaveAccessibleName("Set up huddles");
     // The dashboard opens at the account Ember is deployed to.
-    await expect(setup.getByRole("link", { name: "Open Serverless SFU in the Cloudflare dashboard" })).toHaveAttribute(
+    await expect(setup.getByRole("link", { name: "Open Cloudflare's dashboard" })).toHaveAttribute(
       "href",
       `https://dash.cloudflare.com/${AI_GATEWAY_ACCOUNT.accountId}/realtime/sfu`,
     );
     const [appId, appSecret] = [setup.getByRole("textbox", { name: "App ID" }), setup.getByRole("textbox", { name: "App Secret" })];
     const save = setup.getByRole("button", { name: "Save" });
+    // The secret shows as dots, in a field that's no password's, which no password manager offers to keep.
+    await expect(appSecret).toHaveCSS("-webkit-text-security", "disc");
+    await expect(appSecret).toHaveJSProperty("type", "text");
 
     // An app Cloudflare doesn't know comes back to its field, as does a secret that isn't the app's.
     await appId.fill("0".repeat(32));
@@ -72,7 +75,7 @@ test.describe("Set up huddles", () => {
 
     await appSecret.fill(SFU_APP.appSecret);
     await save.click();
-    await expect(setup).toHaveAccessibleName("Huddles are set up");
+    await expect(setup).toHaveAccessibleName("Huddles are on");
     expect(sfu.asked.at(-1)).toEqual({ method: "POST", path: `/v1/apps/${SFU_APP.appId}/sessions/new`, authorization: `Bearer ${SFU_APP.appSecret}` });
     await setup.getByRole("button", { name: "Done" }).click();
     await expect(setup).toBeHidden();
@@ -81,7 +84,7 @@ test.describe("Set up huddles", () => {
 
     // Ember keeps the keys, and Change keys starts from the app's ID, asking for its secret again.
     await page.reload();
-    await expect(huddlesCard(page).getByRole("switch", { name: "Huddles" })).toBeChecked();
+    await expect(huddlesCard(page).getByRole("switch", { name: "Audio and video chat" })).toBeChecked();
     await huddlesCard(page).getByRole("button", { name: "Change keys" }).click();
     await expect(page.getByRole("dialog").getByRole("textbox", { name: "App ID" })).toHaveValue(SFU_APP.appId);
     await expect(page.getByRole("dialog").getByRole("textbox", { name: "App Secret" })).toHaveValue("");
@@ -93,14 +96,14 @@ test.describe("Set up huddles", () => {
     expect(saved.status(), await saved.text()).toBe(200);
     const huddles = await openHuddles(page);
     page.once("dialog", (dialog) => void dialog.accept());
-    const huddlesSwitch = huddles.getByRole("switch", { name: "Huddles" });
+    const huddlesSwitch = huddles.getByRole("switch", { name: "Audio and video chat" });
     await expect(huddlesSwitch).toBeChecked();
     await huddlesSwitch.click();
     await expect(huddlesSwitch).not.toBeChecked();
     await expect(huddlesSwitch).toBeEnabled();
     await expect(huddles.getByRole("button", { name: "Change keys" })).toHaveCount(0);
     await page.reload();
-    await expect(huddlesCard(page).getByRole("switch", { name: "Huddles" })).not.toBeChecked();
+    await expect(huddlesCard(page).getByRole("switch", { name: "Audio and video chat" })).not.toBeChecked();
   });
 });
 
