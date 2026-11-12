@@ -386,6 +386,7 @@ describe("Community settings page", () => {
   const membership = () => screen.queryByRole("region", { name: "Membership" });
   const domain = () => screen.queryByRole("region", { name: "Domain settings" });
   const assistant = () => screen.queryByRole("region", { name: "AI assistant" });
+  const huddles = () => screen.queryByRole("region", { name: "Huddles" });
 
   it("reads Basic community settings, titled Community settings, with Go Back to the last room visited", () => {
     showPage();
@@ -426,9 +427,15 @@ describe("Community settings page", () => {
     expect(screen.getByRole("heading", { level: 1, name: "AI assistant" })).toBeInTheDocument();
     expect(screen.getByText("Add AI agents people can ask in the chat.")).toBeInTheDocument();
 
+    act(() => navigate(workspaceSectionPath("huddles-settings")));
+    expect(assistant()).not.toBeInTheDocument();
+    expect(huddles()).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Huddles" })).toBeInTheDocument();
+    expect(screen.getByText("Audio and video chat in your rooms.")).toBeInTheDocument();
+
     act(() => navigate("/account/edit#account_name"));
     expect(community()).toBeInTheDocument();
-    expect(assistant()).not.toBeInTheDocument();
+    expect(huddles()).not.toBeInTheDocument();
   });
 
   it("keeps what's typed in one section while another shows", async () => {
@@ -2024,23 +2031,22 @@ describe("Ember AI", () => {
 });
 
 describe("Set up huddles", () => {
-  showingSection("channel-settings");
+  showingSection("huddles-settings");
   /** A Realtime SFU app's keys, as an administrator copies them from Cloudflare's dashboard. */
   const APP = { appId: "2a95132c15732412d22c1476fa83f27a", appSecret: "66bcf64aa8907b9f9d90ac17746a77ce394c393b92b3916633dc02846e608ad4" };
-  const huddlesCard = () => within(screen.getByRole("region", { name: "Room order and permissions" })).findByRole("region", { name: "Huddles" });
-  const following = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  /** The Huddles tab's card, by its title. */
+  const huddlesCard = () => within(screen.getByRole("region", { name: "Huddles" })).findByRole("region", { name: "Audio and video chat" });
 
-  it("gives administrators the Huddles card under the rooms' order, whose switch sets up huddles with an SFU app's keys", async () => {
+  it("gives administrators the Huddles tab's card, whose switch sets up huddles with an SFU app's keys", async () => {
     const { user } = showPage();
     const card = await huddlesCard();
-    expect(following(screen.getByRole("list", { name: "Room order" }), card)).toBe(true);
-    expect(card).toHaveTextContent("Huddles let people in a room talk to each other.");
-    const huddlesSwitch = within(card).getByRole("switch", { name: "Huddles" });
+    expect(card).toHaveTextContent("Huddles let people in a room talk to each other live.");
+    const huddlesSwitch = within(card).getByRole("switch", { name: "Audio and video chat" });
     expect(huddlesSwitch).not.toBeChecked();
 
     await user.click(huddlesSwitch);
     const setup = await screen.findByRole("dialog", { name: "Set up huddles" });
-    expect(within(setup).getByRole("link", { name: "Open Serverless SFU in the Cloudflare dashboard" })).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/realtime/sfu");
+    expect(within(setup).getByRole("link", { name: "Open Cloudflare's dashboard" })).toHaveAttribute("href", "https://dash.cloudflare.com/?to=/:account/realtime/sfu");
     await user.type(within(setup).getByRole("textbox", { name: "App ID" }), APP.appId);
     await user.type(within(setup).getByRole("textbox", { name: "App Secret" }), APP.appSecret);
     await user.click(within(setup).getByRole("button", { name: "Save" }));
@@ -2058,8 +2064,8 @@ describe("Set up huddles", () => {
   it("opens Cloudflare's dashboard at the account Ember is deployed to when the switch sets up huddles", async () => {
     serve({ ...asAdministrator, cloudflareAccountId: "0123456789abcdef0123456789abcdef" });
     const { user } = showPage();
-    await user.click(within(await huddlesCard()).getByRole("switch", { name: "Huddles" }));
-    expect(await screen.findByRole("link", { name: "Open Serverless SFU in the Cloudflare dashboard" })).toHaveAttribute(
+    await user.click(within(await huddlesCard()).getByRole("switch", { name: "Audio and video chat" }));
+    expect(await screen.findByRole("link", { name: "Open Cloudflare's dashboard" })).toHaveAttribute(
       "href",
       "https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/realtime/sfu",
     );
@@ -2071,19 +2077,29 @@ describe("Set up huddles", () => {
     const { user } = showPage();
     const card = await huddlesCard();
     expect(card).toHaveTextContent(`Huddles run through the Realtime SFU app ${APP.appId} in your Cloudflare account.`);
-    await user.click(within(card).getByRole("switch", { name: "Huddles" }));
+    await user.click(within(card).getByRole("switch", { name: "Audio and video chat" }));
     await waitFor(() => expect(within(card).queryByRole("button", { name: "Change keys" })).not.toBeInTheDocument());
-    expect(within(card).getByRole("switch", { name: "Huddles" })).not.toBeChecked();
-    expect(within(card).getByRole("switch", { name: "Huddles" })).toBeEnabled();
-    expect(card).toHaveTextContent("Huddles let people in a room talk to each other.");
+    expect(within(card).getByRole("switch", { name: "Audio and video chat" })).not.toBeChecked();
+    expect(within(card).getByRole("switch", { name: "Audio and video chat" })).toBeEnabled();
+    expect(card).toHaveTextContent("Huddles let people in a room talk to each other live.");
     expect(fetch).toHaveBeenCalledWith("/api/account/huddles", expect.objectContaining({ method: "DELETE" }));
   });
 
-  it("shows members no Huddles card", async () => {
+  it("keeps the card out of Rooms and permissions, where it was", async () => {
+    showPage();
+    await huddlesCard();
+    act(() => navigate(workspaceSectionPath("channel-settings")));
+    const rooms = screen.getByRole("region", { name: "Room order and permissions" });
+    expect(within(rooms).getByRole("list", { name: "Room order" })).toBeInTheDocument();
+    expect(within(rooms).queryByRole("region", { name: "Audio and video chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Audio and video chat" })).not.toBeInTheDocument();
+  });
+
+  it("tells members that administrators manage huddles, with no card", async () => {
     serve(asMember);
     showPage(asLinus);
-    expect(await screen.findByText("Community admins manage room order and permissions.")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Huddles" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Community admins manage huddles.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Audio and video chat" })).not.toBeInTheDocument();
   });
 });
 

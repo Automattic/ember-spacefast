@@ -787,18 +787,22 @@ ends when the last of them leaves. A tab is in one huddle at a time, and joining
 another tab or device leaves it in the first. DMs have no huddles yet, and there's no video or screen
 sharing yet.
 
-An administrator turns huddles on with the Huddles card, under Rooms and permissions in community
-settings. Huddles run through Cloudflare's [Realtime SFU](https://developers.cloudflare.com/realtime/sfu/),
+An administrator turns huddles on under Huddles in community settings, with the switch on its card.
+Huddles run through Cloudflare's [Realtime SFU](https://developers.cloudflare.com/realtime/sfu/),
 which carries what each person in a huddle says to the others, by an SFU app in your Cloudflare
-account. Turning the card on opens Set up huddles, which takes the app's App ID and App Secret:
-create the app under Realtime, Serverless SFU in the Cloudflare dashboard, which the dialog links to,
-in the account Ember is deployed to when the deploy gave it. Before it keeps the keys, the Worker asks
-the SFU to start a session with them (`POST /apps/{appId}/sessions/new`), which nobody connects to, so
-an app Cloudflare doesn't know, or a secret that isn't the app's, is refused on its field. Cloudflare
-can take a minute to know a new app everywhere. Change keys takes another app's, and turning the card
-off forgets them, which ends any huddle going on within half a minute. The secret stays in the Worker,
-which alone asks the SFU's API: a browser sends its microphone to the SFU, and hears the others from
-it, over WebRTC, and finds its way there with Cloudflare's STUN server (`stun.cloudflare.com:3478`).
+account. Turning the card on opens Set up huddles, which has two steps: create the app under
+Realtime, Serverless SFU in the Cloudflare dashboard, which the dialog's button opens, in the
+account Ember is deployed to when the deploy gave it, then copy the app's App ID and App Secret into
+the dialog, where the secret shows as dots. Before it keeps the keys, the Worker asks the SFU to
+start a session with them (`POST /apps/{appId}/sessions/new`), which nobody connects to, so an app
+Cloudflare doesn't know, or a secret that isn't the app's, is refused on its field. Cloudflare can
+take a minute to know a new app everywhere. Change keys takes another app's, and turning the card
+off forgets them, which ends any huddle going on within half a minute. Setting Ember up asks about
+huddles too: once it has made the administrator's account, Set up Ember asks whether to turn them
+on, and takes the same two steps before it opens Ember, or Not now, which leaves them to community
+settings. The secret stays in the Worker, which alone asks the SFU's API: a browser sends its
+microphone to the SFU, and hears the others from it, over WebRTC, and finds its way there with
+Cloudflare's STUN server (`stun.cloudflare.com:3478`).
 What the SFU charges is in [What it costs](#what-it-costs).
 
 ### A preview from GitHub Actions
