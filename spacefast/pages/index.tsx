@@ -1,0 +1,4 @@
+"use client";
+import {useEffect,useRef} from 'preact/hooks';
+import {emberAssetUrl} from '../client/asset-manifest';
+export default function EmberPage(){const container=useRef<HTMLDivElement>(null);useEffect(()=>{const host=container.current!;let cancelled=false;const mount=()=>{if(!cancelled)(window as any).__mountNativeEmber?.(host);};let script:HTMLScriptElement|undefined;if((window as any).__mountNativeEmber)mount();else{script=document.createElement('script');script.type='module';script.src=emberAssetUrl;script.onload=mount;script.onerror=()=>{host.textContent='Ember could not load. Refresh this page to try again.';};document.head.append(script);}return()=>{cancelled=true;(window as any).__unmountNativeEmber?.(host);script?.remove();};},[]);return <div id="ember-native-app" ref={container} style={{minHeight:'100dvh'}}><p style={{padding:'2rem',fontFamily:'system-ui'}}>Loading Ember…</p></div>;}
