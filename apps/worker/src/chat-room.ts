@@ -1009,8 +1009,10 @@ export class ChatRoom extends DurableObject<Env> {
 
   /** Tells everyone in the room what deleting messages did: the deletions, then the messages it changed. */
   private broadcastDeletion({ deletedIds, changed, seq }: Deletion): void {
-    // A deleted message's event no longer names it, so its viewers are dropped here rather than when the event goes.
+    // A deleted message's event no longer names it, nor does that of one kept for its thread's replies, so
+    // their viewers are dropped here rather than when the event goes.
     for (const messageId of deletedIds) this.seenBy.delete(messageId);
+    for (const { message } of changed) if (message.deleted) this.seenBy.delete(message.id);
     deletedIds.forEach((messageId, index) => this.broadcast({ type: "message.deleted", messageId, seq: seq + index }));
     for (const { message, seq } of changed) this.broadcast({ type: "message.updated", message, seq });
   }
