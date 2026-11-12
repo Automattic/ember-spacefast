@@ -306,6 +306,32 @@ describe("Unread rooms", () => {
     expect(await marked(room)).toEqual(["Host"]);
   });
 
+  it("marks a room for nobody who saw its message come in, though they left before the Workspace heard of it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const room = await freshRoom("seen-then-gone");
+    const ada = await connect(room, "Ada", { visible: true });
+    const grace = await connect(room, "Grace", { visible: true });
+    const hopper = await signIn("Hopper");
+    const [gracesTab, hoppersTab] = await Promise.all([grace.session, hopper].map(openWorkspaceSocket));
+    await settle(ada, grace);
+    await delivered(room);
+
+    // Grace sees the message come in and leaves before the Workspace hears of it, as she can within the
+    // pause after a room's call, which here lasts until the room's alarm.
+    const reconnect = await cutOff(room);
+    await post(ada, "Did you catch that?");
+    await grace.next("message.created");
+    grace.close();
+    await ada.next("presence.left");
+    await vi.waitFor(async () => expect(await alarmOf(room)).not.toBeNull(), { timeout: 5_000 });
+
+    await reconnect();
+    expect(await runDurableObjectAlarm(roomStub(room))).toBe(true);
+    expect(await heard(gracesTab!, room)).toEqual([]);
+    expect(await heard(hoppersTab!, room)).toEqual([unread(room)]);
+    expect(await marked(room)).toEqual(["Hopper", "Host"]);
+  });
+
   it("calls a Workspace it couldn't reach again only when its alarm goes off, however busy the room is", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const room = await freshRoom("backing-off");
