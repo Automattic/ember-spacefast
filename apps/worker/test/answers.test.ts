@@ -1,5 +1,6 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, MAX_MESSAGE_LENGTH, type BotAnswer, type BotSettings, type DirectRoom, type Message, type NewWorkspace, type RoomId, type User } from "@ember/protocol";
 import { DEFAULT_LEVELS, MAX_CONVERSATION_LENGTH, maxTokensAt, TOP_LEVELS, UNTHINKING_TOKENS, type AnswerLevelChanges } from "@ember/protocol/assistant";
+import { CARDS_PROMPT } from "@ember/protocol/prompts";
 import { MENTION_CONTENT_TYPE, mentionSgid, OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +15,7 @@ import {
   type Answerer,
 } from "../src/assistant/answers";
 import { markdownHtml } from "../src/bots/markdown";
+import { keptCards } from "../src/cards";
 import { api, apiWith, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
 
 // What @ember answers when someone asks it something: in the room or thread they asked in, having read
@@ -308,6 +310,25 @@ describe("@ember", () => {
     expect(answer.body).toContain(`<action-text-attachment content-type="${OPENGRAPH_EMBED_CONTENT_TYPE}"`);
     expect(answer.body).toContain("An example page.");
     expect(answer.plainText).toBe("Here's our logo:\n\nThe flame\n\nWrite to us, or see the guide.");
+    client.close();
+  });
+
+  it("shows the cards of the Slack payloads its answer writes under it, as a bot's webhook posts them, their pictures only at addresses people wrote, fetching none", async () => {
+    const { ada, general } = await setUp();
+    const alert = { attachments: [{ color: "danger", title: "Error rate", title_link: "https://made-up.example/alerts?d=bGF1bmNo", thumb_url: "https://made-up.example/t.png?d=bGF1bmNo", text: "Up 7%" }] };
+    internet(() => chatAnswer(`Here's where it stands:\n\n${slackBlock(STATUS)}\n\n${slackBlock(alert)}`));
+    const client = await connect(general, ada);
+
+    await post(client, "<p>This week's sign-ups: https://example.com/chart.png</p>");
+    await post(client, `<p>${mention(EMBER)} how's the launch?</p>`);
+    const answer = await nextAnswer(client);
+    expect(answer).toMatchObject({ body: "<p>Here's where it stands:</p>", plainText: "Here's where it stands:\nLaunch status\nStage:\nBeta\nOwner:\nAda\nOpen the plan\nError rate\nUp 7%" });
+    expect(answer.cards).toEqual([
+      STATUS_WITH_CHART,
+      { source: "attachment", color: "danger", parts: [{ kind: "title", text: "Error rate", href: "https://made-up.example/alerts?d=bGF1bmNo" }, { kind: "text", html: "<p>Up 7%</p>" }] },
+    ]);
+    // Nothing was fetched but AI Gateway: its cards' links have no preview, and their pictures are fetched by each reader's app.
+    expect(fetchedHosts()).toEqual([]);
     client.close();
   });
 
@@ -701,6 +722,7 @@ describe("What an agent asks its model", () => {
         SCOUT.instructions,
         `You're asked in a thread in the room "general". Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, in at most about 150 words.`,
         "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.",
+        CARDS_PROMPT,
         "You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web under AI assistant in community settings.",
         "Today is Saturday, October 31, 2026, in UTC.",
       ].join("\n\n"),
@@ -733,6 +755,32 @@ describe("What an agent asks its model", () => {
   });
 });
 
+/** A Slack payload as an answer writes one for its cards, in a ```slack block, or a block of `info`'s. */
+const slackBlock = (payload: unknown, info = "slack") => `\`\`\`${info}\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+
+/** A status card's payload: a header, two fields, a chart and a button to a plan, with text for notifications. */
+const STATUS = {
+  text: "The launch is in beta",
+  blocks: [
+    { type: "header", text: { type: "plain_text", text: "Launch status" } },
+    { type: "section", fields: [{ type: "mrkdwn", text: "*Stage:*\nBeta" }, { type: "mrkdwn", text: "*Owner:*\nAda" }] },
+    { type: "image", image_url: "https://example.com/chart.png", alt_text: "Sign-ups" },
+    { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open the plan" }, url: "https://plans.example/launch", style: "primary" }] },
+  ],
+};
+
+/** The card `STATUS` posts, with its chart only when someone wrote the chart's address. */
+const statusCard = (chart: boolean) => ({
+  source: "blocks",
+  parts: [
+    { kind: "header", text: "Launch status" },
+    { kind: "section", fields: [{ html: "<p><strong>Stage:</strong><br>Beta</p>", short: true }, { html: "<p><strong>Owner:</strong><br>Ada</p>", short: true }] },
+    ...(chart ? [{ kind: "image", image: { url: "https://example.com/chart.png", alt: "Sign-ups" } }] : []),
+    { kind: "buttons", buttons: [{ text: "Open the plan", href: "https://plans.example/launch", style: "primary" }] },
+  ],
+});
+const [STATUS_CARD, STATUS_WITH_CHART] = [statusCard(false), statusCard(true)];
+
 describe("@ember's answer", () => {
   it("is the model's Markdown as rich text, without its name in front", () => {
     expect(answerOf("Ember: **Yes**, and _soon_.").markup).toBe("<p><strong>Yes</strong>, and <em>soon</em>.</p>");
@@ -761,6 +809,71 @@ describe("@ember's answer", () => {
     expect(answer.firstLink).toBe("https://example.com/page");
     expect(answer.markup).toContain(`<a href="https://evil.example/t.gif?d=bGF1bmNo">Made up</a> <a href="https://evil.example/r?d=bGF1bmNo">made up</a>`);
     expect(answerOf(text)).toMatchObject({ cards: [], firstLink: null });
+  });
+
+  it("shows the cards of the Slack payloads it writes in ```slack blocks after the card of its pictures, leaving the blocks and the payloads' text out of its own", () => {
+    const checks = { attachments: [{ color: "good", title: "Checks", text: "All *green*", mrkdwn_in: ["text"] }] };
+    const text = `Here's where it stands:\n${slackBlock(STATUS)}\n![Logo](https://example.com/logo.png)\n\n${slackBlock(checks, "Slack json")}\nAsk me again tomorrow.`;
+    const answer = answerOf(text, [], ["The logo is at https://example.com/logo.png, and the chart at https://example.com/chart.png"]);
+    // A blank line where each block was keeps the text around it apart, as the line after the first would join its paragraph.
+    expect(answer.markup).toBe(markdownHtml("Here's where it stands:\n\n![Logo](https://example.com/logo.png)\n\nAsk me again tomorrow."));
+    expect(answer.cards).toEqual([
+      { source: "blocks", parts: [{ kind: "image", image: { url: "https://example.com/logo.png", alt: "Logo" } }] },
+      STATUS_WITH_CHART,
+      { source: "attachment", color: "good", parts: [{ kind: "title", text: "Checks" }, { kind: "text", html: "<p>All <strong>green</strong></p>" }] },
+    ]);
+    expect(answerOf(slackBlock(STATUS))).toEqual({ markup: "", cards: [STATUS_CARD], firstLink: null });
+  });
+
+  it("leaves a block as the code it's written as when its payload doesn't parse or posts no card the room keeps, or it's another language's, or in a list or a quote", () => {
+    const blocks = [
+      '```slack\n{ "blocks": [ }\n```',
+      slackBlock(["not", "a", "payload"]),
+      slackBlock({ text: "Only text, which goes where a card would show" }),
+      slackBlock({ blocks: [{ type: "divider" }, { type: "actions", elements: [{ type: "static_select", action_id: "stage" }] }] }),
+      slackBlock({ blocks: [{ type: "image", image_url: "https://made-up.example/t.gif?d=bGF1bmNo", alt_text: "" }] }),
+      slackBlock(STATUS, "json"),
+      slackBlock(STATUS, "slackware"),
+      `- In a list:\n\n  ${slackBlock(STATUS).replace(/\n/g, "\n  ")}`,
+      `> ${slackBlock(STATUS).replace(/\n/g, "\n> ")}`,
+    ];
+    for (const block of blocks) {
+      const text = `Here:\n\n${block}`;
+      expect([block, answerOf(text)]).toEqual([block, { markup: markdownHtml(text), cards: [], firstLink: null }]);
+    }
+  });
+
+  it("shows a card's pictures only at addresses people wrote or of the pages it came from, but has its links go anywhere, as its Markdown's do", () => {
+    expect(answerOf(slackBlock(STATUS)).cards).toEqual([STATUS_CARD]);
+    expect(answerOf(slackBlock(STATUS), [{ url: "https://example.com/chart.png", title: "Sign-ups" }]).cards).toEqual([STATUS_WITH_CHART]);
+    // An address people wrote, however the payload writes it.
+    const chart = { blocks: [{ type: "image", image_url: "https://EXAMPLE.com/chart.png", alt_text: "Sign-ups" }] };
+    expect(answerOf(slackBlock(chart), [], ["See https://example.com/chart.png"]).cards).toEqual([
+      { source: "blocks", parts: [{ kind: "image", image: { url: "https://example.com/chart.png", alt: "Sign-ups" } }] },
+    ]);
+    const alert = { attachments: [{ title: "Error rate", title_link: "https://made-up.example/alerts?d=bGF1bmNo", thumb_url: "https://made-up.example/t.png?d=bGF1bmNo", text: "Up 7%" }] };
+    expect(answerOf(slackBlock(alert)).cards).toEqual([
+      { source: "attachment", parts: [{ kind: "title", text: "Error rate", href: "https://made-up.example/alerts?d=bGF1bmNo" }, { kind: "text", html: "<p>Up 7%</p>" }] },
+    ]);
+  });
+
+  it("keeps as many of its cards as fit, each whole, beside as much of its text as fits, counting the cards' text as the room does", () => {
+    const paragraph = `${"word ".repeat(199)}word`;
+    const prose = Array.from({ length: 20 }, () => paragraph).join("\n\n");
+    const notes = { blocks: [{ type: "section", text: { type: "mrkdwn", text: `Notes: ${"n".repeat(1_500)}` } }] };
+    const cut = answerOf(`${prose}\n\n${slackBlock(notes)}`);
+    expect(cut.cards).toEqual([{ source: "blocks", parts: [{ kind: "section", html: `<p>Notes: ${"n".repeat(1_500)}</p>` }] }]);
+    const { plainText } = prepareBody(cut.markup, () => undefined)!;
+    expect(plainText.endsWith(`${paragraph}\n\n…`)).toBe(true);
+    expect(`${plainText}\n${keptCards(cut.cards).plainText}`.length).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH);
+    // Without the card, more of the text fits.
+    expect(prepareBody(answerOf(prose).markup, () => undefined)!.plainText.length).toBeGreaterThan(plainText.length + 900);
+
+    // When not all of them fit beside an ellipsis, the first that do, and the text whole if it fits beside them.
+    const note = (n: number) => ({ blocks: [{ type: "section", text: { type: "mrkdwn", text: `Note ${n}: ${"x".repeat(4_000)}` } }] });
+    const three = answerOf(["Three notes:", ...[1, 2, 3].map((n) => slackBlock(note(n))), "That's all."].join("\n\n"));
+    expect(three.cards.map(({ parts }) => parts[0])).toEqual([1, 2].map((n) => ({ kind: "section", html: `<p>Note ${n}: ${"x".repeat(4_000)}</p>` })));
+    expect(prepareBody(three.markup, () => undefined)!.plainText).toBe("Three notes:\n\nThat's all.");
   });
 
   /** Where the pictures in the card of the answer `text` makes go, and its link for a preview, when people wrote `written`. */

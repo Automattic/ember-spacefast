@@ -1342,9 +1342,10 @@ export class ChatRoom extends DurableObject<Env> {
 
   /**
    * Posts what `bot`, @ember or an agent, `said` to `message`, its answer in Markdown, as its reply: in
-   * `message`'s thread when it's in one, only there, with the pictures it shows in a card under it, the
-   * pages it came from after it, and a preview of its first web link below it, as the composer adds one,
-   * the pictures and the link only at addresses people wrote or of the pages it came from, and the link
+   * `message`'s thread when it's in one, only there, with the pictures it shows in a card under it and
+   * the cards of the Slack payloads it writes after that, the pages it came from after it, and a preview
+   * of its first web link below it, as the composer adds one, the pictures, in its cards too, and the
+   * link only at addresses people wrote or of the pages it came from, and the link
    * on none of Ember's own `addresses` (`answerOf`). Like a bot's reply, it reaches the room as any
    * message does, but goes to no bot, @ember and the agents among them. It's posted only while Ember AI
    * is on and the bot in the room, and `message` still there, so that turning Ember AI off, deleting the

@@ -150,6 +150,39 @@ describe("Bot cards", () => {
     ]);
   });
 
+  it("asks its rule of each address whether it's a link someone may follow or a picture each reader's app fetches", () => {
+    const asked: Record<string, string[]> = { link: [], picture: [] };
+    // Keeps every link, but no picture, as an answer keeps a picture only at an address people wrote.
+    const linksOnly: CardAddress = (url, use) => {
+      asked[use]!.push(url);
+      return use === "link" ? url : undefined;
+    };
+    const parts = [
+      { kind: "author", name: "Ada", href: "https://example.com/ada", icon: "https://example.com/ada.png" },
+      { kind: "title", text: "Status", href: "https://example.com/status" },
+      { kind: "section", html: "<p>Up</p>", thumb: { url: "https://example.com/up.png", alt: "" }, button: { text: "Open", href: "https://example.com/open" } },
+      { kind: "image", image: { url: "https://example.com/chart.png", alt: "" } },
+      { kind: "context", items: [{ image: { url: "https://example.com/dot.png", alt: "" } }, { html: "<p>Kept</p>" }] },
+      {
+        kind: "tiles",
+        tiles: [{ hero: { url: "https://example.com/hero.png", alt: "" }, icon: { url: "https://example.com/icon.png", alt: "" }, title: "Room 1", buttons: [{ text: "Book", href: "https://example.com/book" }] }],
+      },
+      { kind: "footer", text: "Ember", icon: "https://example.com/e.png" },
+    ];
+    expect(parseCards([card(parts, { thumb: { url: "https://example.com/thumb.png", alt: "" } })], linksOnly)).toEqual([
+      card([
+        { kind: "author", name: "Ada", href: "https://example.com/ada" },
+        { kind: "title", text: "Status", href: "https://example.com/status" },
+        { kind: "section", html: "<p>Up</p>", button: { text: "Open", href: "https://example.com/open" } },
+        { kind: "context", items: [{ html: "<p>Kept</p>" }] },
+        { kind: "tiles", tiles: [{ title: "Room 1", buttons: [{ text: "Book", href: "https://example.com/book" }] }] },
+        { kind: "footer", text: "Ember" },
+      ]),
+    ]);
+    expect(asked.link!.sort()).toEqual(["https://example.com/ada", "https://example.com/book", "https://example.com/open", "https://example.com/status"]);
+    expect(asked.picture!.sort()).toEqual(["ada", "chart", "dot", "e", "hero", "icon", "thumb", "up"].map((name) => `https://example.com/${name}.png`));
+  });
+
   it("keeps up to a message's cards", () => {
     const cards = Array.from({ length: MAX_CARDS + 1 }, (_, index) => card([{ kind: "title", text: `Card ${index}` }]));
     expect(parseCards(cards, address)).toEqual(cards.slice(0, MAX_CARDS));
