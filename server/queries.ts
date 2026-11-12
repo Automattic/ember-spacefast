@@ -1,0 +1,6 @@
+import type { Reader } from './access';
+import { accessRoom, account, administrator, person } from './access';
+import { accountView, directory, roomView } from './views';
+export async function profile(ctx:Reader) {const p=await person(ctx);return {user:{id:p.id,name:p.name,bio:p.bio,avatarUrl:p.avatar,emailAddress:p.email,timeZone:p.timeZone,administrator:p.role==='administrator'},memberful:null};}
+export async function roomSettings(ctx:Reader,roomId:string) {const {me,room}=await accessRoom(ctx,roomId);const members=await ctx.db.members.withIndex('by_room',q=>q.eq('roomId',roomId)).take(500);const all=await directory(ctx);return {room:await roomView(ctx,room),users:all.users.filter(p=>p.status==='active').sort((a,b)=>a.name.localeCompare(b.name)),members:members.map(m=>m.personId),memberIds:(room.private?members.map(m=>m.personId):all.users.filter(p=>p.status==='active').map(p=>p.id)),canEdit:me.role==='administrator'||me.id===room.creatorId};}
+export async function settings(ctx:Reader) {await administrator(ctx);const a=await account(ctx);return {account:await accountView(ctx),emailDomains:[],emailFrom:'',email:{configured:false},joinCode:a?.joinCode || '',native:true,capabilities:{passwords:false,transfers:false,memberful:false,customDomain:'platform-managed',files:'encrypted-chunks'},ownerId:a?.ownerId};}
