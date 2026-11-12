@@ -30,7 +30,7 @@ export const SFU_PORT = Number(process.env.E2E_SFU_PORT ?? 8794);
 /** The SFU app that SFU knows, by its ID and its secret, which the huddles spec gives Ember. Neither is real. */
 export const SFU_APP = { appId: "ca11".repeat(8), appSecret: "e2e0".repeat(16) };
 /** The project that sets the second server up. */
-const SETTINGS_FIRST_RUN = "workspace-settings-first-run";
+export const SETTINGS_FIRST_RUN = "workspace-settings-first-run";
 
 /** A desktop Chromium on the second server, which is served over HTTPS, as a deployment is. */
 const ON_SETTINGS_SERVER: Project<PlaywrightTestOptions, PlaywrightWorkerOptions>["use"] = {
