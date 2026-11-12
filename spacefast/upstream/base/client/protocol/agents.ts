@@ -26,6 +26,7 @@ import {
   type ThinkingLevel,
   type WebTool,
 } from "./assistant.ts";
+import { parseTemplate } from "./prompts.ts";
 
 // AI agents, which administrators make beside @ember on the AI assistant tab of workspace settings,
 // through `/api/account/agents`. Each is a bot that answers with its own instructions and model, through
@@ -58,14 +59,19 @@ export interface Agent extends DirectoryUser {
 }
 
 /**
- * An agent as its page shows it: as the tab lists it, with its instructions, the format its model took
- * its test question in, how much it thinks and how long it answers, whether an administrator uploaded
- * its avatar, and who last changed it, and when.
+ * An agent as its page shows it: as the tab lists it, with its instructions and what Ember adds around
+ * them, the format its model took its test question in, how much it thinks and how long it answers, the
+ * levels of thinking its model takes, whether an administrator uploaded its avatar, and who last changed
+ * it, and when.
  */
 export interface AgentSettings extends Agent {
   instructions: string;
+  /** What Ember adds around its instructions, as an administrator changed it, or null for Ember's own (`ownTemplateFor`). */
+  promptTemplate: string | null;
   format: ModelFormat;
   levels: AnswerLevels;
+  /** The levels of thinking its model takes (`AssistantModel.thinkingLevels`), or null for one Ember hasn't asked at each, which is asked at any. */
+  thinkingLevels: ThinkingLevel[] | null;
   /** Whether an administrator uploaded its avatar, which `DELETE /api/account/agents/<id>/avatar` takes away. */
   avatar: boolean;
   changedBy: User;
@@ -99,14 +105,17 @@ export interface AgentAnswer {
 
 /**
  * What `POST /api/account/agents` takes, as New agent sends it: the agent's name, what it does, its
- * instructions, the ID of the model it answers with and that model's name, as Cloudflare's catalog gives
- * it, if it does, how much it thinks and how long it answers, whether it searches the web, and the open
- * rooms it's in, or null for every one, new ones too.
+ * instructions, and what Ember adds around them, if an administrator changed it, the ID of the model it
+ * answers with and that model's name, as Cloudflare's catalog gives it, if it does, how much it thinks
+ * and how long it answers, whether it searches the web, and the open rooms it's in, or null for every
+ * one, new ones too.
  */
 export interface NewAgent {
   name: string;
   description: string;
   instructions: string;
+  /** What Ember adds around the instructions (`promptAround`), or null, or left out, for Ember's own. */
+  promptTemplate?: string | null;
   model: string;
   modelName?: string;
   thinking: ThinkingLevel;
@@ -139,7 +148,7 @@ export interface AgentTrialAnswer {
 }
 
 /** A field of an agent's page, which a refusal can be about. */
-export type AgentField = "name" | "description" | "instructions" | "model" | "levels" | "webSearch" | "rooms" | "question";
+export type AgentField = "name" | "description" | "instructions" | "promptTemplate" | "model" | "levels" | "webSearch" | "rooms" | "question";
 
 /** Why what an agent's page sent is refused, on the field it's about. */
 export interface AgentRefusal {
@@ -181,9 +190,10 @@ export const QUESTION_NEEDED = "Ask it something.";
  * Parses an untrusted change to an agent, as its page saves it. Returns why it's refused instead, on the
  * field it's about: a name, which can't be @ember's (`isReservedName`), and what it does have to be one
  * line with more than spaces, no longer than Ember keeps, instructions more than spaces, no longer than
- * Ember takes (`MAX_INSTRUCTIONS_LENGTH`), a model one's ID, levels ones the dials have, and rooms a list
- * of rooms' IDs, each once, or null for every open room. Text is saved without the spaces around it,
- * and a name that can't be a model's is left out.
+ * Ember takes (`MAX_INSTRUCTIONS_LENGTH`), what Ember adds around them a template Ember takes, or null
+ * for its own (`parseTemplate`), a model one's ID, levels ones the dials have, and rooms a list of
+ * rooms' IDs, each once, or null for every open room. Text is saved without the spaces around it, and a
+ * name that can't be a model's is left out.
  */
 export function parseAgentChanges(data: unknown): AgentChanges | AgentRefusal {
   const given = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
@@ -204,6 +214,11 @@ export function parseAgentChanges(data: unknown): AgentChanges | AgentRefusal {
     if (!instructions) return { error: INSTRUCTIONS_NEEDED, field: "instructions" };
     if (instructions.length > MAX_INSTRUCTIONS_LENGTH) return { error: INSTRUCTIONS_TOO_LONG, field: "instructions" };
     changes.instructions = instructions;
+  }
+  if (given.promptTemplate !== undefined) {
+    const parsed = parseTemplate(given.promptTemplate, null);
+    if ("error" in parsed) return { error: parsed.error, field: "promptTemplate" };
+    changes.promptTemplate = parsed.template;
   }
   if (given.model !== undefined) {
     const model = typeof given.model === "string" ? modelOf(given.model) : null;
@@ -232,11 +247,14 @@ export function parseAgentChanges(data: unknown): AgentChanges | AgentRefusal {
   return changes;
 }
 
-/** Parses an untrusted new agent, as New agent sends it, as `parseAgentChanges` does a change, which leaves out nothing but the model's name. */
+/**
+ * Parses an untrusted new agent, as New agent sends it, as `parseAgentChanges` does a change, which leaves
+ * out nothing but the model's name and what Ember adds around the instructions, which is then its own.
+ */
 export function parseNewAgent(data: unknown): NewAgent | AgentRefusal {
   const agent = parseAgentChanges(data);
   if ("error" in agent) return agent;
-  const { name, description, instructions, model, thinking, length, webSearch, rooms } = agent;
+  const { name, description, instructions, promptTemplate = null, model, thinking, length, webSearch, rooms } = agent;
   if (name === undefined) return { error: NAME_REFUSED, field: "name" };
   if (description === undefined) return { error: DESCRIPTION_REFUSED, field: "description" };
   if (instructions === undefined) return { error: INSTRUCTIONS_NEEDED, field: "instructions" };
@@ -244,7 +262,7 @@ export function parseNewAgent(data: unknown): NewAgent | AgentRefusal {
   if (thinking === undefined || length === undefined) return { error: LEVELS_REFUSED, field: "levels" };
   if (webSearch === undefined) return { error: WEB_SEARCH_UNSAID, field: "webSearch" };
   if (rooms === undefined) return { error: ROOMS_REFUSED, field: "rooms" };
-  return { ...agent, name, description, instructions, model, thinking, length, webSearch, rooms };
+  return { ...agent, name, description, instructions, promptTemplate, model, thinking, length, webSearch, rooms };
 }
 
 /**
@@ -257,7 +275,7 @@ export function parseAgentTrial(data: unknown): AgentTrial | AgentRefusal {
   const { description: _, rooms: __, question: asked, ...setup } = given;
   const agent = parseAgentChanges(setup);
   if ("error" in agent) return agent;
-  const { name, instructions, model, thinking, length, webSearch } = agent;
+  const { name, instructions, promptTemplate = null, model, thinking, length, webSearch } = agent;
   if (name === undefined) return { error: NAME_REFUSED, field: "name" };
   if (instructions === undefined) return { error: INSTRUCTIONS_NEEDED, field: "instructions" };
   if (model === undefined) return { error: MODEL_REFUSED, field: "model" };
@@ -266,7 +284,7 @@ export function parseAgentTrial(data: unknown): AgentTrial | AgentRefusal {
   const question = typeof asked === "string" ? asked.trim() : "";
   if (!question) return { error: QUESTION_NEEDED, field: "question" };
   if (isMessageTooLong(question)) return { error: MESSAGE_TOO_LONG, field: "question" };
-  return { ...agent, name, instructions, model, thinking, length, webSearch, question };
+  return { ...agent, name, instructions, promptTemplate, model, thinking, length, webSearch, question };
 }
 
 /** `text` without the spaces around it, or "" unless it's one line: without control characters or line breaks. */

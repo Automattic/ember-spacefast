@@ -1,6 +1,6 @@
 // Huddles, in which people in a room talk to each other through Cloudflare's Realtime SFU, by an SFU app
 // in the Cloudflare account of whoever runs Ember, whose keys administrators give it in Set up huddles,
-// behind the Huddles card of workspace settings, through `/api/account/huddles`.
+// behind the Huddles card of workspace settings, or as they set Ember up, through `/api/account/huddles`.
 
 import type { User, UserId } from "./index.ts";
 
