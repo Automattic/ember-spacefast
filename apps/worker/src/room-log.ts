@@ -21,7 +21,11 @@ export interface RoomEvent {
   at: string;
   /** Set for a reply sent only to its thread, which marks the room unread for nobody and isn't its activity. */
   threadOnly?: true;
-  /** For a reply sent only to its thread, who the room says is viewing the thread as it sends the event. */
+  /**
+   * For a reply sent only to its thread, who the room says is viewing the thread as it sends the event,
+   * and for a message in the room, who was viewing the room as it came or is as the room sends it, when
+   * the room knows.
+   */
   viewerIds?: UserId[];
   /**
    * A new message as it is when the room sends the event, for its pushes, unless it has been deleted
