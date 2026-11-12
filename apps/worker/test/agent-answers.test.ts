@@ -1,4 +1,4 @@
-import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type Sidebar, type User, type UserId } from "@ember/protocol";
+import { ASSISTANT_ID, ASSISTANT_NAME, type BotAnswer, type BotSettings, type Card, type DirectRoom, type Me, type Message, type NewWorkspace, type RoomId, type Sidebar, type User, type UserId } from "@ember/protocol";
 import { agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_REFUSED, QUESTION_NEEDED, type AgentAnswer, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
 import { ASSISTANT_OFF, maxTokensAt } from "@ember/protocol/assistant";
 import { unknownPlaceholder } from "@ember/protocol/prompts";
@@ -37,6 +37,25 @@ const RECAP: NewAgent = { ...SCOUT, name: "Recap", description: "Sums up long th
 
 /** Scout as Try it sends it, with a question. */
 const TRIAL = { name: SCOUT.name, instructions: SCOUT.instructions, model: SCOUT.model, thinking: SCOUT.thinking, length: SCOUT.length, webSearch: false, question: "Is it sunny?" };
+
+/** A forecast's Slack payload, which an agent writes in a ```slack block for a card under its answer, and the card it posts. */
+const FORECAST = {
+  blocks: [
+    { type: "header", text: { type: "plain_text", text: "Today" } },
+    { type: "section", fields: [{ type: "mrkdwn", text: "*High*\n21°" }, { type: "mrkdwn", text: "*Rain*\n10%" }] },
+    { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Hourly" }, url: "https://weather.example/hourly" }] },
+  ],
+};
+const FORECAST_CARD: Card = {
+  source: "blocks",
+  parts: [
+    { kind: "header", text: "Today" },
+    { kind: "section", fields: [{ html: "<p><strong>High</strong><br>21°</p>", short: true }, { html: "<p><strong>Rain</strong><br>10%</p>", short: true }] },
+    { kind: "buttons", buttons: [{ text: "Hourly", href: "https://weather.example/hourly" }] },
+  ],
+};
+/** An answer with the forecast's card under its words. */
+const FORECASTED = `Mostly sunny.\n\n\`\`\`slack\n${JSON.stringify(FORECAST, null, 2)}\n\`\`\``;
 
 /** A question AI Gateway was sent, as Chat Completions or Messages takes it. */
 interface Asked {
@@ -254,6 +273,19 @@ describe("An AI agent", () => {
     expect(told).toMatch(new RegExp(`^You are Scout of .+, asked in the room "general" by Ada Lovelace\\.\n\n${SCOUT.instructions.replace(/[.,]/g, "\\$&")}\n\nWrite at most 150 words\\. You can't search the web or open links\\.`));
     expect(told).toMatch(/ Today is \w+, \w+ \d+, \d{4}\.$/);
     expect(told).not.toContain("{{");
+    client.close();
+  });
+
+  it("shows the cards of the Slack payloads it writes under its answer, as a bot's webhook posts them", async () => {
+    const { ada, general } = await setUp();
+    const scout = await makeAgent(ada, SCOUT);
+    internet(() => chatAnswer(FORECASTED));
+    const client = await connect(general, ada);
+
+    await post(client, `<p>${mention(scout)} what's the weather?</p>`);
+    const answer = await nextFrom(client, scout);
+    expect(answer).toMatchObject({ body: "<p>Mostly sunny.</p>", plainText: "Mostly sunny.\nToday\nHigh\n21°\nRain\n10%\nHourly" });
+    expect(answer.cards).toEqual([FORECAST_CARD]);
     client.close();
   });
 
@@ -524,6 +556,15 @@ describe("Try it", () => {
     expect(body.messages.slice(1)).toEqual([{ role: "user", content: "Ada Lovelace: Is it sunny? https://example.com/sky.png" }]);
     // Nothing's saved, and nobody else hears of it.
     expect(await workspaceSql("SELECT count(*) AS n FROM agents")).toEqual([{ n: 0 }]);
+  });
+
+  it("answers the cards of the Slack payloads its answer writes, as a message of its shows them", async () => {
+    const { ada } = await setUp();
+    internet(() => chatAnswer(FORECASTED));
+
+    const response = await tryIt(ada, null, TRIAL);
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await response.json()).toEqual({ body: "<p>Mostly sunny.</p>", cards: [FORECAST_CARD], ms: expect.any(Number) } satisfies AgentTrialAnswer);
   });
 
   it("asks the agent with what Ember adds around its instructions as the page has it, saved or not", async () => {

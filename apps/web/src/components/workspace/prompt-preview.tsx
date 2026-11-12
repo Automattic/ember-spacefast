@@ -36,6 +36,7 @@ export const PLACEHOLDER_MEANINGS: Record<Placeholder, string> = {
   where: "the room, thread or direct message it's asked in",
   asker: "the name of whoever asked",
   words: "about how many words it may answer in",
+  cards: "how it can show a card under its answer",
   web: "what it may do on the web",
   today: "today's date, in UTC",
   instructions: "your instructions, which it needs once",

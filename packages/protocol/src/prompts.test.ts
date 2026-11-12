@@ -3,6 +3,7 @@ import { ASSISTANT_ID } from "./index";
 import {
   AGENT_TEMPLATE,
   AI_SETTINGS,
+  CARDS_PROMPT,
   EMBER_TEMPLATE,
   INSTRUCTIONS_PLACE_NEEDED,
   MAX_TEMPLATE_LENGTH,
@@ -21,17 +22,18 @@ const NOW = new Date("2026-11-10T12:00:00Z");
 const IN_LAUNCH = { community: "Fernwood", roomName: "Launch", inThread: true };
 
 describe("What @ember and the agents are told", () => {
-  it("tells an agent who it is before its instructions, and where it's asked, how to write, what it may do on the web and the date after them", () => {
+  it("tells an agent who it is before its instructions, and where it's asked, how to write, how to show a card, what it may do on the web and the date after them", () => {
     const prompt = promptAround("0mgk3x2a9b4c5e", "Scout", "Ada Lovelace", IN_LAUNCH, 150, "WEB", NOW);
     expect(prompt.before).toBe(
       `You are Scout, an AI agent in the team chat "Fernwood". People ask you things by mentioning @Scout in a room or a thread, or by writing to you directly.\n\n`,
     );
-    const [space, where, writing, web, today] = prompt.after.split("\n\n");
+    const [space, where, writing, cards, web, today] = prompt.after.split("\n\n");
     expect(space).toBe("");
     expect(where).toBe(
       `You're asked in a thread in the room "Launch". Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, in at most about 150 words.`,
     );
     expect(writing).toMatch(/^Write in Markdown\..* Don't begin with your name\.$/);
+    expect(cards).toBe(CARDS_PROMPT);
     expect([web, today]).toEqual(["WEB", "Today is Tuesday, November 10, 2026, in UTC."]);
     expect(withInstructions(prompt, "Say what's current.")).toBe(`${prompt.before}Say what's current.${prompt.after}`);
     expect(withInstructions(prompt, "")).toBe(`${prompt.before.trimEnd()}\n\n${prompt.after.trimStart()}`);
@@ -56,10 +58,10 @@ describe("What @ember and the agents are told", () => {
 
 describe("What an administrator changes it to", () => {
   it("fills in each placeholder of their template, the instructions where it puts them", () => {
-    const template = "{{name}} of {{ community }}, asked in {{where}} by {{asker}}, on {{today}}: {{instructions}} (about {{words}} words; {{web}})";
+    const template = "{{name}} of {{ community }}, asked in {{where}} by {{asker}}, on {{today}}: {{instructions}} (about {{words}} words; {{web}}) {{cards}}";
     const prompt = promptAround("0mgk3x2a9b4c5e", "Scout", "Ada Lovelace", IN_LAUNCH, 1_500, "WEB", NOW, template);
     expect(withInstructions(prompt, "Be brief.")).toBe(
-      `Scout of Fernwood, asked in a thread in the room "Launch" by Ada Lovelace, on Tuesday, November 10, 2026: Be brief. (about 1,500 words; WEB)`,
+      `Scout of Fernwood, asked in a thread in the room "Launch" by Ada Lovelace, on Tuesday, November 10, 2026: Be brief. (about 1,500 words; WEB) ${CARDS_PROMPT}`,
     );
   });
 
@@ -89,7 +91,7 @@ describe("What an administrator changes it to", () => {
     expect(templateRefusal("{{instructions}} and {{ instructions }}")).toBe(INSTRUCTIONS_PLACE_NEEDED);
     expect(templateRefusal("{{instructions}} for {{comunity}}")).toBe(unknownPlaceholder("comunity"));
     expect(unknownPlaceholder("comunity")).toBe(
-      "Ember has nothing to fill in for {{comunity}}. It fills in {{name}}, {{community}}, {{where}}, {{asker}}, {{words}}, {{web}}, {{today}}, {{instructions}}.",
+      "Ember has nothing to fill in for {{comunity}}. It fills in {{name}}, {{community}}, {{where}}, {{asker}}, {{words}}, {{cards}}, {{web}}, {{today}}, {{instructions}}.",
     );
     expect(templateRefusal(`{{instructions}}${" ".repeat(MAX_TEMPLATE_LENGTH)}`)).toBe(TEMPLATE_TOO_LONG);
     // Single braces are anyone's to write.

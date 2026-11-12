@@ -6,8 +6,9 @@ import { AI_GATEWAY_ACCOUNT, AI_GATEWAY_PORT } from "../../projects/workspace-se
 // `AI_GATEWAY_ACCOUNT`, and that account's API token, lists `CATALOG` as Cloudflare's model catalog, and
 // answers a request in any of AI Gateway's three formats with `HELLO` in that format, or, given a tool
 // for searching the web in Messages or Responses, with `FOUND`, citing `SOURCE`, as the model would once
-// it had searched, refusing as Cloudflare does an account or a token it doesn't know. A spec can hold its
-// answers, to see what shows while a model answers.
+// it had searched, or, asked `CARD_QUESTION` last, with `CARDED` and a card's Slack payload, refusing as
+// Cloudflare does an account or a token it doesn't know. A spec can hold its answers, to see what shows
+// while a model answers.
 
 /** What every model says, whatever it's asked. */
 export const HELLO = "Hello, team! Mention @ember whenever you'd like a hand.";
@@ -15,6 +16,22 @@ export const HELLO = "Hello, team! Mention @ember whenever you'd like a hand.";
 /** What a model that searched the web says, and the page it cites. */
 export const FOUND = "AI Gateway is Cloudflare's proxy for requests to AI models.";
 export const SOURCE = { url: "https://developers.cloudflare.com/ai-gateway/", title: "Overview · Cloudflare AI Gateway docs" };
+
+/**
+ * What a model asked `CARD_QUESTION` says, `CARDED`, then a status card's Slack payload in a ```slack block,
+ * which Ember shows as a card headed `CARD_HEADER` under the answer, its button linking to `CARD_LINK`.
+ */
+export const CARD_QUESTION = "How's the launch going? Show me a card.";
+export const CARDED = "Here's where the launch stands.";
+export const CARD_HEADER = "Launch status";
+export const CARD_LINK = "https://plans.example/launch";
+const CARD_PAYLOAD = {
+  blocks: [
+    { type: "header", text: { type: "plain_text", text: CARD_HEADER } },
+    { type: "section", fields: [{ type: "mrkdwn", text: "*Stage:*\nBeta" }, { type: "mrkdwn", text: "*Owner:*\nAda" }] },
+    { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open the plan" }, url: CARD_LINK, style: "primary" }] },
+  ],
+};
 
 /** Cloudflare's model catalog, as its API lists the models of every kind, on one page, with what some cost. */
 export const CATALOG = [
@@ -76,12 +93,15 @@ export async function startFakeGateway(): Promise<FakeGateway> {
   return { asked, hold, close };
 }
 
-/** Each format's path under an account, with its answer saying `HELLO`. */
-const ANSWERS: Record<string, unknown> = {
-  "chat/completions": { object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: HELLO }, finish_reason: "stop" }] },
-  messages: { type: "message", role: "assistant", content: [{ type: "text", text: HELLO }], stop_reason: "end_turn" },
-  responses: { object: "response", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: HELLO }] }] },
-};
+/** Each format's path under an account, with its answer saying `text`. */
+const answersSaying = (text: string): Record<string, unknown> => ({
+  "chat/completions": { object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] },
+  messages: { type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn" },
+  responses: { object: "response", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }] },
+});
+
+const ANSWERS = answersSaying(HELLO);
+const CARD_ANSWERS = answersSaying(`${CARDED}\n\n\`\`\`slack\n${JSON.stringify(CARD_PAYLOAD, null, 2)}\n\`\`\``);
 
 /** The paths of the formats with a tool for searching the web, with the answer saying `FOUND` once the model has searched. */
 const SEARCHED_ANSWERS: Record<string, unknown> = {
@@ -105,6 +125,12 @@ const SEARCHED_ANSWERS: Record<string, unknown> = {
   },
 };
 
+/** Whether the last message `body` asks, in any format, is `CARD_QUESTION`, whatever came before it in the conversation. */
+function asksForCard(body: Record<string, unknown>): boolean {
+  const turns: unknown[] = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : [];
+  return JSON.stringify(turns.at(-1) ?? null).includes(CARD_QUESTION);
+}
+
 /** Whether `body` gives the model a tool for searching the web, as Anthropic's and OpenAI's are named. */
 const searches = (body: Record<string, unknown>) =>
   Array.isArray(body.tools) && body.tools.some((tool: { type?: unknown }) => typeof tool.type === "string" && tool.type.startsWith("web_search"));
@@ -127,7 +153,8 @@ async function answer(request: IncomingMessage, response: ServerResponse, asked:
     return reply(200, { success: true, errors: [], result: CATALOG, result_info: { page: 1, per_page: 100, count: CATALOG.length, total_count: CATALOG.length } });
   }
   const format = endpoint?.startsWith("v1/") ? endpoint.slice("v1/".length) : undefined;
-  const answered = format === undefined ? undefined : ((searches(sent) && SEARCHED_ANSWERS[format]) || ANSWERS[format]);
+  const answers = asksForCard(sent) ? CARD_ANSWERS : ANSWERS;
+  const answered = format === undefined ? undefined : ((searches(sent) && SEARCHED_ANSWERS[format]) || answers[format]);
   if (answered === undefined) return reply(404, { success: false, errors: [{ code: 7000, message: "No route for that URI" }] });
   reply(200, answered);
 }

@@ -31,6 +31,7 @@ export {
   parseCards,
   parseParts,
   showsAnything,
+  type AddressUse,
   type Card,
   type CardAddress,
   type CardButton,

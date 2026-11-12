@@ -25,10 +25,10 @@ export interface Prompt {
 
 /**
  * What Ember fills in a template with each time: the answerer's name, the community's, where it's asked,
- * who asked, about how many words it may answer in, what it's told of the web, today's date, and, between
- * what's before them and what's after, its instructions.
+ * who asked, about how many words it may answer in, how it can show cards under its answer, what it's
+ * told of the web, today's date, and, between what's before them and what's after, its instructions.
  */
-export const PLACEHOLDERS = ["name", "community", "where", "asker", "words", "web", "today", "instructions"] as const;
+export const PLACEHOLDERS = ["name", "community", "where", "asker", "words", "cards", "web", "today", "instructions"] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 /** A placeholder as a template writes it, its name in double braces, with or without spaces inside them. */
@@ -40,6 +40,17 @@ const INSTRUCTIONS = /\{\{\s*instructions\s*\}\}/;
 /** How the placeholders read in a template, as the pages show them. */
 export const placeholderOf = (placeholder: Placeholder) => `{{${placeholder}}}`;
 
+/**
+ * What @ember and the agents are told of the cards they can show under an answer, which Ember makes of the
+ * Slack payloads they write in ```slack blocks, as a bot's webhook posts them, but for menus and the like,
+ * which need a Slack app to answer them, and pictures nobody in the conversation linked to.
+ */
+export const CARDS_PROMPT = [
+  "To show a card under your answer, such as a status, a set of fields or buttons that open links, write a Slack message's payload, with its Block Kit blocks or legacy attachments, as JSON in a code block that starts with ```slack.",
+  "Headers, sections, fields, context, dividers, images, tables and buttons with a url show, but menus, inputs and the payload's text don't, so write your words outside the block.",
+  "A card's pictures show only at addresses a person in the conversation wrote. Most answers need no card.",
+].join(" ");
+
 /** What @ember is told, as Ember writes it. */
 export const EMBER_TEMPLATE = `You are {{name}}, the AI assistant in the team chat "{{community}}". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.
 
@@ -48,6 +59,8 @@ export const EMBER_TEMPLATE = `You are {{name}}, the AI assistant in the team ch
 You're asked in {{where}}. Its messages follow, oldest first, each after its writer's name. Answer the last one, which {{asker}} wrote, as a helpful teammate would: plainly, and in at most about {{words}} words.
 
 Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.
+
+{{cards}}
 
 {{web}}
 
@@ -62,6 +75,8 @@ You're asked in {{where}}. Its messages follow, oldest first, each after its wri
 
 Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.
 
+{{cards}}
+
 {{web}}
 
 Today is {{today}}, in UTC.`;
@@ -73,8 +88,8 @@ export const ownTemplateFor = (answererId: UserId | null) => (answererId === ASS
  * What the answerer `answererId` is told, @ember, or an agent called `name`, by its id, or null for one
  * not saved yet, from `template`, an administrator's, or else Ember's own (`ownTemplateFor`): before its
  * instructions, who it is, and after them, where it's asked, to answer the last message, which
- * `askerName` wrote, in at most about `words` words, how the chat shows what it writes, what it's told of
- * the web, `web`, and the date at `now`, in UTC. An agent answers as its instructions say, where @ember
+ * `askerName` wrote, in at most about `words` words, how the chat shows what it writes, cards included
+ * (`CARDS_PROMPT`), what it's told of the web, `web`, and the date at `now`, in UTC. An agent answers as its instructions say, where @ember
  * answers as a helpful teammate would, and then as administrators added. A placeholder Ember doesn't
  * fill in stays as it's written, as it does in a template without the instructions, which goes before them.
  */
@@ -95,6 +110,7 @@ export function promptAround(
     where: inThread ? `a thread in ${room}` : room,
     asker: askerName,
     words: words.toLocaleString("en-US"),
+    cards: CARDS_PROMPT,
     web,
     today: new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeZone: "UTC" }).format(now),
   };

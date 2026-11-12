@@ -105,8 +105,11 @@ export interface CardTile {
   buttons?: CardButton[];
 }
 
-/** An address as a card may keep it, or undefined for one it can't: the room's rule for links and images. */
-export type CardAddress = (url: string) => string | undefined;
+/** What a card's address is for: a link someone may follow, or a picture each reader's app fetches as it draws the card. */
+export type AddressUse = "link" | "picture";
+
+/** An address as a card may keep it for `use`, or undefined for one it can't: the room's rule for links and images. */
+export type CardAddress = (url: string, use: AddressUse) => string | undefined;
 
 const COLOR = /^(?:good|warning|danger|#[0-9a-f]{6})$/i;
 const ALIGNMENTS = new Set(["left", "center", "right"]);
@@ -151,11 +154,11 @@ function parsePart(value: unknown, address: CardAddress): CardPart | null {
   switch (value.kind) {
     case "author": {
       const name = textOf(value.name);
-      return name === undefined ? null : { kind: "author", name, ...linked("href", value.href, address), ...linked("icon", value.icon, address) };
+      return name === undefined ? null : { kind: "author", name, ...linked("href", value.href, address, "link"), ...linked("icon", value.icon, address, "picture") };
     }
     case "title": {
       const text = textOf(value.text);
-      return text === undefined ? null : { kind: "title", text, ...linked("href", value.href, address) };
+      return text === undefined ? null : { kind: "title", text, ...linked("href", value.href, address, "link") };
     }
     case "header": {
       const text = textOf(value.text);
@@ -204,7 +207,7 @@ function parsePart(value: unknown, address: CardAddress): CardPart | null {
       const text = textOf(value.text);
       const at = momentOf(value.at);
       if (text === undefined && at === undefined) return null;
-      return { kind: "footer", ...(text && { text }), ...linked("icon", value.icon, address), ...(at !== undefined && { at }) };
+      return { kind: "footer", ...(text && { text }), ...linked("icon", value.icon, address, "picture"), ...(at !== undefined && { at }) };
     }
     default:
       return null;
@@ -222,7 +225,7 @@ function fieldOf(value: unknown): CardField | null {
 function buttonOf(value: unknown, address: CardAddress): CardButton | undefined {
   if (!isRecord(value)) return undefined;
   const text = textOf(value.text);
-  const href = urlOf(value.href, address);
+  const href = urlOf(value.href, address, "link");
   if (text === undefined || href === undefined) return undefined;
   const style = value.style === "primary" || value.style === "danger" ? value.style : undefined;
   return { text, href, ...(style && { style }) };
@@ -230,7 +233,7 @@ function buttonOf(value: unknown, address: CardAddress): CardButton | undefined 
 
 function imageOf(value: unknown, address: CardAddress): CardImage | undefined {
   if (!isRecord(value)) return undefined;
-  const url = urlOf(value.url, address);
+  const url = urlOf(value.url, address, "picture");
   return url === undefined ? undefined : { url, alt: textOf(value.alt) ?? "" };
 }
 
@@ -276,14 +279,14 @@ function tileOf(value: unknown, address: CardAddress): CardTile | null {
   return hero || title || subtitle || body || subtext || buttons.length > 0 ? tile : null;
 }
 
-/** `{ [key]: url }` for an address `address` keeps, or nothing, to spread into a part. */
-function linked<Key extends string>(key: Key, value: unknown, address: CardAddress): { [key in Key]?: string } {
-  const url = urlOf(value, address);
+/** `{ [key]: url }` for an address `address` keeps for `use`, or nothing, to spread into a part. */
+function linked<Key extends string>(key: Key, value: unknown, address: CardAddress, use: AddressUse): { [key in Key]?: string } {
+  const url = urlOf(value, address, use);
   return url === undefined ? {} : ({ [key]: url } as { [key in Key]?: string });
 }
 
-function urlOf(value: unknown, address: CardAddress): string | undefined {
-  return typeof value === "string" && value.length <= MAX_URL_LENGTH ? address(value) : undefined;
+function urlOf(value: unknown, address: CardAddress, use: AddressUse): string | undefined {
+  return typeof value === "string" && value.length <= MAX_URL_LENGTH ? address(value, use) : undefined;
 }
 
 /** Plain text a card shows, or undefined for none, or too much. */
