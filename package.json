@@ -1,46 +1,46 @@
 {
-  "name": "ember-spacefast",
+  "name": "ember",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "@37signals/lexxy": "0.9.24",
-    "@rails/activestorage": "8.1.401",
-    "@spacefast/zero": "0.8.0",
-    "class-variance-authority": "0.7.1",
-    "clsx": "2.1.1",
-    "highlight.js": "11.9.0",
-    "preact": "10.29.8",
-    "radix-ui": "1.8.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "tailwind-merge": "3.7.0"
-  },
-  "devDependencies": {
-    "@tailwindcss/cli": "4.3.3",
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0",
-    "esbuild": "0.27.7",
-    "spacefast": "0.8.0",
-    "tw-animate-css": "1.4.0",
-    "typescript": "6.0.3"
+  "packageManager": "pnpm@10.18.3",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
-    "dev": "npm run build && sf dev --state-backend sqlite",
-    "typecheck:server": "npm run source:prepare && tsc --noEmit --skipLibCheck --target ES2022 --module ESNext --moduleResolution Bundler --allowJs server/index.ts",
-    "build:check": "npm run build && sf dev --dry-run --json",
-    "build:styles": "npm run source:prepare && node scripts/build-styles.mjs",
-    "build:client": "npm run source:prepare && node scripts/build-client.mjs",
-    "build": "npm run source:prepare && node scripts/build-styles.mjs && node scripts/build-client.mjs && node scripts/package-static.mjs",
-    "source:prepare": "node scripts/ember-source.mjs prepare",
-    "source:check": "node scripts/ember-source.mjs check",
-    "source:capture": "node scripts/ember-source.mjs capture",
-    "source:pin": "node scripts/ember-source.mjs pin",
-    "test": "npm run source:prepare && node --test tests/*.test.mjs",
-    "package:serving": "npm run build --silent >&2 && node scripts/package-serving.mjs"
+    "dev": "pnpm --parallel --filter @ember/worker --filter @ember/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @ember/e2e test:e2e",
+    "test:features": "pnpm --filter @ember/e2e test:e2e --project features",
+    "test:mobile": "pnpm --filter @ember/e2e test:e2e --project 'mobile *'",
+    "screenshots": "pnpm --filter @ember/e2e test:e2e --project screenshots --update-snapshots",
+    "deploy": "node apps/worker/scripts/deploy.ts",
+    "vapid:keys": "node apps/worker/scripts/vapid-keys.ts",
+    "perf": "pnpm --filter @ember/perf start",
+    "seed": "node apps/worker/scripts/seed.ts"
   },
-  "overrides": {
-    "@spacefast/zero": {
-      "zod": "4.6.7"
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.149.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "EMBER_SETUP_PASSWORD": {
+        "description": "Make up a setup password nobody would guess. Ember's setup page asks for it once, so only you can set Ember up. Forgot it? Change it in the Worker's Settings, under Variables and Secrets."
+      },
+      "EMAIL": {
+        "description": "Cloudflare Email Service, which sends Ember's email once your account is on Workers Paid and has a domain onboarded to Email Sending."
+      },
+      "FILES": {
+        "description": "The R2 bucket for the files people upload to rooms. Each Ember needs its own, so if the bucket picked here is another Ember's, choose Create new and give it any name."
+      },
+      "STORAGE_BACKEND": {
+        "description": "Where messages live. Keep `do-sqlite`: each room keeps its own, which scales furthest. Or type `d1` for one database you can query, export and restore. Switching later starts an empty Ember."
+      },
+      "DB": {
+        "description": "Holds messages only if STORAGE_BACKEND is `d1`, up to 500 MB on Workers Free or 10 GB on Workers Paid. Each Ember needs its own, so if this is another Ember's, choose Create new."
+      }
     }
   }
 }

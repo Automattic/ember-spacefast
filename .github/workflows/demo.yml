@@ -1,0 +1,106 @@
+name: Demo
+
+# Deploys main to a demo Ember of its own, the Worker ember-demo with the R2 bucket ember-demo, apart
+# from ember-production and its files, and has `pnpm seed`'s made-up team set it up and talk in it, for
+# anyone to try Ember. Run it by hand from the Actions tab. The deploy's token can't make buckets, so
+# ember-demo has to exist first (`pnpm exec wrangler r2 bucket create ember-demo`). The first run
+# takes a setup token for the new Worker (`openssl rand -hex 32`), which the seed spends setting it up,
+# and everyone's password; this log may be public, so they're masked in it. A run without them updates
+# a demo that's set up already to main's code and leaves its people and messages as they are.
+on:
+  workflow_dispatch:
+    inputs:
+      setup_token:
+        description: "A new demo's setup token, from openssl rand -hex 32"
+        required: false
+      password:
+        description: "A new demo's password, everyone's in the made-up team"
+        required: false
+
+# One run at a time. A run while one deploys waits for it rather than cancelling it mid-upload.
+concurrency:
+  group: demo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WORKER_NAME: ember-demo
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      # First, so nothing prints the inputs before they're masked. Steps read them from the event's file,
+      # since `${{ inputs }}` would write them into this log with the step's script.
+      - name: Mask the inputs
+        id: given
+        run: |
+          # The runner decodes %25, %0D and %0A in a command's value, so they're encoded to mask the value whole.
+          mask() {
+            local value=${1//"%"/"%25"}
+            value=${value//$'\r'/"%0D"}
+            echo "::add-mask::${value//$'\n'/"%0A"}"
+          }
+          token=$(jq -r '.inputs.setup_token // ""' "$GITHUB_EVENT_PATH")
+          password=$(jq -r '.inputs.password // ""' "$GITHUB_EVENT_PATH")
+          if [ -n "$token" ]; then mask "$token"; fi
+          if [ -n "$password" ]; then mask "$password"; fi
+          # Nobody can type a line break into a sign-in form, so a value with one is refused before anything prints it.
+          case "$token$password" in
+            *$'\n'* | *$'\r'*)
+              echo "::error::The setup token and password have to be one line each."
+              exit 1
+              ;;
+          esac
+          if [ -n "$password" ]; then echo "seed=true" >> "$GITHUB_OUTPUT"; fi
+      # Pinned to commits, as the Preview workflow's are, because this job holds the Cloudflare token.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Deploy
+        id: deploy
+        env:
+          # Only this step sees the token, not the install or build scripts.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-output.json
+        run: |
+          # wrangler.jsonc with the demo's bucket in place of production's, beside it, since its paths are the root's.
+          sed 's/"bucket_name": "ember"/"bucket_name": "ember-demo"/' wrangler.jsonc > wrangler.demo.jsonc
+          if ! grep -q '"bucket_name": "ember-demo"' wrangler.demo.jsonc; then
+            echo "::error::wrangler.jsonc names no bucket \"ember\" for the demo to replace"
+            exit 1
+          fi
+          # A Worker that has a setup token keeps it, and the deploy makes none in this log for one that hasn't.
+          EMBER_SETUP_TOKEN=$(jq -r '.inputs.setup_token // ""' "$GITHUB_EVENT_PATH")
+          export EMBER_SETUP_TOKEN
+          node apps/worker/scripts/deploy.ts --name "$WORKER_NAME" --config wrangler.demo.jsonc --var "GIT_REVISION:${GITHUB_SHA::7}"
+          url=$(jq -rn 'first(inputs | select(.type == "deploy") | .targets[]? | select(endswith(".workers.dev")))' "$WRANGLER_OUTPUT_FILE_PATH")
+          if [ -z "$url" ]; then
+            echo "::error::wrangler deployed $WORKER_NAME without a workers.dev URL"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the demo
+        env:
+          DEMO_URL: ${{ steps.deploy.outputs.url }}
+        run: node apps/worker/scripts/check-deploy.ts "$DEMO_URL"
+      # The seed sets up only an Ember nobody has set up, so a run with a password once the demo is set up fails here.
+      - name: Seed
+        if: steps.given.outputs.seed == 'true'
+        env:
+          DEMO_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          EMBER_SETUP_TOKEN=$(jq -r '.inputs.setup_token // ""' "$GITHUB_EVENT_PATH")
+          EMBER_SEED_PASSWORD=$(jq -r '.inputs.password' "$GITHUB_EVENT_PATH")
+          export EMBER_SETUP_TOKEN EMBER_SEED_PASSWORD
+          node apps/worker/scripts/seed.ts "$DEMO_URL"

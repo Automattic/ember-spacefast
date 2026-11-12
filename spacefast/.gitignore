@@ -1,0 +1,13 @@
+.spacefast/
+node_modules/
+dist/
+.env*
+/client/ember/
+/client/protocol/
+/client/richtext/
+/shared/room-icons.ts
+
+!.env.server.example
+/assets/ember-app.*.js
+/client/asset-manifest.ts
+/client/ember-styles.ts

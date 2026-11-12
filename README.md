@@ -9,6 +9,7 @@ Ember is a team chat app. This fork adapts [Ember for Cloudflare](https://github
 Install Node.js 22 or newer and Git. Copy `.env.server.example` to `.env.server` and set the workspace owner’s verified sign-in address before creating a workspace. Then run:
 
 ```sh
+cd spacefast
 npm ci
 npm test
 npm run dev
@@ -18,7 +19,7 @@ npm run dev
 
 ## Publish to Spacefast
 
-Use the Spacefast CLI included in the project. Build an allowlisted serving directory, install its dependencies, then publish that directory to your Space:
+Use the deploy button to import this repository. From the `spacefast/` directory, you can also prepare the serving package and publish it with the CLI:
 
 ```sh
 stage=$(npm run --silent package:serving | node -pe 'JSON.parse(require("node:fs").readFileSync(0,"utf8")).path')
@@ -30,4 +31,4 @@ Configure production credentials as server-side variables on your Space. The ser
 
 ## Follow upstream
 
-The fork’s `main` branch starts from official Ember. The default `spacefast` branch builds from a pinned copy of Ember and applies the Spacefast changes automatically. [Upstream update workflow](UPSTREAM.md)
+The official Ember app and packages live at their original paths. The `spacefast/` directory holds the build for Spacefast Zero, including a pinned upstream snapshot and the changes applied to generated output. [Upstream update workflow](spacefast/UPSTREAM.md)
