@@ -825,6 +825,22 @@ describe("@ember's answer", () => {
     expect(answerOf(slackBlock(STATUS))).toEqual({ markup: "", cards: [STATUS_CARD], firstLink: null });
   });
 
+  it("keeps the links and pictures its text names by reference when it takes a block out, wherever their definitions are", () => {
+    const text = [
+      "See [the guide][guide] and ![our logo][logo].",
+      "[guide]: https://example.com/guide",
+      slackBlock(STATUS),
+      "[logo]: https://example.com/logo.png",
+      // A label defined again keeps its first address, as it does without the block.
+      "[guide]: https://elsewhere.example/guide",
+    ].join("\n\n");
+    const answer = answerOf(text, [], ["The guide is https://example.com/guide and the logo https://example.com/logo.png"]);
+    expect(answer.markup).toBe(markdownHtml(text.replace(`${slackBlock(STATUS)}\n\n`, "")));
+    expect(answer.markup).toContain(`<a href="https://example.com/guide">the guide</a>`);
+    expect(answer.cards).toEqual([{ source: "blocks", parts: [{ kind: "image", image: { url: "https://example.com/logo.png", alt: "our logo" } }] }, STATUS_CARD]);
+    expect(answer.firstLink).toBe("https://example.com/guide");
+  });
+
   it("leaves a block as the code it's written as when its payload doesn't parse or posts no card the room keeps, or it's another language's, or in a list or a quote", () => {
     const blocks = [
       '```slack\n{ "blocks": [ }\n```',
