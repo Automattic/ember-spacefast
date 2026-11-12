@@ -2,6 +2,8 @@ import {
   formatOf,
   MODEL_FORMATS,
   PAGES_READ_PER_ANSWER,
+  THINKING_LEVELS,
+  thinkingTaken,
   WEB_SEARCHES_PER_ANSWER,
   WEB_TOOLS_IN,
   type AssistantField,
@@ -41,12 +43,16 @@ const MAX_CONTINUATIONS = 2;
 /** The most pages an answer names as its sources. */
 export const MAX_SOURCES = 10;
 
-/** What Ember asks AI Gateway with: a Cloudflare account, an API token of its, a model and the format the model takes. */
+/**
+ * What Ember asks AI Gateway with: a Cloudflare account, an API token of its, a model and the format the
+ * model takes, and the levels of thinking it takes, once Ember has asked it at each (`thinkingLevelsOf`).
+ */
 export interface Gateway {
   accountId: string;
   apiToken: string;
   model: string;
   format: ModelFormat;
+  thinkingLevels?: ThinkingLevel[];
 }
 
 /** One turn of a conversation for a model to go on with: what someone wrote, or one of the model's own answers. */
@@ -135,14 +141,16 @@ export interface Answered {
 
 /**
  * What the model `gateway` names answers `question` in its format, or why it didn't, waiting at most
- * `timeoutMs` for it all. A model that doesn't take being told how much to think is asked again without
- * that, and then, as Search the web tries the web's tools when it's turned on, without the one for
- * reading pages, which AI Gateway may not have for every model, and then without them, told it can't
- * use them.
+ * `timeoutMs` for it all. The model is told to think as much as the question asks, or as near to that as
+ * the levels it takes allow, or not told, when it takes none (`thinkingTaken`). One that doesn't take
+ * being told how much to think all the same, as a model Ember hasn't asked at each level might not, is
+ * asked again without that, and then, as Search the web tries the web's tools when it's turned on,
+ * without the one for reading pages, which AI Gateway may not have for every model, and then without
+ * them, told it can't use them.
  */
 export async function ask(env: Env, gateway: Gateway, question: Question, timeoutMs: number): Promise<Answered | GatewayRefusal> {
   const signal = AbortSignal.timeout(timeoutMs);
-  let asked = question;
+  let asked = withThinkingTaken(question, gateway.thinkingLevels);
   let answered = await askOnce(env, gateway, asked, signal);
   if (isWrongFormat(answered) && asked.thinking !== undefined) {
     console.error(`Asking ${gateway.model} again without a thinking level, which it didn't take: ${answered.refusal}`);
@@ -159,6 +167,31 @@ export async function ask(env: Env, gateway: Gateway, question: Question, timeou
   if (!isWrongFormat(answered) || toolsFor(gateway.format, asked.webTools).length === 0) return answered;
   console.error(`Asking ${gateway.model} again without the web, whose tools AI Gateway didn't take: ${answered.refusal}`);
   return askOnce(env, gateway, { ...asked, instructions: asked.instructionsWithoutWeb ?? asked.instructions, webTools: [] }, signal);
+}
+
+/** `question`, asking for the level of thinking a model that takes `taken` is asked for in place of its own (`thinkingTaken`), or for none. */
+function withThinkingTaken(question: Question, taken: readonly ThinkingLevel[] | undefined): Question {
+  const { thinking, ...unthinking } = question;
+  const level = thinking && thinkingTaken(thinking, taken);
+  return level ? { ...unthinking, thinking: level } : unthinking;
+}
+
+/**
+ * The levels of thinking the model `gateway` names takes in its format, as it answers `question` at each,
+ * all at once, waiting at most `timeoutMs`: each but those it's refused at as a request it can't take
+ * (`wrongFormat`), as AI Gateway refuses what the model's provider doesn't, as xAI refuses any level for
+ * Grok 4.20 Reasoning, which Cloudflare's catalog lists Low and High for, so that only asking says. One
+ * it doesn't answer at for another reason, as when AI Gateway is busy, counts as one it takes, since
+ * asking at it is then as it was before Ember asked at each, and `ask` asks again without it if it's
+ * refused.
+ */
+export async function thinkingLevelsOf(env: Env, gateway: Gateway, question: Question, timeoutMs: number): Promise<ThinkingLevel[]> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const answers = await Promise.all(THINKING_LEVELS.map((thinking) => askOnce(env, gateway, { ...question, thinking }, signal)));
+  const refusals = answers.map((answered) => (isWrongFormat(answered) ? answered : null));
+  const first = refusals.find((refusal) => refusal !== null);
+  if (first) console.log(`${gateway.model} isn't told to think at ${THINKING_LEVELS.filter((_, index) => refusals[index]).join(", ")}, which it refused: ${first.cloudflareSays ?? first.refusal}`);
+  return THINKING_LEVELS.filter((_, index) => !refusals[index]);
 }
 
 /**

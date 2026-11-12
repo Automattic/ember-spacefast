@@ -24,7 +24,7 @@ import {
   type AgentSettings,
   type NewAgent,
 } from "@ember/protocol/agents";
-import { ASSISTANT_FORBIDDEN, ASSISTANT_OFF, type AssistantChanged } from "@ember/protocol/assistant";
+import { ASSISTANT_FORBIDDEN, ASSISTANT_OFF, THINKING_LEVELS, type AssistantChanged } from "@ember/protocol/assistant";
 import { AGENT_TEMPLATE, EMBER_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED } from "@ember/protocol/prompts";
 import type { BotAnswer, Bots } from "@ember/protocol/bots";
 import { mentionPromptItem } from "@ember/richtext";
@@ -79,6 +79,12 @@ const SEARCHED = [
 
 /** Whether `asked` gives the model a tool for searching the web. */
 const searches = ({ body }: Asked) => (body.tools ?? []).some(({ type }) => type.startsWith("web_search"));
+
+/** Whether `asked` tells the model how much to think, as the test question does when it's asked again at each level of thinking. */
+const thinks = ({ body }: Asked) => "thinking" in body || "reasoning" in body || "reasoning_effort" in body;
+
+/** What was asked of the models but for the test questions asked again at each level of thinking. */
+const unthinking = () => asked.filter((sent) => !thinks(sent));
 
 /** A model saying hello in the format of the API at `url`. */
 function sayingHello(url: string): Response {
@@ -347,16 +353,18 @@ describe("AI agents", () => {
         promptTemplate: null,
         format: "messages",
         levels: { thinking: "off", length: "short" },
+        thinkingLevels: [...THINKING_LEVELS],
         webTools: [],
         avatar: false,
         changedBy: administrator.user,
         changedAt: expect.any(String) as string,
       } satisfies AgentSettings);
 
-      // Its model answered as it, through Ember AI's account and API token.
-      expect(asked).toHaveLength(1);
-      expect(asked[0]).toMatchObject({ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, body: { model: HAIKU } });
-      expect(asked[0]!.body.system).toContain("You are Recap, an AI agent");
+      // Its model answered as it, through Ember AI's account and API token, and then again at each level of thinking.
+      expect(asked).toHaveLength(5);
+      for (const sent of asked) expect(sent).toMatchObject({ url: `${CLOUDFLARE_API}/messages`, authorization: `Bearer ${API_TOKEN}`, body: { model: HAIKU } });
+      expect(asked.map(thinks)).toEqual([false, true, true, true, true]);
+      expect(asked.map(({ body }) => body.system)).toEqual(Array(5).fill(expect.stringContaining("You are Recap, an AI agent")));
 
       expect(await roomsOf(recap.id)).toEqual(await openRooms());
       expect(await roomsOf(recap.id)).toContain(launch.id);
@@ -397,8 +405,8 @@ describe("AI agents", () => {
       const administrator = await setUp();
       const scout = await made(administrator, { name: "Scout", model: SONNET, webSearch: true });
       expect(scout).toMatchObject({ format: "messages", webTools: ["search", "read"] });
-      expect(asked.map(searches)).toEqual([false, true]);
-      expect(asked[1]!.body.system).toContain("You are Scout, an AI agent");
+      expect(unthinking().map(searches)).toEqual([false, true]);
+      expect(unthinking()[1]!.body.system).toContain("You are Scout, an AI agent");
       // The AI assistant tab lists what it does on the web too.
       expect(await listed(administrator)).toEqual([expect.objectContaining({ name: "Scout", webTools: ["search", "read"] })]);
     });
@@ -407,7 +415,8 @@ describe("AI agents", () => {
       const administrator = await setUp();
       expect(await refusalOf(await makeAgent(administrator, { ...RECAP, model: GLM, webSearch: true }))).toEqual([422, { error: agentCannotSearchWith("GLM-4.7 Flash"), field: "webSearch" }]);
       // It was asked its test question, but not to search.
-      expect(asked.map(searches)).toEqual([false]);
+      expect(unthinking().map(searches)).toEqual([false]);
+      expect(asked.some(searches)).toBe(false);
 
       answer = ({ url }) => sayingHello(url);
       expect(await refusalOf(await makeAgent(administrator, { ...RECAP, webSearch: true }))).toEqual([422, { error: agentAnsweredUnsearched("Claude Haiku 5.5"), field: "webSearch" }]);
@@ -578,7 +587,7 @@ describe("AI agents", () => {
       asked.length = 0;
 
       expect(await agentOf(await changeAgent(administrator, scout.id, { model: GPT, webSearch: false }))).toMatchObject({ model: GPT, modelName: "GPT-6.1 Sol", format: "responses", webTools: [] });
-      expect(asked.map(({ url }) => url)).toEqual([`${CLOUDFLARE_API}/responses`]);
+      expect(asked.map(({ url }) => url)).toEqual(Array(5).fill(`${CLOUDFLARE_API}/responses`));
       expect(asked[0]!.body).toMatchObject({ model: GPT });
 
       asked.length = 0;
@@ -588,7 +597,34 @@ describe("AI agents", () => {
         format: "messages",
         webTools: ["search", "read"],
       });
-      expect(asked.map(searches)).toEqual([false, true]);
+      expect(unthinking().map(searches)).toEqual([false, true]);
+    });
+
+    it("keeps the levels of thinking its model took its test question at, finding them again only for another model", async () => {
+      const administrator = await setUp();
+      // As a model that always thinks, and only a little or a lot: OpenAI's Responses asks for no thinking as none.
+      answer = (sent) => {
+        const effort = (sent.body as { reasoning?: { effort: string } }).reasoning?.effort;
+        if (effort !== "none" && effort !== "medium") return answering(sent);
+        return Response.json({ success: false, errors: [{ code: 7003, message: `Model execution failed (User Input Error): Unsupported value: '${effort}'` }], messages: [], result: null }, { status: 400 });
+      };
+      const recap = await made(administrator, { model: GPT });
+      expect(recap).toMatchObject({ model: GPT, format: "responses", thinkingLevels: ["low", "high"] });
+      expect(await workspaceSql("SELECT thinking_levels FROM agents WHERE user_id = ?", recap.id)).toEqual([{ thinking_levels: '["low","high"]' }]);
+
+      // Kept while its model is, without asking it again.
+      asked.length = 0;
+      expect(await agentOf(await changeAgent(administrator, recap.id, { description: "Sums up the week", thinking: "medium" }))).toMatchObject({ thinkingLevels: ["low", "high"], levels: { thinking: "medium" } });
+      expect(asked).toEqual([]);
+
+      // Another model takes its test question at each level again.
+      answer = answering;
+      expect(await agentOf(await changeAgent(administrator, recap.id, { model: SONNET }))).toMatchObject({ model: SONNET, thinkingLevels: [...THINKING_LEVELS] });
+      expect(asked.filter(thinks)).toHaveLength(4);
+
+      // An agent given its model before Ember asked at each level has none.
+      await workspaceSql("UPDATE agents SET thinking_levels = NULL");
+      expect(await shownAgent(administrator, recap.id)).toMatchObject({ model: SONNET, thinkingLevels: null });
     });
 
     it("turns Search the web on by having the model search, and off without asking it", async () => {

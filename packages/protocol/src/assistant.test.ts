@@ -26,6 +26,7 @@ import {
   parseYourAssistantChanges,
   THINKING_LEVELS,
   THINKING_TOKENS,
+  thinkingTaken,
   TOP_LEVELS,
   WEB_TOOLS_IN,
   withinMost,
@@ -145,6 +146,22 @@ describe("The dials of @ember's answers", () => {
     expect(withinMost(TOP_LEVELS, { thinking: "low", length: "short" })).toEqual({ thinking: "low", length: "short" });
     expect(withinMost({ thinking: "off", length: "medium" }, { thinking: "medium", length: "long" })).toEqual({ thinking: "off", length: "medium" });
     expect(withinMost(DEFAULT_LEVELS, { thinking: "off", length: "medium" })).toEqual({ thinking: "off", length: "medium" });
+  });
+
+  it("ask a model for the level of thinking it takes nearest the one chosen, below it first, or for none when it takes none", () => {
+    // Any, for a model Ember hasn't asked at each level.
+    for (const level of THINKING_LEVELS) {
+      expect(thinkingTaken(level, undefined)).toBe(level);
+      expect(thinkingTaken(level, null)).toBe(level);
+      expect(thinkingTaken(level, THINKING_LEVELS)).toBe(level);
+    }
+    // As a model that takes only Low and High.
+    expect(THINKING_LEVELS.map((level) => thinkingTaken(level, ["low", "high"]))).toEqual(["low", "low", "low", "high"]);
+    // As a model that always thinks takes every level but Off.
+    expect(thinkingTaken("off", ["low", "medium", "high"])).toBe("low");
+    expect(thinkingTaken("high", ["off", "low"])).toBe("low");
+    // As xAI's Grok 4.20 Reasoning takes none.
+    for (const level of THINKING_LEVELS) expect(thinkingTaken(level, [])).toBeNull();
   });
 
   it("change a dial or both, to a level it has", () => {

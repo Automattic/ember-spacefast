@@ -40,6 +40,12 @@ async function setUp(model = MODEL): Promise<{ ada: Session; general: RoomId }> 
   return { ada, general };
 }
 
+/** Sets Ember AI up again as `administrator`, with its model, which asks the model its test question at each level of thinking. */
+async function setUpAgain(administrator: Session): Promise<void> {
+  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify(SETUP) });
+  expect(saved.status, await saved.clone().text()).toBe(200);
+}
+
 /** Turns Ember AI off as `administrator`, as turning off its card's switch does. */
 async function turnOff(administrator: Session): Promise<void> {
   expect((await api("/api/account/assistant", { method: "DELETE", headers: { Cookie: administrator.cookie } })).status).toBe(200);
@@ -414,6 +420,42 @@ describe("@ember", () => {
     expect(questions.map(({ body }) => body.reasoning_effort)).toEqual(["low", undefined]);
     expect(questions[1]!.body.max_completion_tokens).toBe(questions[0]!.body.max_completion_tokens);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining(`Asking ${MODEL} again without a thinking level`));
+    client.close();
+  });
+
+  it("asks a model at the level of thinking it took its test question at nearest the asker's, below it first, and one that took none at no level, in the room the asker's level gives", async () => {
+    const { ada, general } = await setUp();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let refused = ["none", "medium"];
+    const questions = internet(({ body }) =>
+      body.reasoning_effort !== undefined && refused.includes(body.reasoning_effort)
+        ? Response.json({ error: { message: `Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model.` } }, { status: 400 })
+        : chatAnswer("Here's the plan."),
+    );
+    await setUpAgain(ada);
+    const client = await connect(general, ada);
+
+    for (const thinking of ["off", "medium", "high"] as const) {
+      await pickLevels(ada, { thinking });
+      await post(client, `<p>${mention(EMBER)} plan the launch?</p>`);
+      await nextAnswer(client);
+    }
+    // As xAI refuses each for Grok 4.20 Reasoning.
+    refused = ["none", "low", "medium", "high"];
+    await setUpAgain(ada);
+    await post(client, `<p>${mention(EMBER)} and the party?</p>`);
+    expect(await nextAnswer(client)).toMatchObject({ plainText: "Here's the plan." });
+
+    // Past the test question and its levels each time Ember AI was set up.
+    const answers = [...questions.slice(5, 8), ...questions.slice(13)];
+    expect(answers.map(({ body }) => [body.reasoning_effort, body.max_completion_tokens])).toEqual([
+      ["low", UNTHINKING_TOKENS + 2_000],
+      ["low", 16_000 + 2_000],
+      ["high", 32_000 + 2_000],
+      [undefined, 32_000 + 2_000],
+    ]);
+    expect(errors).not.toHaveBeenCalled();
     client.close();
   });
 

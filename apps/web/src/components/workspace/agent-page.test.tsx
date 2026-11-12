@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me, SidebarRoom } from "@ember/protocol";
 import { AGENT_CHANGED, agentCannotSearchWith, AGENTS_FORBIDDEN, NAME_TAKEN, type AgentSettings, type AgentTrialAnswer, type NewAgent } from "@ember/protocol/agents";
-import { ASSISTANT_MODELS, ASSISTANT_OFF, MODEL_REFUSED, TOP_LEVELS, type AssistantCatalog, type AssistantModel, type AssistantSettings as Assistant } from "@ember/protocol/assistant";
+import { ASSISTANT_MODELS, ASSISTANT_OFF, MODEL_REFUSED, THINKING_LEVELS, TOP_LEVELS, type AssistantCatalog, type AssistantModel, type AssistantSettings as Assistant } from "@ember/protocol/assistant";
 import { AGENT_TEMPLATE, INSTRUCTIONS_PLACE_NEEDED, PLACEHOLDERS, placeholderOf, unknownPlaceholder } from "@ember/protocol/prompts";
 import defaultBotAvatar from "@/components/default-bot-avatar.svg";
 import { FlashProvider } from "@/components/flash";
@@ -71,6 +71,7 @@ const RECAP: AgentSettings = {
   promptTemplate: null,
   format: "messages",
   levels: { thinking: "low", length: "medium" },
+  thinkingLevels: [...THINKING_LEVELS],
   avatar: false,
   changedBy: { id: ada.id, name: "Ada Lovelace" },
   changedAt: "2026-11-09T12:00:00.000Z",
@@ -686,6 +687,36 @@ describe("An agent's settings", () => {
     expect(sent()).toEqual([[`PATCH /api/account/agents/${RECAP.id}`, { model: GPT, modelName: "GPT-6.1 Sol" }]]);
     act(() => saved());
     await wentBack();
+  });
+
+  it("offers only the levels of thinking its model took when it was saved, saying which it can't be set to, and each for another model, which saving asks", async () => {
+    serve({ loaded: () => answer({ ...RECAP, model: GPT, modelName: "GPT-6.1 Sol", format: "responses", levels: { thinking: "off", length: "medium" }, thinkingLevels: ["low", "medium", "high"] }) });
+    const { user } = showSettings();
+    await loaded();
+    const thinking = () => screen.getByRole("group", { name: "Thinking" });
+
+    expect(level("Thinking", "Off")).toBeChecked();
+    expect(level("Thinking", "Off")).toBeDisabled();
+    for (const name of ["Low", "Medium", "High"]) expect(level("Thinking", name)).toBeEnabled();
+    expect(thinking()).toHaveAccessibleDescription("GPT-6.1 Sol can't be set to Off, so it thinks at Low instead.");
+    await user.click(level("Thinking", "High"));
+    expect(thinking()).toHaveAccessibleDescription("Thinks the most first, up to about 32,000 tokens, which takes longest. GPT-6.1 Sol can't be set to Off.");
+
+    await user.selectOptions(modelMenu(), SONNET);
+    for (const name of ["Off", "Low", "Medium", "High"]) expect(level("Thinking", name)).toBeEnabled();
+    expect(thinking()).toHaveAccessibleDescription("Thinks the most first, up to about 32,000 tokens, which takes longest.");
+  });
+
+  it("offers each level of thinking for a model that took none when it was saved, saying it decides itself, up to what each allows", async () => {
+    serve({ loaded: () => answer({ ...RECAP, thinkingLevels: [] }) });
+    const { user } = showSettings();
+    await loaded();
+    const thinking = () => screen.getByRole("group", { name: "Thinking" });
+
+    for (const name of ["Off", "Low", "Medium", "High"]) expect(level("Thinking", name)).toBeEnabled();
+    expect(thinking()).toHaveAccessibleDescription("Claude Sonnet 5.5 can't be told how much to think, so it decides for itself, up to about 4,000 tokens.");
+    await user.click(level("Thinking", "Off"));
+    expect(thinking()).toHaveAccessibleDescription("Claude Sonnet 5.5 can't be told how much to think, so it decides for itself, up to about 2,000 tokens.");
   });
 
   it("has the model search the web as Search the web turns on", async () => {
