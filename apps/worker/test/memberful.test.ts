@@ -12,6 +12,7 @@ import {
   MEMBERFUL_SIGN_IN_PROBLEMS,
   MEMBERFUL_WEBHOOK_PATH,
   memberfulSignInPath,
+  PASSWORD_WITH_MEMBERFUL,
   SIGN_IN_LIMITED,
   SIGN_IN_REJECTED,
   type Account,
@@ -370,7 +371,7 @@ describe("Sign in with Memberful", () => {
       for (const settings of [{ memberfulJoin: true }, { memberfulSignIn: true }]) {
         const refused = await change(administrator, { settings }, { keys: false });
         expect(refused.status).toBe(422);
-        expect(await refused.json()).toEqual({ error: "Memberful needs MEMBERFUL_URL, MEMBERFUL_CLIENT_ID and MEMBERFUL_CLIENT_SECRET set first" });
+        expect(await refused.json()).toEqual({ error: "Set up Memberful first, which gives Ember your Memberful site's keys." });
       }
       expect((await bootstrap()).account).toEqual(account());
 
@@ -973,7 +974,7 @@ describe("Memberful memberships", () => {
       for (const keys of [KEYS, { ...ALL_KEYS, MEMBERFUL_API_KEY: undefined }, { ...ALL_KEYS, MEMBERFUL_WEBHOOK_SECRET: "" }]) {
         expect((await webhook(subscriptionChanged(katherine), { keys })).status).toBe(404);
       }
-      expect(errors).toHaveBeenCalledWith("A Memberful webhook came, but the deployment lacks MEMBERFUL_WEBHOOK_SECRET or MEMBERFUL_API_KEY, so it's refused");
+      expect(errors).toHaveBeenCalledWith("A Memberful webhook came, but Ember lacks the webhook's secret or the custom app's API key, so it's refused");
     });
 
     it(
@@ -1542,8 +1543,9 @@ async function connectGrace(member: Session, password = grace.password): Promise
   return site;
 }
 
-/** Saves `session`'s profile as its form does, with `changes`, on a deployment with the keys. */
-const saveProfile = (session: Session, changes: unknown) => withKeys("/api/users/me/profile", { method: "PATCH", headers: as(session), body: JSON.stringify(changes) });
+/** Saves `session`'s profile as its form does, with `changes`, on a deployment with the keys, or with `keys`. */
+const saveProfile = (session: Session, changes: unknown, keys: Partial<Env> = KEYS) =>
+  apiWith(keys, "/api/users/me/profile", { method: "PATCH", headers: as(session), body: JSON.stringify(changes) });
 
 /** Every linked account, with what it says of itself. */
 const linkedAccounts = () => workspaceSql("SELECT issuer, subject, user_id, name, email_address FROM identities");
@@ -1920,16 +1922,50 @@ describe("A new password", () => {
     void site;
   });
 
-  it("keeps the Memberful account of someone without a password, as they set their first", async () => {
+  it("is refused to someone without one whom Memberful signs in, as it does while the deployment has its keys, whether or not Memberful is on", async () => {
+    const administrator = await setUpWithMemberful({ membersOnly: false });
+    fakeMemberful();
+    const session = await memberfulSession();
+    const elsewhere = await memberfulSession();
+    for (const on of [true, false]) {
+      await turnMemberful(administrator, on, { membersOnly: false });
+      for (const changes of [{ password: "a long enough password" }, { password: "a long enough password", emailAddress: "katherine@nasa.example" }]) {
+        const refused = await saveProfile(session, changes);
+        expect(refused.status).toBe(422);
+        expect(await refused.json()).toEqual({ error: PASSWORD_WITH_MEMBERFUL });
+      }
+    }
+    // Nothing was saved, and their other sessions go on, as a new password would end them.
+    expect(await profileOf(session)).toMatchObject({ password: false, emailAddress: katherine.email });
+    expect(await signsIn(elsewhere)).toBe(true);
+    expect(await identities()).toEqual([{ issuer: SITE, subject: katherine.id, user_id: session.user.id }]);
+    // The rest of their profile is theirs to change as before, their email address included.
+    expect((await saveProfile(session, { emailAddress: "katherine@nasa.example" })).status).toBe(200);
+    expect((await signedInAs(await signInWithMemberful())).id).toBe(session.user.id);
+  });
+
+  it("keeps the Memberful account of someone without a password, as they set their first where Memberful doesn't sign them in", async () => {
     await setUpWithMemberful({ membersOnly: false });
     fakeMemberful();
     const session = await memberfulSession();
-    const saved = await saveProfile(session, { password: "a long enough password" });
-    expect(saved.status).toBe(200);
-    expect(((await saved.json()) as ProfileAnswer).profile).toMatchObject({ password: true, memberful: { connected: { name: katherine.fullName } } });
+    // At another Memberful site, where they'd be someone new, as at a deployment without the keys.
+    const saved = await saveProfile(session, { password: "a long enough password" }, { ...KEYS, MEMBERFUL_URL: "https://another.memberful.com/" });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    expect(((await saved.json()) as ProfileAnswer).profile.password).toBe(true);
     expect(await identities()).toEqual([{ issuer: SITE, subject: katherine.id, user_id: session.user.id }]);
+    // Back at the site, either signs them in.
     expect((await signedInAs(await signInWithMemberful())).id).toBe(session.user.id);
     expect((await signInWithPassword({ emailAddress: katherine.email, password: "a long enough password" })).status).toBe(201);
+  });
+
+  it("is someone's first to set at a deployment without Memberful's keys, which has no Memberful to sign them in", async () => {
+    await setUpWithMemberful({ membersOnly: false });
+    fakeMemberful();
+    const session = await memberfulSession();
+    const saved = await saveProfile(session, { password: "a long enough password" }, {});
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    expect(((await saved.json()) as ProfileAnswer).profile).toMatchObject({ password: true, memberful: null });
+    expect(await identities()).toEqual([{ issuer: SITE, subject: katherine.id, user_id: session.user.id }]);
   });
 
   it("keeps the Memberful account of someone without an email address, which their password can't sign them in without, until they add one", async () => {
@@ -1937,7 +1973,8 @@ describe("A new password", () => {
     const site = fakeMemberful();
     const session = await memberfulSessionOf({ ...katherine, id: "4243", fullName: "Dorothy Vaughan", email: null }, site);
     const linked = [{ issuer: SITE, subject: "4243", user_id: session.user.id }];
-    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    // Her first, where Memberful doesn't sign her in.
+    expect((await saveProfile(session, { password: "a long enough password" }, {})).status).toBe(200);
     const changed = await saveProfile(session, { password: "another long password", currentPassword: "a long enough password" });
     expect(changed.status).toBe(200);
     expect(((await changed.json()) as ProfileAnswer).profile.memberful).toEqual({ membersOnly: false, connected: { name: "Dorothy Vaughan", emailAddress: null } });
@@ -2027,7 +2064,8 @@ describe("Disconnect Memberful", () => {
     await setUpWithMemberful({ membersOnly: false });
     const site = fakeMemberful();
     const session = await memberfulSessionOf({ ...katherine, id: "4243", fullName: "Dorothy Vaughan", email: null }, site);
-    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    // Her first, where Memberful doesn't sign her in.
+    expect((await saveProfile(session, { password: "a long enough password" }, {})).status).toBe(200);
     const refused = await disconnect(session, { currentPassword: "a long enough password" });
     expect(refused.status).toBe(422);
     expect(await refused.json()).toEqual({ error: MEMBERFUL_DISCONNECT_WITHOUT_EMAIL });
@@ -2040,7 +2078,7 @@ describe("Disconnect Memberful", () => {
     expect((await signInWithPassword({ emailAddress: "dorothy@example.com", password: "a long enough password" })).status).toBe(201);
   });
 
-  it("asks someone without a password to set one first, so that they can still sign in", async () => {
+  it("refuses someone without a password, whom Memberful signs in alone, until they have one to sign in with instead", async () => {
     await setUpWithMemberful({ membersOnly: false });
     fakeMemberful();
     const session = await memberfulSession();
@@ -2051,7 +2089,8 @@ describe("Disconnect Memberful", () => {
     }
     expect(await identities()).toHaveLength(1);
 
-    expect((await saveProfile(session, { password: "a long enough password" })).status).toBe(200);
+    // A first password, set where Memberful doesn't sign them in, lets them disconnect it.
+    expect((await saveProfile(session, { password: "a long enough password" }, {})).status).toBe(200);
     const disconnected = await disconnect(session, { currentPassword: "a long enough password" });
     expect(disconnected.status).toBe(200);
     // Nothing to show: Memberful isn't members only, and nothing is connected.

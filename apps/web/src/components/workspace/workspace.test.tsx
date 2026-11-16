@@ -6,6 +6,7 @@ import type { AgentSettings } from "@ember/protocol/agents";
 import { THINKING_LEVELS, type AssistantSettings } from "@ember/protocol/assistant";
 import { FlashProvider } from "@/components/flash";
 import { AccountContext } from "@/hooks/use-account";
+import { SHIPPED_MODELS } from "@/hooks/use-offered-models";
 import { PushContext } from "@/hooks/use-push";
 import { navigate } from "@/hooks/use-route";
 import { joinHuddle } from "@/lib/huddle";
@@ -47,9 +48,12 @@ const workspaceSettings: WorkspaceSettings = {
   canAdminister: false,
   memberfulSite: null,
   memberfulWebhooks: false,
+  memberfulKeys: null,
+  memberfulSiteKept: null,
   turnstile: null,
   assistant: null,
   huddles: null,
+  outsideAi: false,
   cloudflareAccountId: null,
   email: { provider: "cloudflare", resendKey: null, cloudflare: true, from: null },
   invitations: [],
@@ -559,7 +563,8 @@ describe("Link to a message", () => {
 
     act(() => navigate("/rooms/general/threads/m1"));
     expect(await screen.findByRole("complementary", { name: "Thread" })).toBeInTheDocument();
-    expect(room.sent).toContainEqual({ type: "thread.open", parentId: "m1" });
+    // The thread opens in an effect, which can run after the panel shows.
+    await waitFor(() => expect(room.sent).toContainEqual({ type: "thread.open", parentId: "m1" }));
     expect(room.sent).not.toContainEqual({ type: "history.around" });
   });
 
@@ -941,7 +946,7 @@ describe("New releases", () => {
     const idle = idleCallbacks();
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
-      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", notes: NOTES, newer: true }, newestBeta: null, copy: null }),
+      "GET /api/account/release": () => Response.json({ release: "0.1", beta: false, newest: { release: "0.2", version: "0.2.0", notes: NOTES, newer: true }, newestBeta: null, copy: null }),
     });
     const { user } = showWorkspace("/rooms/random", asAdministrator);
     expect(await roomHeading()).toHaveTextContent("random");
@@ -961,7 +966,7 @@ describe("New releases", () => {
   it("asks afresh each time an administrator opens Admin, once the browser is idle, but not for going on within it, or leaving", async () => {
     const idle = idleCallbacks();
     let newest = "0.2";
-    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, notes: NOTES, newer: true }, newestBeta: null, copy: null });
+    const answer = () => Response.json({ release: "0.1", beta: false, newest: { release: newest, version: `${newest}.0`, notes: NOTES, newer: true }, newestBeta: null, copy: null });
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
       "GET /api/account/release": answer,
@@ -1002,7 +1007,7 @@ describe("New releases", () => {
 
   it("leaves Admin unmarked while this is the newest release, or GitHub didn't say, as General says", async () => {
     for (const [newest, says] of [
-      [{ release: "0.1", notes: NOTES, newer: false }, "This is the newest release."],
+      [{ release: "0.1", version: "0.1.0", notes: NOTES, newer: false }, "This is the newest release."],
       [null, "GitHub didn't say whether a newer release is out."],
     ] as const) {
       const idle = idleCallbacks();
@@ -1025,10 +1030,10 @@ describe("New releases", () => {
 
   it("marks Admin for the beta after a beta's own, which Update Ember brings, but not for a beta a release could try", async () => {
     const betaNotes = "https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases/tag/v0.2.0-beta.2";
-    const newestBeta = { release: "0.2 beta 2", notes: betaNotes, newer: true };
+    const newestBeta = { release: "0.2 beta 2", version: "0.2.0-beta.2", notes: betaNotes, newer: true };
     for (const [check, card, mark] of [
-      [{ release: "0.2 beta 1", beta: true, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.2 beta 2 is available", "Ember 0.2 beta 2 is available"],
-      [{ release: "0.1", beta: false, newest: { release: "0.1", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.1", null],
+      [{ release: "0.2 beta 1", beta: true, newest: { release: "0.1", version: "0.1.0", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.2 beta 2 is available", "Ember 0.2 beta 2 is available"],
+      [{ release: "0.1", beta: false, newest: { release: "0.1", version: "0.1.0", notes: NOTES, newer: false }, newestBeta, copy: null }, "Ember 0.1", null],
     ] as const) {
       const idle = idleCallbacks();
       serve({
@@ -1050,7 +1055,7 @@ describe("New releases", () => {
 
   it("asks afresh at once for General's Check for updates, marking Admin once the Worker hears of a newer release", async () => {
     const idle = idleCallbacks();
-    let newest = { release: "0.1", notes: NOTES, newer: false };
+    let newest = { release: "0.1", version: "0.1.0", notes: NOTES, newer: false };
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true }),
       "POST /api/account/release_checks": () => Response.json({ release: "0.1", beta: false, newest, checkedAt: new Date().toISOString(), newestBeta: null, copy: null }),
@@ -1064,7 +1069,7 @@ describe("New releases", () => {
     expect(admin).not.toHaveAccessibleDescription();
 
     // GitHub has published 0.2 since, which Check for updates hears of without waiting for the browser to be idle.
-    newest = { release: "0.2", notes: NOTES, newer: true };
+    newest = { release: "0.2", version: "0.2.0", notes: NOTES, newer: true };
     await user.click(within(card).getByRole("button", { name: "Check for updates" }));
     expect(await screen.findByRole("heading", { level: 2, name: "Ember 0.2 is available" })).toBeInTheDocument();
     expect(admin).toHaveAccessibleDescription("Ember 0.2 is available");
@@ -1201,7 +1206,7 @@ describe("Search box", () => {
 
 describe("Edit your profile", () => {
   it("shows your profile from the rail's avatar, marking it, with Go Back to the page it was opened from", async () => {
-    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null } }) });
+    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, apps: [], outsideAi: null } }) });
     const { user } = showWorkspace("/rooms/random");
     await roomHeading();
     await user.click(screen.getByRole("link", { name: "Your profile" }));
@@ -1215,7 +1220,7 @@ describe("Edit your profile", () => {
   });
 
   it("logs out from your profile", async () => {
-    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null } }) });
+    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, apps: [], outsideAi: null } }) });
     const { onSignOut, user } = showWorkspace("/users/me/profile");
     await user.click(screen.getByRole("button", { name: "Log out" }));
     expect(onSignOut).toHaveBeenCalledOnce();
@@ -1227,7 +1232,7 @@ describe("Connect Memberful", () => {
 
   it("flashes that your Memberful account is connected, once, taking it out of the address", async () => {
     const memberful = { membersOnly: true, connected: { name: "Ada Lovelace", emailAddress: "ada@example.com" } };
-    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, membershipNeeded: true, memberful } }) });
+    serve({ "GET /api/users/me/profile": () => Response.json({ profile: { name: "Ada", emailAddress: "ada@example.com", bio: null, membershipNeeded: true, memberful, apps: [], outsideAi: null } }) });
     const { unmount } = showWorkspace("/users/me/profile?memberful=connected#top");
     expect(await screen.findByRole("alert")).toHaveTextContent("Your Memberful account is connected.");
     expect(address()).toBe("/users/me/profile#top");
@@ -2096,12 +2101,30 @@ describe("Agent pages", () => {
     changedBy: { id: ada.id, name: ada.name },
     changedAt: "2026-11-09T12:00:00.000Z",
   };
+  /** A connected app, as its page shows it. */
+  const linear = {
+    id: "p1",
+    name: "Linear",
+    url: "https://mcp.linear.example/mcp",
+    hasToken: false,
+    serverName: null,
+    tools: [{ name: "create_issue", title: null, description: "Creates an issue." }],
+    setAside: [],
+    toolsLeftOut: 0,
+    toolsReadAt: "2026-11-13T10:30:00.000Z",
+    connectedBy: { id: ada.id, name: ada.name },
+    signIn: null,
+  };
   /** What an administrator's workspace answers while Ember AI is on. */
   const withAgents = (responses: Parameters<typeof serve>[0] = {}) =>
     serve({
       "GET /api/account": () => Response.json({ ...workspaceSettings, canAdminister: true, assistant }),
       "GET /api/account/agents": () => Response.json({ agents: [recap] }),
-      "POST /api/account/assistant/catalog": () => Response.json({ models: assistant.models, refusal: null }),
+      "GET /api/account/apps": () => Response.json({ apps: [{ id: linear.id, name: linear.name, url: linear.url, toolCount: linear.tools.length, setAside: 0, signInEnded: false, wantsAccess: false }] }),
+      "POST /api/account/assistant/offered": () => Response.json(SHIPPED_MODELS),
+      // The Tools card of each agent's page.
+      "GET /api/account/agents/a1/tools": () => Response.json({ apps: [], outsideAi: null }),
+      "GET /api/account/agents/ember/tools": () => Response.json({ apps: [], outsideAi: null }),
       ...responses,
     });
   const sectionMarked = () => within(screen.getByRole("navigation", { name: "Community settings" })).getByRole("link", { current: "page" });
@@ -2127,6 +2150,34 @@ describe("Agent pages", () => {
     expect(document.title).toBe("New agent");
     await user.click(screen.getByRole("link", { name: "Go Back" }));
     expect(await screen.findByRole("region", { name: "Agents" })).toBeInTheDocument();
+  });
+
+  it("shows the apps' pages at their addresses from the AI assistant tab, marking it, and Admin on the rail, with Go Back to it", async () => {
+    withAgents({ "GET /api/account/apps/p1": () => Response.json({ app: linear }) });
+    const { user } = showWorkspace("/account/edit#assistant-settings", asAdministrator);
+    await user.click(await screen.findByRole("link", { name: "Edit Linear" }));
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Linear");
+    expect(location.pathname).toBe("/account/apps/p1/edit");
+    expect(document.title).toBe("Edit app");
+    expect(railCurrent()).toEqual(["Admin"]);
+    expect(sectionMarked()).toHaveTextContent("AI assistant");
+
+    await user.click(screen.getByRole("link", { name: "Go Back" }));
+    await user.click(await screen.findByRole("link", { name: "Connect an app" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Connect an app" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/account/apps/new");
+    expect(document.title).toBe("Connect an app");
+    expect(sectionMarked()).toHaveTextContent("AI assistant");
+    await user.click(screen.getByRole("link", { name: "Go Back" }));
+    expect(await screen.findByRole("region", { name: "Apps" })).toBeInTheDocument();
+  });
+
+  it("loads an app's page again when no app has the id, for the Worker to answer the 404 page", async () => {
+    vi.mocked(loadPage).mockClear();
+    withAgents({ "GET /api/account/apps/nothing": () => Response.json({ error: "Not found" }, { status: 404 }) });
+    showWorkspace("/account/apps/nothing/edit", asAdministrator);
+    await waitFor(() => expect(loadPage).toHaveBeenCalledExactlyOnceWith("/account/apps/nothing/edit"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("loads an agent's settings again when no agent has the id, for the Worker to answer the 404 page", async () => {
@@ -2290,10 +2341,15 @@ describe("Huddles", () => {
     vi.mocked(joinHuddle).mockReset();
   });
 
-  it("has no huddle button until huddles are on", async () => {
+  /** What a room's row in the sidebar says of the huddle going on in it, or nothing with none. */
+  const inSidebar = (room: string) => within(screen.getByRole("region", { name: "Rooms" })).getByRole("link", { name: room }).querySelector("[title]");
+
+  it("has no huddle button until huddles are on, nor a sidebar that says a huddle is going on", async () => {
+    serveRooms({ ...roomList(rooms), huddles: { general: { startedAt: "2026-11-10T09:00:00.000Z", userIds: ["u2"] } } });
     showWorkspace("/rooms/general");
     await roomHeading();
     expect(screen.queryByRole("button", { name: /huddle/i })).not.toBeInTheDocument();
+    expect(inSidebar("general")).toBeNull();
   });
 
   it("has none in a DM", async () => {
@@ -2356,10 +2412,20 @@ describe("Huddles", () => {
     expect(await screen.findByRole("dialog", { name: "Start a huddle in general" })).toBeVisible();
   });
 
-  it("lists the huddles going on as the sidebar loads them", async () => {
+  it("lists the huddles going on as the sidebar loads them, in the room's header and at the end of its row in the sidebar", async () => {
     serveRooms({ ...roomList(rooms), huddles: { random: { startedAt: "2026-11-10T09:00:00.000Z", userIds: ["u2"] } } });
     showWorkspace("/rooms/random", ada, HUDDLES_ON);
     expect(await screen.findByRole("button", { name: "Join huddle, 1 in it" })).toBeInTheDocument();
+    expect(inSidebar("random")).toHaveTextContent(/^1/);
+    expect(inSidebar("general")).toBeNull();
+
+    // The row follows the huddle as the workspace socket tells of it.
+    await workspaceSends({ type: "room.huddle", roomId: "random", huddle: { startedAt: "2026-11-10T09:00:00.000Z", userIds: ["u2", "u3"] } });
+    await waitFor(() => expect(inSidebar("random")).toHaveTextContent(/^2/));
+    await workspaceSends({ type: "room.huddle", roomId: "general", huddle: { startedAt: "2026-11-10T09:05:00.000Z", userIds: ["u1"] } });
+    await waitFor(() => expect(inSidebar("general")).toHaveAttribute("title", "Just you in the huddle"));
+    await workspaceSends({ type: "room.huddle", roomId: "random", huddle: null });
+    await waitFor(() => expect(inSidebar("random")).toBeNull());
   });
 
   it("opens the preview from a huddle's link, and leaves the room's address in its place", async () => {

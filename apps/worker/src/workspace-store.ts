@@ -62,6 +62,7 @@ import {
   type YourAssistantChanges,
 } from "@ember/protocol/assistant";
 import type { AgentProfile, AgentRoom } from "@ember/protocol/agents";
+import type { AppId } from "@ember/protocol/apps";
 import type { LiveHuddle } from "@ember/protocol/huddles";
 import { statement, type Db, type Statement } from "./db";
 import type { StoredPicture } from "./files/pictures";
@@ -79,7 +80,7 @@ export interface Client {
 }
 
 /** The user statuses. Only active people can sign in. */
-const ACTIVE = 0;
+export const ACTIVE = 0;
 const DEACTIVATED = 1;
 const BANNED = 2;
 /** For a member whose Memberful membership has lapsed, until it's renewed. */
@@ -134,6 +135,8 @@ export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
   resendApiKey: string | null;
   /** The keys of the Turnstile widget an administrator gave Ember to check people with, or null while they haven't given one's. */
   turnstileKeys: SavedTurnstileKeys | null;
+  /** The Memberful site and keys an administrator gave Ember in Set up Memberful, or null while they haven't. */
+  memberfulKeys: SavedMemberfulKeys | null;
   /** How Ember AI asks AI Gateway, while an administrator has it on, or else null. */
   assistant: SavedAssistant | null;
   /** The most each of @ember's dials goes to for anyone's questions, as administrators set it, whether Ember AI is on or not. */
@@ -144,6 +147,8 @@ export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
   assistantPromptTemplate: string | null;
   /** The SFU app huddles run through, while an administrator has them on, or else null. */
   huddles: SavedHuddles | null;
+  /** Whether AI apps may connect to Ember as the people in it, which an administrator turns on. Off until one does. */
+  outsideAi: boolean;
   /** Where a deploy puts Ember, as the latest page opened there told it, or null until one has (`EmberAddresses.deployed`). */
   deployedAddress: string | null;
   /** The custom domains Ember has moved away from, newest first, which may still reach it (`EmberAddresses.others`). */
@@ -154,6 +159,17 @@ export interface JoinableAccount extends Omit<Account, "logo" | "huddles"> {
 export interface SavedTurnstileKeys {
   siteKey: string;
   sealedSecretKey: string;
+}
+
+/**
+ * A Memberful site's keys as the account keeps them: the site's origin, its custom app's OAuth
+ * identifier, and sealed together (`seal`), as `MemberfulSecrets` has them, the app's OAuth secret and
+ * API key and its webhook's secret key.
+ */
+export interface SavedMemberfulKeys {
+  site: string;
+  clientId: string;
+  sealedSecrets: string;
 }
 
 /** A Realtime SFU app's keys as the account keeps them: its ID, and its secret sealed (`seal`). */
@@ -168,7 +184,9 @@ export interface SavedHuddles {
  * its test question in, the models people can pick from, that one among them, in the order they were
  * added, what @ember may do on the web, which Search the web found the model that answers everyone could
  * when it was turned on, or nothing while it's off, and when that was asked for, if Search the web has
- * been turned on or off for that model.
+ * been turned on or off for that model. Then when Ember asked the models it asks through Cloudflare's
+ * REST API, the agents' too, whether their providers' own endpoints answer them, which it does once
+ * after each time Ember AI is set up, or null until it has.
  */
 export interface SavedAssistant {
   accountId: string;
@@ -178,6 +196,19 @@ export interface SavedAssistant {
   models: SavedModel[];
   webTools: WebTool[];
   webToolsAskedAt: string | null;
+  providerEndpointsTriedAt: string | null;
+}
+
+/**
+ * A model that Ember asks in another format from now on than the one it was saved in, `from`, as one of
+ * Workers AI's searches the web in theirs, or any model its provider's own endpoint answers, with the
+ * levels of thinking it takes there, which asking it at each found.
+ */
+export interface MovedModel {
+  id: string;
+  from: ModelFormat;
+  format: ModelFormat;
+  thinkingLevels: ThinkingLevel[];
 }
 
 /**
@@ -196,9 +227,9 @@ export interface NewAccount {
 /**
  * What `WorkspaceStore.changeAccount` changes: the name, the tagline, the settings workspace settings'
  * switches change, the custom domain and the ones it moved away from, the navigation icons whose slots
- * change, the From address, the sealed Resend API key, Turnstile's keys, the SFU app huddles run through,
- * and the domains Email domain lets in. Memberful's two settings change together, or not at all, as
- * `memberful`.
+ * change, the From address, the sealed Resend API key, Turnstile's keys, Memberful's, the SFU app
+ * huddles run through, and the domains Email domain lets in. Memberful's two settings change together,
+ * or not at all, as `memberful`.
  */
 export type AccountChange = Partial<
   Pick<
@@ -216,6 +247,7 @@ export type AccountChange = Partial<
     | "emailFrom"
     | "resendApiKey"
     | "turnstileKeys"
+    | "memberfulKeys"
     | "huddles"
   >
 > & {
@@ -578,12 +610,25 @@ export interface MessageWebhook {
  */
 export type AssistantAsk = MessageWebhook;
 
-/** A bot's webhook as a delivery to it finds it: the bot, by its name now, with its token, which the address it can answer at is made from. */
+/**
+ * A bot's webhook as a delivery to it finds it: the bot, by its name now, with its token, and the URL it
+ * delivers to, saved when, which the key in the address it can answer at is made from (`webhookTokenOf`).
+ */
 export interface BotWebhook {
   bot: User;
   /** Null for a bot from before bots had tokens, which no key works for. */
   token: string | null;
   url: string;
+  /** When the webhook was given its URL, which a new one changes. */
+  savedAt: string;
+}
+
+/** An active bot as a key to its API finds it: with its token, whether it's in the room, and its webhook's URL, saved when, if it has one. */
+export interface BotKey {
+  bot: User;
+  token: string | null;
+  member: boolean;
+  webhook: Pick<BotWebhook, "url" | "savedAt"> | null;
 }
 
 /** A revocation the Workspace has yet to deliver to its room. */
@@ -966,6 +1011,9 @@ const storedAgent = (row: AgentRow, rooms: AgentRoom[]): StoredAgent => ({
   rooms: row.every_open_room === 1 ? null : rooms,
 });
 
+/** The format an agent's model is asked in, as the agents table keeps it, `kept`, or Chat Completions for what can't be one. */
+const agentsFormatIn = (kept: string): ModelFormat => (isModelFormat(kept) ? kept : "chat");
+
 /**
  * How an agent answers, as the agents table keeps it: its instructions and what Ember adds around them,
  * its model's format and the levels of thinking it takes, its levels and what it may do on the web.
@@ -976,7 +1024,7 @@ type AnsweringColumns = Pick<AgentSettingsRow, "instructions" | "prompt_template
 const answeringOf = (row: AnsweringColumns): Pick<AgentSetup, "instructions" | "promptTemplate" | "format" | "thinkingLevels" | "levels" | "webTools"> => ({
   instructions: row.instructions,
   promptTemplate: row.prompt_template,
-  format: isModelFormat(row.format) ? row.format : "chat",
+  format: agentsFormatIn(row.format),
   thinkingLevels: row.thinking_levels === null ? null : (thinkingLevelsIn(JSON.parse(row.thinking_levels)) ?? null),
   levels: { thinking: levelIn(THINKING_LEVELS, row.thinking) ?? DEFAULT_LEVELS.thinking, length: levelIn(ANSWER_LENGTHS, row.answer_length) ?? DEFAULT_LEVELS.length },
   webTools: webToolsIn(row.web_tools),
@@ -1086,6 +1134,18 @@ function turnstileKeysIn(settings: Record<string, unknown> | null): SavedTurnsti
 }
 
 /**
+ * The Memberful site and keys an administrator gave Ember, which the account's settings keep as
+ * `memberful_keys`, `{ site, client_id, secrets }`, the secrets sealed together, or null while it has
+ * none.
+ */
+function memberfulKeysIn(settings: Record<string, unknown> | null): SavedMemberfulKeys | null {
+  const kept = settings?.memberful_keys;
+  if (typeof kept !== "object" || kept === null) return null;
+  const { site, client_id: clientId, secrets: sealedSecrets } = kept as Record<string, unknown>;
+  return typeof site === "string" && typeof clientId === "string" && typeof sealedSecrets === "string" ? { site, clientId, sealedSecrets } : null;
+}
+
+/**
  * The Realtime SFU app huddles run through, which the account's settings keep as `huddles`,
  * `{ app_id, app_secret }`, the secret sealed, or null while huddles are off.
  */
@@ -1097,17 +1157,28 @@ function huddlesIn(settings: Record<string, unknown> | null): SavedHuddles | nul
 }
 
 /**
- * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`,
- * `{ account_id, api_token, model, format, models, web_tools, web_tools_asked_at }`, the API token sealed,
- * or null while it's off. Its models are `[{ id, name, format, thinking_levels }]`, which Ember AI set up
+ * How Ember AI asks AI Gateway, which the account's settings keep as `assistant`, `{ account_id,
+ * api_token, model, format, models, web_tools, web_tools_asked_at, provider_endpoints_tried_at }`, the
+ * API token sealed, or null while it's off. Its models are `[{ id, name, format, thinking_levels }]`, which Ember AI set up
  * before people could pick has none of: it then has its own model alone, as it does when they leave it
  * out. A model added before Ember asked models at each level of thinking has no `thinking_levels`. Without
- * `web_tools`, as Ember AI was kept before Search the web, @ember does nothing on the web.
+ * `web_tools`, as Ember AI was kept before Search the web, @ember does nothing on the web, and without
+ * `provider_endpoints_tried_at`, as it was kept before Ember asked Claude and GPT through their providers'
+ * endpoints, their models are yet to be asked there.
  */
 function assistantIn(settings: Record<string, unknown> | null): SavedAssistant | null {
   const kept = settings?.assistant;
   if (typeof kept !== "object" || kept === null) return null;
-  const { account_id: accountId, api_token: sealedApiToken, model, format, models, web_tools: webTools, web_tools_asked_at: webToolsAskedAt } = kept as Record<string, unknown>;
+  const {
+    account_id: accountId,
+    api_token: sealedApiToken,
+    model,
+    format,
+    models,
+    web_tools: webTools,
+    web_tools_asked_at: webToolsAskedAt,
+    provider_endpoints_tried_at: providerEndpointsTriedAt,
+  } = kept as Record<string, unknown>;
   if (typeof accountId !== "string" || typeof sealedApiToken !== "string" || typeof model !== "string" || !isModelFormat(format)) return null;
   const listed = savedModelsIn(models);
   const own = listed.some(({ id }) => id === model) ? listed : [{ id: model, name: modelName(model), format }, ...listed];
@@ -1119,6 +1190,7 @@ function assistantIn(settings: Record<string, unknown> | null): SavedAssistant |
     models: own,
     webTools: WEB_TOOLS.filter((tool) => Array.isArray(webTools) && webTools.includes(tool)),
     webToolsAskedAt: typeof webToolsAskedAt === "string" ? webToolsAskedAt : null,
+    providerEndpointsTriedAt: typeof providerEndpointsTriedAt === "string" ? providerEndpointsTriedAt : null,
   };
 }
 
@@ -1175,6 +1247,7 @@ const assistantSetting = (assistant: SavedAssistant | null) =>
       models: assistant.models.map(({ id, name, format, thinkingLevels }) => ({ id, name, format, ...(thinkingLevels && { thinking_levels: thinkingLevels }) })),
       web_tools: assistant.webTools,
       web_tools_asked_at: assistant.webToolsAskedAt,
+      provider_endpoints_tried_at: assistant.providerEndpointsTriedAt,
     },
   );
 
@@ -1554,6 +1627,11 @@ const RETRY_DOUBLINGS = 10;
 /** Whether someone is in a room. */
 export const MEMBERSHIP = `SELECT 1 FROM memberships WHERE room_id = ? AND user_id = ?`;
 
+/** The direct conversation ?1, if its members are ?2 and ?3 alone, each of them active. */
+const BETWEEN = `SELECT 1 FROM rooms WHERE id = ?1 AND kind = 'direct' AND (SELECT COUNT(*) FROM memberships WHERE room_id = ?1) = 2
+  AND (SELECT COUNT(*) FROM memberships JOIN users ON users.id = memberships.user_id
+    WHERE memberships.room_id = ?1 AND memberships.user_id IN (?2, ?3) AND users.status = ${ACTIVE}) = 2`;
+
 /**
  * Whether someone is in a room, and whether a ban blocks the IP address they come from, in one go,
  * asked on every room socket's upgrade.
@@ -1680,12 +1758,25 @@ function messageDeliveries({ userId, message }: RoomEvent, rows: MessageBotRow[]
 }
 
 /**
- * Bot ?2's webhook, with its name and token now, as a delivery to it in room ?1 finds it when its turn
- * comes and again before what the bot says back is posted: nothing once the bot isn't an active one in
- * the room with a webhook, as `MESSAGE_BOTS` would find none for it then.
+ * Bot ?2's webhook, with its name and token now, and when its URL was saved, as a delivery to it in room
+ * ?1 finds it when its turn comes and again before what the bot says back is posted: nothing once the
+ * bot isn't an active one in the room with a webhook, as `MESSAGE_BOTS` would find none for it then.
  */
-export const BOT_WEBHOOK = `SELECT users.name, users.bot_token, webhooks.url FROM users JOIN webhooks ON webhooks.user_id = users.id
+export const BOT_WEBHOOK = `SELECT users.name, users.bot_token, webhooks.url, webhooks.updated_at FROM users JOIN webhooks ON webhooks.user_id = users.id
   WHERE users.id = ?2 AND users.role = ${BOT} AND users.status = ${ACTIVE}
+    AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = users.id)`;
+
+/**
+ * Who clicked a button in room ?1, ?2, by their name now, with the room's name, but a DM's, as a click's
+ * delivery names them: nothing once they aren't an active member of the room.
+ */
+const CLICKER = `SELECT users.name, (SELECT name FROM rooms WHERE id = ?1 AND kind <> 'direct') AS room_name FROM users
+  WHERE users.id = ?2 AND users.status = ${ACTIVE}
+    AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = users.id)`;
+
+/** Who clicked a button in room ?1, ?2, by their name now, and whether they run the workspace: nothing once they aren't an active member of the room. */
+const ROOM_MEMBER = `SELECT users.name, users.role = ${ADMINISTRATOR} AS administrator FROM users
+  WHERE users.id = ?2 AND users.status = ${ACTIVE}
     AND EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = users.id)`;
 
 /** Whether a room's event is a new message: anyone's, or a bot's reply to a webhook delivery. */
@@ -1713,7 +1804,7 @@ const RENAME_ACCOUNT = `UPDATE accounts SET name = ?1, updated_at = ?2 WHERE nam
  * Sets the account's setting `key` to the JSON value ?1, and records when. The other settings stay, and
  * settings that aren't a JSON object start afresh.
  */
-const setSetting = (key: string) => `UPDATE accounts SET settings = json_set(
+export const setSetting = (key: string) => `UPDATE accounts SET settings = json_set(
     CASE WHEN json_valid(settings) AND json_type(settings) = 'object' THEN settings ELSE '{}' END,
     '$.${key}', json(?1)
   ), updated_at = ?2`;
@@ -1730,6 +1821,7 @@ const SET_EMAIL_DOMAINS = setSetting("email_domains");
 const SET_EMAIL_FROM = setSetting("email_from");
 const SET_RESEND_API_KEY = setSetting("resend_api_key");
 const SET_TURNSTILE_KEYS = setSetting("turnstile_keys");
+const SET_MEMBERFUL_KEYS = setSetting("memberful_keys");
 const SET_HUDDLES = setSetting("huddles");
 const SET_ASSISTANT = setSetting("assistant");
 
@@ -1941,10 +2033,13 @@ const ACTIVE_BOT = `SELECT ${DIRECTORY_COLUMNS}, users.bot_token, webhooks.url A
   WHERE users.id = ? AND users.status = ${ACTIVE} AND users.role = ${BOT} AND users.id <> '${ASSISTANT_ID}' AND ${NOT_AN_AGENT}`;
 
 /**
- * An active bot's token, with whether it's in room ?1.
+ * Active bot ?2's token, with whether it's in room ?1, and its webhook's URL and when that was saved, if
+ * it has one.
  */
-const ACTIVE_BOT_KEY = `SELECT id, name, bot_token, EXISTS (SELECT 1 FROM memberships WHERE room_id = ?1 AND user_id = users.id) AS member
-  FROM users WHERE id = ?2 AND status = ${ACTIVE} AND role = ${BOT}`;
+const ACTIVE_BOT_KEY = `SELECT users.id, users.name, users.bot_token, webhooks.url AS webhook_url, webhooks.updated_at AS webhook_saved_at,
+    EXISTS (SELECT 1 FROM memberships WHERE memberships.room_id = ?1 AND memberships.user_id = users.id) AS member
+  FROM users LEFT JOIN webhooks ON webhooks.user_id = users.id
+  WHERE users.id = ?2 AND users.status = ${ACTIVE} AND users.role = ${BOT}`;
 
 /** The rooms a bot is in but its DMs, by name. */
 const BOT_ROOMS = `SELECT rooms.id, rooms.name FROM memberships JOIN rooms ON rooms.id = memberships.room_id
@@ -1995,6 +2090,9 @@ const AGENT_PROFILE = `SELECT agents.description, agents.model, agents.model_nam
 const INSERT_AGENT = `INSERT INTO agents (user_id, description, instructions, model, model_name, format, thinking, answer_length, web_tools,
     prompt_template, thinking_levels, every_open_room, created_by, updated_by, created_at, updated_at)
   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?14)`;
+
+/** Has the agents that ask a model in a format ask it in another, with the levels of thinking it takes there, without recording a change to them. */
+const MOVE_AGENTS_MODEL = `UPDATE agents SET format = ?, thinking_levels = ? WHERE model = ? AND format = ?`;
 
 /** Changes an agent's setup, and records who changed it, and when. */
 const CHANGE_AGENT = `UPDATE agents SET description = ?2, instructions = ?3, model = ?4, model_name = ?5, format = ?6, thinking = ?7, answer_length = ?8,
@@ -2319,6 +2417,203 @@ const INSERT_FORMER_GUESTS = `INSERT INTO users (id, name, status, guest, create
   SELECT json_extract(value, '$.id'), json_extract(value, '$.name'), ${DEACTIVATED}, 1, ?, ? FROM json_each(?) WHERE true
   ON CONFLICT DO NOTHING`;
 
+/** A tool read from a connected app, as the apps table keeps it: as its page shows it, with the JSON Schema of what it takes and a fingerprint of those. */
+export interface StoredAppTool {
+  name: string;
+  title: string | null;
+  description: string;
+  takes: Record<string, unknown>;
+  fingerprint: string;
+}
+
+/** What reading an app's server found, as the apps table keeps it. */
+export interface StoredAppRead {
+  serverName: string | null;
+  tools: StoredAppTool[];
+  toolsLeftOut: number;
+}
+
+/**
+ * A connected app as the apps table keeps it: its token sealed, or null without one, what was read
+ * from its server, who connected it, if they're still known, and, for one an administrator signed in
+ * to, who and when, with the sign-in sealed, or null once it has ended, the client Ember signed
+ * in as, when an administrator gave one: its ID, and what the service knows it by, sealed, and the
+ * scopes its server has asked for since that the sign-in doesn't allow.
+ */
+export interface StoredApp extends StoredAppRead {
+  id: AppId;
+  name: string;
+  url: string;
+  sealedToken: string | null;
+  toolsReadAt: string;
+  connectedBy: { id: UserId; name: string } | null;
+  sealedSignIn: string | null;
+  signedIn: { by: { id: UserId; name: string } | null; at: string } | null;
+  signInClient: SignInClient | null;
+  scopeWanted: string | null;
+}
+
+/** The client an administrator gave for Ember to sign in to an app as: its ID, and what the service knows it by, sealed for the app. */
+export interface SignInClient {
+  id: string;
+  sealed: string;
+}
+
+/** A sign-in to keep for an app: sealed for it, who signed in, and the client an administrator gave for it, if they gave one. */
+export interface NewAppSignIn {
+  sealed: string;
+  by: UserId;
+  client: SignInClient | null;
+}
+
+/**
+ * A sign-in under way, from when an administrator, `userId`, is sent to an app's authorization server
+ * until their browser comes back with `state`: for the connected app `appId`, or, with null, for one
+ * to connect by `name` at `url`, with what the sign-in needs to finish, sealed. One that's `own` is
+ * anyone's, to a connected app, for themselves.
+ */
+export interface PendingAppSignIn {
+  state: string;
+  userId: UserId;
+  appId: AppId | null;
+  name: string;
+  url: string;
+  sealedSignIn: string;
+  own: boolean;
+}
+
+/** A connected app Ember signs in to, with the sign-in someone has made to it themselves, if they have: when, sealed, or null once it has ended, and what its server has asked for beyond it. */
+export interface OwnAppSignIn {
+  appId: AppId;
+  appName: string;
+  url: string;
+  signedIn: { at: string; sealed: string | null; scopeWanted: string | null } | null;
+}
+
+/** An app to connect, by `connectedBy`. */
+export interface NewStoredApp extends StoredAppRead {
+  id: AppId;
+  name: string;
+  url: string;
+  sealedToken: string | null;
+  /** The sign-in it's connected with, if it's connected by one: sealed, with the client an administrator gave for it, if they gave one. */
+  signIn?: Omit<NewAppSignIn, "by">;
+  connectedBy: UserId;
+  now: string;
+}
+
+/** A change to a connected app by `changedBy`: what's left out stays as it is, and `read` is what its server answered when it was read again. */
+export interface AppChange {
+  name?: string;
+  url?: string;
+  sealedToken?: string | null;
+  read?: StoredAppRead;
+  /** The agents' picks that what was read changes (`ChangedPicks`). */
+  picks?: ChangedPicks[];
+  changedBy: UserId;
+  now: string;
+}
+
+/**
+ * A connected app's tool as it was picked for an agent: its app, its name there, and its fingerprint
+ * then. One set aside was found described another way when picks were saved, and stays set aside, the
+ * agent without it, however its server describes it later, until it's picked again. One always allowed
+ * is called without asking first, which one set aside never is.
+ */
+export interface StoredToolPick {
+  appId: AppId;
+  name: string;
+  fingerprint: string;
+  setAside?: true;
+  alwaysAllowed?: true;
+}
+
+/** The tools picked for one agent, with what it's called, @ember's name before it has answered, as it has no user till then, and the picks as they're `stored`. */
+export interface AgentToolPicks {
+  agent: { id: UserId; name: string };
+  picks: StoredToolPick[];
+  stored: string;
+}
+
+/** An agent's picks as reading an app's tools leaves them, `picks`, kept only while they're still `stored` as they were when that was worked out. */
+export interface ChangedPicks {
+  agentId: UserId;
+  stored: string;
+  picks: StoredToolPick[];
+}
+
+interface AppRow {
+  id: AppId;
+  name: string;
+  url: string;
+  token: string | null;
+  server_name: string | null;
+  tools: string;
+  tools_left_out: number;
+  tools_read_at: string;
+  connected_by_id: UserId | null;
+  connected_by_name: string | null;
+  sign_in: string | null;
+  signed_in_at: string | null;
+  signed_in_by_id: UserId | null;
+  signed_in_by_name: string | null;
+  sign_in_client_id: string | null;
+  sign_in_client: string | null;
+  scope_wanted: string | null;
+}
+
+const APPS = `SELECT apps.id, apps.name, apps.url, apps.token, apps.server_name, apps.tools, apps.tools_left_out, apps.tools_read_at,
+  users.id AS connected_by_id, users.name AS connected_by_name,
+  apps.sign_in, apps.signed_in_at, signers.id AS signed_in_by_id, signers.name AS signed_in_by_name, apps.sign_in_client_id, apps.sign_in_client, apps.scope_wanted
+  FROM apps LEFT JOIN users ON users.id = apps.created_by LEFT JOIN users AS signers ON signers.id = apps.signed_in_by`;
+
+const APP = `${APPS} WHERE apps.id = ?`;
+
+/** Each connected app Ember signs in to, with the sign-in the person bound first has made to it themselves, if they have. */
+const OWN_APP_SIGN_INS = `SELECT apps.id, apps.name, apps.url, own.signed_in_at, own.sign_in, own.scope_wanted
+  FROM apps LEFT JOIN own_app_sign_ins AS own ON own.app_id = apps.id AND own.user_id = ?
+  WHERE apps.signed_in_at IS NOT NULL`;
+
+interface OwnAppSignInRow {
+  id: AppId;
+  name: string;
+  url: string;
+  signed_in_at: string | null;
+  sign_in: string | null;
+  scope_wanted: string | null;
+}
+
+const ownAppSignIn = (row: OwnAppSignInRow): OwnAppSignIn => ({
+  appId: row.id,
+  appName: row.name,
+  url: row.url,
+  signedIn: row.signed_in_at === null ? null : { at: row.signed_in_at, sealed: row.sign_in, scopeWanted: row.scope_wanted },
+});
+
+/** A connected app as `APP` reads it. */
+const storedApp = (row: AppRow): StoredApp => ({
+  id: row.id,
+  name: row.name,
+  url: row.url,
+  sealedToken: row.token,
+  serverName: row.server_name,
+  tools: JSON.parse(row.tools) as StoredAppTool[],
+  toolsLeftOut: row.tools_left_out,
+  toolsReadAt: row.tools_read_at,
+  connectedBy: row.connected_by_id !== null && row.connected_by_name !== null ? { id: row.connected_by_id, name: row.connected_by_name } : null,
+  sealedSignIn: row.sign_in,
+  signedIn:
+    row.signed_in_at === null ? null : { by: row.signed_in_by_id !== null && row.signed_in_by_name !== null ? { id: row.signed_in_by_id, name: row.signed_in_by_name } : null, at: row.signed_in_at },
+  signInClient: row.sign_in_client_id !== null && row.sign_in_client !== null ? { id: row.sign_in_client_id, sealed: row.sign_in_client } : null,
+  scopeWanted: row.scope_wanted,
+});
+
+/** How many sign-ins to apps can be under way at once: beginning another forgets the one begun longest ago. */
+const MAX_PENDING_APP_SIGN_INS = 20;
+
+/** How many sign-ins people make to apps themselves can be under way at once, each person's latest: they're counted apart, so that they never crowd out an administrator's. */
+const MAX_PENDING_OWN_APP_SIGN_INS = 100;
+
 export class WorkspaceStore {
   constructor(private readonly db: Db) {}
 
@@ -2355,11 +2650,13 @@ export class WorkspaceStore {
       emailFrom: emailFromIn(settings),
       resendApiKey: resendApiKeyIn(settings),
       turnstileKeys: turnstileKeysIn(settings),
+      memberfulKeys: memberfulKeysIn(settings),
       assistant: assistantIn(settings),
       assistantMost: assistantMostIn(settings),
       assistantInstructions: assistantInstructionsIn(settings),
       assistantPromptTemplate: assistantPromptTemplateIn(settings),
       huddles: huddlesIn(settings),
+      outsideAi: isPresent(settings?.outside_ai),
       deployedAddress: deployedAddressIn(settings),
       otherAddresses: otherAddressesIn(settings),
     };
@@ -2367,8 +2664,8 @@ export class WorkspaceStore {
 
   /**
    * Changes the workspace's name, tagline, settings, custom domain and the ones it moved away from,
-   * navigation icons, From address, Resend API key, Turnstile's keys, huddles' SFU app and email domains,
-   * as `change` has them, in one batch. Memberful's settings are stored both at once, so that an account
+   * navigation icons, From address, Resend API key, Turnstile's keys, Memberful's, huddles' SFU app and
+   * email domains, as `change` has them, in one batch. Memberful's settings are stored both at once, so that an account
    * from before `memberful_join` reads as they're saved.
    */
   async changeAccount(
@@ -2388,6 +2685,7 @@ export class WorkspaceStore {
       emailFrom,
       resendApiKey,
       turnstileKeys,
+      memberfulKeys,
       huddles,
     }: AccountChange,
     now: string,
@@ -2410,6 +2708,9 @@ export class WorkspaceStore {
       ...(emailFrom === undefined ? [] : [statement(SET_EMAIL_FROM, JSON.stringify(emailFrom), now)]),
       ...(resendApiKey === undefined ? [] : [statement(SET_RESEND_API_KEY, JSON.stringify(resendApiKey), now)]),
       ...(turnstileKeys === undefined ? [] : [statement(SET_TURNSTILE_KEYS, JSON.stringify(turnstileKeys && { site_key: turnstileKeys.siteKey, secret_key: turnstileKeys.sealedSecretKey }), now)]),
+      ...(memberfulKeys === undefined
+        ? []
+        : [statement(SET_MEMBERFUL_KEYS, JSON.stringify(memberfulKeys && { site: memberfulKeys.site, client_id: memberfulKeys.clientId, secrets: memberfulKeys.sealedSecrets }), now)]),
       ...(huddles === undefined ? [] : [statement(SET_HUDDLES, JSON.stringify(huddles && { app_id: huddles.appId, app_secret: huddles.sealedAppSecret }), now)]),
     ]);
   }
@@ -2630,6 +2931,12 @@ export class WorkspaceStore {
   /** Whether anyone, whatever their status, has an account at `issuer` linked to them. */
   async anyoneLinked(issuer: string): Promise<boolean> {
     return (await this.db.all(`SELECT 1 FROM identities WHERE issuer = ? LIMIT 1`, issuer)).length > 0;
+  }
+
+  /** A Memberful site anyone here, whatever their status, has an account at linked to them, the first if there are several, or null while nobody has. */
+  async linkedSite(): Promise<string | null> {
+    const [linked] = await this.db.all<{ issuer: string }>(`SELECT issuer FROM identities LIMIT 1`);
+    return linked?.issuer ?? null;
   }
 
   /** Whether anyone has exactly this email address, whatever their status. */
@@ -2896,9 +3203,10 @@ export class WorkspaceStore {
   /**
    * Removes someone from the workspace, in one transaction: queues closing each of their sessions'
    * sockets with `code` in every room they're in, DMs included, due at `dueAt`, takes them out of every
-   * room but their DMs, ends their sessions, forgets their recent searches and push subscriptions, and
-   * marks them removed, recording when, with `-deactivated-<uuid>` before each "@" of their email
-   * address. Their messages, boosts, DMs, role and avatar stay. Answers whether it queued any.
+   * room but their DMs, ends their sessions, forgets their recent searches, their push subscriptions
+   * the sign-ins they made to apps and the AI apps connected as them, and marks them removed, recording when, with
+   * `-deactivated-<uuid>` before each "@" of their email address. Their messages, boosts, DMs, role and
+   * avatar stay. Answers whether it queued any.
    */
   async removePerson(userId: UserId, uuid: string, code: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [queued] = await this.db.batch([
@@ -2908,6 +3216,9 @@ export class WorkspaceStore {
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
       ...forgettingSearches(userId),
       statement(`DELETE FROM push_subscriptions WHERE user_id = ?`, userId),
+      statement(`DELETE FROM own_app_sign_ins WHERE user_id = ?`, userId),
+      statement(`DELETE FROM outside_spent_tokens WHERE connection_id IN (SELECT id FROM outside_connections WHERE user_id = ?)`, userId),
+      statement(`DELETE FROM outside_connections WHERE user_id = ?`, userId),
       statement(DEACTIVATE, `-deactivated-${uuid}@`, now, userId),
     ]);
     return queued!.length > 0;
@@ -2918,8 +3229,9 @@ export class WorkspaceStore {
    * every room they're in, due at `dueAt`, blocks each of `ipAddresses`, ends their sessions, marks them
    * banned, recording when, unless they were already, and queues deleting their messages in every room
    * they can have written in, due then too. It queues having every room tell the sockets from those
-   * addresses to reconnect, due then as well, so they come back able only to read. Their memberships,
-   * role and avatar stay. Answers whether it queued anything.
+   * addresses to reconnect, due then as well, so they come back able only to read, and forgets the
+   * sign-ins they made to apps and the AI apps connected as them. Their memberships, role and avatar
+   * stay. Answers whether it queued anything.
    */
   async banPerson(userId: UserId, ipAddresses: string[], code: CloseCode, reconnect: CloseCode, dueAt: number, now: string): Promise<boolean> {
     const [revocations, , reconnections, , , purges] = (await this.db.batch([
@@ -2930,6 +3242,9 @@ export class WorkspaceStore {
       statement(`DELETE FROM sessions WHERE user_id = ?`, userId),
       statement(`UPDATE users SET status = ${BANNED}, updated_at = ? WHERE id = ? AND status <> ${BANNED}`, now, userId),
       statement(QUEUE_PURGES, userId, dueAt),
+      statement(`DELETE FROM own_app_sign_ins WHERE user_id = ?`, userId),
+      statement(`DELETE FROM outside_spent_tokens WHERE connection_id IN (SELECT id FROM outside_connections WHERE user_id = ?)`, userId),
+      statement(`DELETE FROM outside_connections WHERE user_id = ?`, userId),
     ])) as unknown[][];
     return revocations!.length > 0 || reconnections!.length > 0 || purges!.length > 0;
   }
@@ -3431,6 +3746,11 @@ export class WorkspaceStore {
     return (await this.db.all(MEMBERSHIP, roomId, userId)).length > 0;
   }
 
+  /** Whether room `roomId` is a direct conversation between `userId` and `otherId` alone, each an active member of it. */
+  async isBetween(roomId: RoomId, userId: UserId, otherId: UserId): Promise<boolean> {
+    return (await this.db.all(BETWEEN, roomId, userId, otherId)).length > 0;
+  }
+
   /** Whether `userId` is in room `roomId`, and whether a ban blocks `ipAddress`, if there is one. */
   async roomAccess(roomId: RoomId, userId: UserId, ipAddress: string | null): Promise<{ member: boolean; banned: boolean }> {
     const [row] = await this.db.all<{ member: number; banned: number }>(ROOM_ACCESS, roomId, userId, ipAddress);
@@ -3496,16 +3816,42 @@ export class WorkspaceStore {
     return bots.map((row) => storedBot(row, (roomsOf.get(row.id) ?? []).map(({ id, name }) => ({ id, name }))));
   }
 
-  /** The active bot `botId`, with its token and whether it's in room `roomId`, or null unless it's one. */
-  async activeBotKey(botId: UserId, roomId: RoomId): Promise<{ bot: User; token: string | null; member: boolean } | null> {
-    const [row] = await this.db.all<User & { bot_token: string | null; member: number }>(ACTIVE_BOT_KEY, roomId, botId);
-    return row ? { bot: { id: row.id, name: row.name }, token: row.bot_token, member: row.member === 1 } : null;
+  /** The active bot `botId`, with its token, whether it's in room `roomId` and its webhook, or null unless it's one. */
+  async activeBotKey(botId: UserId, roomId: RoomId): Promise<BotKey | null> {
+    const [row] = await this.db.all<User & { bot_token: string | null; webhook_url: string | null; webhook_saved_at: string | null; member: number }>(
+      ACTIVE_BOT_KEY,
+      roomId,
+      botId,
+    );
+    if (!row) return null;
+    const webhook = row.webhook_url === null || row.webhook_saved_at === null ? null : { url: row.webhook_url, savedAt: row.webhook_saved_at };
+    return { bot: { id: row.id, name: row.name }, token: row.bot_token, member: row.member === 1, webhook };
   }
 
   /** Bot `botId`'s webhook as a delivery to it in room `roomId` finds it now, or null unless it's an active bot in the room with one. */
   async botWebhook(roomId: RoomId, botId: UserId): Promise<BotWebhook | null> {
-    const [row] = await this.db.all<{ name: string; bot_token: string | null; url: string }>(BOT_WEBHOOK, roomId, botId);
-    return row ? { bot: { id: botId, name: row.name }, token: row.bot_token, url: row.url } : null;
+    const [row] = await this.db.all<{ name: string; bot_token: string | null; url: string; updated_at: string }>(BOT_WEBHOOK, roomId, botId);
+    return row ? { bot: { id: botId, name: row.name }, token: row.bot_token, url: row.url, savedAt: row.updated_at } : null;
+  }
+
+  /**
+   * Bot `botId`'s webhook as a delivery to it in room `roomId` finds it now, with who clicked, `clickerId`,
+   * and the room's name, or null for a DM's: null unless the bot has one there and whoever clicked is an
+   * active member of the room.
+   */
+  async clickWebhook(roomId: RoomId, botId: UserId, clickerId: UserId): Promise<(BotWebhook & { clicker: User; roomName: string | null }) | null> {
+    const [[bot], [clicker]] = (await this.db.batch([statement(BOT_WEBHOOK, roomId, botId), statement(CLICKER, roomId, clickerId)])) as [
+      Array<{ name: string; bot_token: string | null; url: string; updated_at: string }>,
+      Array<{ name: string; room_name: string | null }>,
+    ];
+    if (!bot || !clicker) return null;
+    return { bot: { id: botId, name: bot.name }, token: bot.bot_token, url: bot.url, savedAt: bot.updated_at, clicker: { id: clickerId, name: clicker.name }, roomName: clicker.room_name };
+  }
+
+  /** The active member `userId` of room `roomId`, by their name now, and whether they're an administrator, or null unless they're one. */
+  async roomMember(roomId: RoomId, userId: UserId): Promise<{ member: User; administrator: boolean } | null> {
+    const [row] = await this.db.all<{ name: string; administrator: number }>(ROOM_MEMBER, roomId, userId);
+    return row ? { member: { id: userId, name: row.name }, administrator: row.administrator === 1 } : null;
   }
 
   /** The active bot `botId`, with its token, its rooms but DMs and where its webhook delivers, or null unless it's one. */
@@ -3573,6 +3919,12 @@ export class WorkspaceStore {
     return row ? { description: row.description, model: row.model, modelName: row.model_name, setUpBy: { id: row.created_by, name: row.created_by_name } } : null;
   }
 
+  /** The models the agents answer with, whether Ember AI is on or off, each with a format an agent asks it in, once each. */
+  async agentModels(): Promise<Pick<AssistantModel, "id" | "format">[]> {
+    const rows = await this.db.all<{ model: string; format: string }>(`SELECT DISTINCT model, format FROM agents`);
+    return rows.map((row) => ({ id: row.model, format: agentsFormatIn(row.format) }));
+  }
+
   /** Every agent, whether Ember AI is on or off, as the people directory lists it. */
   async agentEntries(): Promise<DirectoryEntry[]> {
     return (await this.db.all<DirectoryRow>(AGENTS_LISTED)).map(directoryEntry);
@@ -3622,15 +3974,265 @@ export class WorkspaceStore {
   }
 
   /**
-   * Deletes agent `agentId`, in one batch: forgets what made it an agent, takes it out of every room but
-   * its DMs, and deactivates it, recording when, as deleting a bot does. Its messages and avatar stay.
+   * Deletes agent `agentId`, in one batch: forgets what made it an agent and the tools picked for it,
+   * takes it out of every room but its DMs, and deactivates it, recording when, as deleting a bot does.
+   * Its messages and avatar stay.
    */
   async deleteAgent(agentId: UserId, now: string): Promise<void> {
     await this.db.batch([
       statement(`DELETE FROM agents WHERE user_id = ?`, agentId),
+      statement(`DELETE FROM agent_tools WHERE agent_id = ?`, agentId),
       statement(LEAVE_SHARED_ROOMS, agentId),
       statement(`UPDATE users SET status = ${DEACTIVATED}, updated_at = ? WHERE id = ? AND status = ${ACTIVE}`, now, agentId),
     ]);
+  }
+
+  /** The tools picked for every agent that has any, @ember among them, by the agents' names: at most one row an agent. */
+  async everyAgentsToolPicks(): Promise<AgentToolPicks[]> {
+    const rows = await this.db.all<{ agent_id: UserId; name: string | null; tools: string }>(
+      `SELECT agent_tools.agent_id, users.name, agent_tools.tools FROM agent_tools LEFT JOIN users ON users.id = agent_tools.agent_id
+       ORDER BY users.name COLLATE NOCASE, agent_tools.agent_id`,
+    );
+    return rows.map(({ agent_id, name, tools }) => ({ agent: { id: agent_id, name: name ?? ASSISTANT_NAME }, picks: JSON.parse(tools) as StoredToolPick[], stored: tools }));
+  }
+
+  /** Every connected app, by name, with its sealed token and the tools read from it. */
+  async apps(): Promise<StoredApp[]> {
+    const rows = await this.db.all<AppRow>(`${APPS} ORDER BY apps.name COLLATE NOCASE, apps.id`);
+    return rows.map(storedApp);
+  }
+
+  /** The tools picked for the agent `agentId`, @ember or an agent, as they were picked. */
+  async toolPicks(agentId: UserId): Promise<StoredToolPick[]> {
+    const [row] = await this.db.all<{ tools: string }>(`SELECT tools FROM agent_tools WHERE agent_id = ?`, agentId);
+    return row ? (JSON.parse(row.tools) as StoredToolPick[]) : [];
+  }
+
+  /** Has `picks` be every tool the agent `agentId` may use, picked by `pickedBy`. */
+  async pickTools(agentId: UserId, picks: StoredToolPick[], pickedBy: UserId, now: string): Promise<void> {
+    await this.db.run(
+      `INSERT INTO agent_tools (agent_id, tools, updated_by, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (agent_id) DO UPDATE SET tools = excluded.tools, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      agentId,
+      JSON.stringify(picks),
+      pickedBy,
+      now,
+    );
+  }
+
+  /** How many apps are connected. */
+  async appCount(): Promise<number> {
+    const [row] = await this.db.all<{ count: number }>(`SELECT COUNT(*) AS count FROM apps`);
+    return row?.count ?? 0;
+  }
+
+  /** The connected app `appId`, with its sealed token and the tools read from it, or null unless there's one. */
+  async app(appId: AppId): Promise<StoredApp | null> {
+    const [row] = await this.db.all<AppRow>(APP, appId);
+    return row ? storedApp(row) : null;
+  }
+
+  /** Connects `app`, unless as many apps as there can be, `most`, are connected already, answering whether it did. */
+  async connectApp(app: NewStoredApp, most: number): Promise<boolean> {
+    const { id, name, url, sealedToken, signIn, serverName, tools, toolsLeftOut, connectedBy, now } = app;
+    const signedIn = signIn ? [signIn.sealed, connectedBy, now, signIn.client?.id ?? null, signIn.client?.sealed ?? null] : [null, null, null, null, null];
+    const [connected] = (await this.db.batch([
+      statement(
+        `INSERT INTO apps (id, name, url, token, server_name, tools, tools_left_out, tools_read_at, created_by, updated_by, created_at, updated_at, sign_in, signed_in_by, signed_in_at, sign_in_client_id, sign_in_client)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM apps) < ? RETURNING id`,
+        ...[id, name, url, sealedToken, serverName, JSON.stringify(tools), toolsLeftOut, now, connectedBy, connectedBy, now, now, ...signedIn, most],
+      ),
+    ])) as [unknown[]];
+    return connected.length > 0;
+  }
+
+  /**
+   * Keeps a sign-in to the connected app `appId`, made by `signIn.by`, in place of any it had, and of its
+   * token, with the client it was made as, if an administrator gave one, what was `read` from its server
+   * with it and the agents' `picks` that changes, in one batch, while the app is still asked at `url`:
+   * answers whether it was. What its server asked for beyond the last sign-in is forgotten, as this one
+   * asked for it.
+   */
+  async signInToApp(appId: AppId, signIn: NewAppSignIn, { serverName, tools, toolsLeftOut }: StoredAppRead, picks: ChangedPicks[], url: string, now: string): Promise<boolean> {
+    const [signedIn] = (await this.db.batch([
+      statement(
+        `UPDATE apps SET token = NULL, sign_in = ?, signed_in_by = ?, signed_in_at = ?, sign_in_client_id = ?, sign_in_client = ?, scope_wanted = NULL,
+           server_name = ?, tools = ?, tools_left_out = ?, tools_read_at = ?, updated_by = ?, updated_at = ?
+         WHERE id = ? AND url = ? RETURNING id`,
+        ...[signIn.sealed, signIn.by, now, signIn.client?.id ?? null, signIn.client?.sealed ?? null, serverName, JSON.stringify(tools), toolsLeftOut, now, signIn.by, now, appId, url],
+      ),
+      ...picks.map(({ agentId, stored, picks: changed }) =>
+        statement(
+          `UPDATE agent_tools SET tools = ? WHERE agent_id = ? AND tools = ? AND EXISTS (SELECT 1 FROM apps WHERE id = ? AND url = ? AND sign_in = ?)`,
+          ...[JSON.stringify(changed), agentId, stored, appId, url, signIn.sealed],
+        ),
+      ),
+    ])) as [unknown[]];
+    return signedIn.length > 0;
+  }
+
+  /**
+   * Has the sign-in the connected app `appId` keeps be `sealed`, with the tokens its authorization
+   * server gave in place of the last, or null once it has ended, while it's still the one that was
+   * asked with, `was`: answers whether it was.
+   */
+  async keepAppSignIn(appId: AppId, sealed: string | null, was: string): Promise<boolean> {
+    const [kept] = (await this.db.batch([statement(`UPDATE apps SET sign_in = ? WHERE id = ? AND sign_in = ? RETURNING id`, sealed, appId, was)])) as [unknown[]];
+    return kept.length > 0;
+  }
+
+  /** Keeps `scope`, what the server of the connected app `appId` has asked for beyond Ember's sign-in to it, while that's still the one made at `signedInAt`. */
+  async keepAppScopeWanted(appId: AppId, scope: string, signedInAt: string): Promise<void> {
+    await this.db.batch([statement(`UPDATE apps SET scope_wanted = ? WHERE id = ? AND signed_in_at = ?`, scope, appId, signedInAt)]);
+  }
+
+  /**
+   * Keeps `pending`, a sign-in under way, until `expiresAt`, forgetting those that have expired by
+   * `now`, and the ones of its kind begun longest ago once there are more than Ember keeps. One that's
+   * someone's `own` takes the place of any other of theirs that was under way.
+   */
+  async beginAppSignIn({ state, userId, appId, name, url, sealedSignIn, own }: PendingAppSignIn, expiresAt: string, now: string): Promise<void> {
+    const kind = own ? 1 : 0;
+    await this.db.batch([
+      own ? statement(`DELETE FROM app_sign_ins WHERE expires_at <= ? OR (own = 1 AND user_id = ?)`, now, userId) : statement(`DELETE FROM app_sign_ins WHERE expires_at <= ?`, now),
+      statement(
+        `INSERT INTO app_sign_ins (state, user_id, app_id, name, url, sign_in, expires_at, own) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ...[state, userId, appId, name, url, sealedSignIn, expiresAt, kind],
+      ),
+      statement(
+        `DELETE FROM app_sign_ins WHERE own = ?1 AND state NOT IN (SELECT state FROM app_sign_ins WHERE own = ?1 ORDER BY expires_at DESC, state LIMIT ?2)`,
+        ...[kind, own ? MAX_PENDING_OWN_APP_SIGN_INS : MAX_PENDING_APP_SIGN_INS],
+      ),
+    ]);
+  }
+
+  /** Takes the sign-in under way that `userId` began and whose browser came back with `state`, if it hasn't expired by `now`: it's finished once. */
+  async takeAppSignIn(state: string, userId: UserId, now: string): Promise<PendingAppSignIn | null> {
+    const [taken] = (await this.db.batch([
+      statement(`DELETE FROM app_sign_ins WHERE state = ? AND user_id = ? AND expires_at > ? RETURNING app_id, name, url, sign_in, own`, state, userId, now),
+    ])) as [Array<{ app_id: AppId | null; name: string; url: string; sign_in: string; own: number }>];
+    const row = taken[0];
+    return row ? { state, userId, appId: row.app_id, name: row.name, url: row.url, sealedSignIn: row.sign_in, own: row.own === 1 } : null;
+  }
+
+  /** Whether the sign-in under way that `userId` began, and whose browser came back with `state`, is their own, or null when there's none that hasn't expired by `now`. */
+  async isOwnAppSignIn(state: string, userId: UserId, now: string): Promise<boolean | null> {
+    const [row] = await this.db.all<{ own: number }>(`SELECT own FROM app_sign_ins WHERE state = ? AND user_id = ? AND expires_at > ?`, state, userId, now);
+    return row ? row.own === 1 : null;
+  }
+
+  /** The connected apps Ember signs in to, by name, each with the sign-in `userId` has made to it themselves, if they have. */
+  async ownAppSignIns(userId: UserId): Promise<OwnAppSignIn[]> {
+    return (await this.db.all<OwnAppSignInRow>(`${OWN_APP_SIGN_INS} ORDER BY lower(apps.name), apps.id`, userId)).map(ownAppSignIn);
+  }
+
+  /** The connected app `appId`, if Ember signs in to it, with the sign-in `userId` has made to it themselves, if they have, or null for any other app. */
+  async ownAppSignIn(appId: AppId, userId: UserId): Promise<OwnAppSignIn | null> {
+    const [row] = await this.db.all<OwnAppSignInRow>(`${OWN_APP_SIGN_INS} AND apps.id = ?`, userId, appId);
+    return row ? ownAppSignIn(row) : null;
+  }
+
+  /**
+   * Keeps `sealed`, the sign-in `userId` made to the connected app `appId` themselves, in place of any
+   * they had, and forgets what its server asked for beyond that one, while the app is still asked at
+   * `url` and is one Ember signs in to: answers whether it was.
+   */
+  async signInToAppAsSelf(appId: AppId, userId: UserId, sealed: string, url: string, now: string): Promise<boolean> {
+    const [signedIn] = (await this.db.batch([
+      statement(
+        `INSERT INTO own_app_sign_ins (app_id, user_id, sign_in, signed_in_at)
+         SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM apps WHERE id = ?1 AND url = ?5 AND signed_in_at IS NOT NULL)
+         ON CONFLICT (app_id, user_id) DO UPDATE SET sign_in = excluded.sign_in, signed_in_at = excluded.signed_in_at, scope_wanted = NULL RETURNING app_id`,
+        ...[appId, userId, sealed, now, url],
+      ),
+    ])) as [unknown[]];
+    return signedIn.length > 0;
+  }
+
+  /**
+   * Has the sign-in `userId` keeps to the connected app `appId` be `sealed`, with the tokens its
+   * authorization server gave in place of the last, or null once it has ended, while it's still the
+   * one that was asked with, `was`: answers whether it was.
+   */
+  async keepOwnAppSignIn(appId: AppId, userId: UserId, sealed: string | null, was: string): Promise<boolean> {
+    const [kept] = (await this.db.batch([
+      statement(`UPDATE own_app_sign_ins SET sign_in = ? WHERE app_id = ? AND user_id = ? AND sign_in = ? RETURNING app_id`, sealed, appId, userId, was),
+    ])) as [unknown[]];
+    return kept.length > 0;
+  }
+
+  /** Keeps `scope`, what the server of the connected app `appId` has asked for beyond the sign-in `userId` made to it themselves, while that's still the one made at `signedInAt`. */
+  async keepOwnAppScopeWanted(appId: AppId, userId: UserId, scope: string, signedInAt: string): Promise<void> {
+    await this.db.batch([statement(`UPDATE own_app_sign_ins SET scope_wanted = ? WHERE app_id = ? AND user_id = ? AND signed_in_at = ?`, scope, appId, userId, signedInAt)]);
+  }
+
+  /** Forgets the sign-in `userId` made to the connected app `appId` themselves, answering it, sealed, or null once it had ended, or undefined when they had none. */
+  async forgetOwnAppSignIn(appId: AppId, userId: UserId): Promise<string | null | undefined> {
+    const [forgotten] = (await this.db.batch([statement(`DELETE FROM own_app_sign_ins WHERE app_id = ? AND user_id = ? RETURNING sign_in`, appId, userId)])) as [Array<{ sign_in: string | null }>];
+    return forgotten[0] ? forgotten[0].sign_in : undefined;
+  }
+
+  /**
+   * Changes the connected app `appId` as `change` has it, by `changedBy`: its name, its server's address
+   * and its sealed token, null for none, each kept when left out, and what was read from its server
+   * again, if it was, with the agents' picks that changes, in the same batch.
+   */
+  async changeApp(appId: AppId, { name, url, sealedToken, read, picks = [], changedBy, now }: AppChange): Promise<void> {
+    const statements = [
+      statement(`UPDATE apps SET name = COALESCE(?, name), url = COALESCE(?, url), updated_by = ?, updated_at = ? WHERE id = ?`, name ?? null, url ?? null, changedBy, now, appId),
+    ];
+    if (sealedToken !== undefined) statements.push(statement(`UPDATE apps SET token = ? WHERE id = ?`, sealedToken, appId));
+    if (read) {
+      const { serverName, tools, toolsLeftOut } = read;
+      statements.push(statement(`UPDATE apps SET server_name = ?, tools = ?, tools_left_out = ?, tools_read_at = ? WHERE id = ?`, serverName, JSON.stringify(tools), toolsLeftOut, now, appId));
+      for (const { agentId, stored, picks: changed } of picks) {
+        statements.push(statement(`UPDATE agent_tools SET tools = ? WHERE agent_id = ? AND tools = ?`, JSON.stringify(changed), agentId, stored));
+      }
+    }
+    await this.db.batch(statements);
+  }
+
+  /**
+   * Keeps what was read from the server of the app `appId` again, with the agents' `picks` that
+   * changes, in one batch, while it's still asked at `url` with `sealedToken`, signed in to when it
+   * was, if it was, changing nothing else of it.
+   */
+  async keepAppRead(
+    appId: AppId,
+    { serverName, tools, toolsLeftOut }: StoredAppRead,
+    picks: ChangedPicks[],
+    { url, sealedToken, signedInAt }: { url: string; sealedToken: string | null; signedInAt: string | null },
+    now: string,
+  ): Promise<void> {
+    const asked = [appId, url, sealedToken, signedInAt];
+    await this.db.batch([
+      statement(
+        `UPDATE apps SET server_name = ?, tools = ?, tools_left_out = ?, tools_read_at = ? WHERE id = ? AND url = ? AND token IS ? AND signed_in_at IS ?`,
+        ...[serverName, JSON.stringify(tools), toolsLeftOut, now, ...asked],
+      ),
+      ...picks.map(({ agentId, stored, picks: changed }) =>
+        statement(
+          `UPDATE agent_tools SET tools = ? WHERE agent_id = ? AND tools = ? AND EXISTS (SELECT 1 FROM apps WHERE id = ? AND url = ? AND token IS ? AND signed_in_at IS ?)`,
+          ...[JSON.stringify(changed), agentId, stored, ...asked],
+        ),
+      ),
+    ]);
+  }
+
+  /**
+   * Disconnects the app `appId`, forgetting any sign-in to it that's under way, and the ones people
+   * made to it themselves: answers where its server was, the sign-in Ember kept to it, sealed, if it
+   * kept one, and those people kept, each sealed, with whose it was, or null when there's no such app.
+   */
+  async disconnectApp(appId: AppId): Promise<(Pick<StoredApp, "url" | "sealedSignIn"> & { own: Array<{ userId: UserId; sealed: string }> }) | null> {
+    const [disconnected, , own] = (await this.db.batch([
+      statement(`DELETE FROM apps WHERE id = ? RETURNING url, sign_in`, appId),
+      statement(`DELETE FROM app_sign_ins WHERE app_id = ?`, appId),
+      statement(`DELETE FROM own_app_sign_ins WHERE app_id = ? RETURNING user_id, sign_in`, appId),
+    ])) as [Array<Pick<AppRow, "url" | "sign_in">>, unknown[], Array<{ user_id: UserId; sign_in: string | null }>];
+    if (!disconnected[0]) return null;
+    const kept = own.flatMap(({ user_id: userId, sign_in: sealed }) => (sealed === null ? [] : [{ userId, sealed }]));
+    return { url: disconnected[0].url, sealedSignIn: disconnected[0].sign_in, own: kept };
   }
 
   /**
@@ -3757,6 +4359,17 @@ export class WorkspaceStore {
       statement(REMEMBER_ASSISTANT_LIMITS, JSON.stringify(most)),
       statement(REMEMBER_ASSISTANT_INSTRUCTIONS, JSON.stringify(instructions)),
       statement(REMEMBER_ASSISTANT_PROMPT_TEMPLATE, JSON.stringify(promptTemplate)),
+    ]);
+  }
+
+  /**
+   * Saves Ember AI as `assistant` has it, without recording when, and has each agent whose model and
+   * format a move of `moves` names asked as the move says, in one batch.
+   */
+  async moveModels(assistant: SavedAssistant, moves: readonly MovedModel[]): Promise<void> {
+    await this.db.batch([
+      statement(REMEMBER_ASSISTANT, assistantSetting(assistant)),
+      ...moves.map(({ id, from, format, thinkingLevels }) => statement(MOVE_AGENTS_MODEL, format, JSON.stringify(thinkingLevels), id, from)),
     ]);
   }
 

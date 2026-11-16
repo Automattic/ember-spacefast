@@ -30,3 +30,15 @@ export function inTheHuddle(others: string[]): string {
   const everyone = others.length <= MAX_NAMED ? toSentence([...others.map(firstName), "you"]) : peopleListed(others, others.length);
   return `${everyone} are in the huddle`;
 }
+
+/**
+ * Who's in a room's huddle, for anyone in the room: `others` are the names known of the `count` people in
+ * it besides them, and `you` says they're in it too, when it's as `inTheHuddle` says it. For someone who
+ * isn't, "Sam and Priya are in the huddle". Whoever has no name known is counted, "Sam and 2 others are
+ * in the huddle", and with them in it, everyone is: "3 people are in the huddle".
+ */
+export function inItsHuddle(others: string[], count: number, you: boolean): string {
+  if (you && others.length === count) return inTheHuddle(others);
+  const [named, people] = you ? [[], count + 1] : [others, count];
+  return `${peopleListed(named, people)} ${people === 1 ? "is" : "are"} in the huddle`;
+}

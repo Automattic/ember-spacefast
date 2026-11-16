@@ -26,7 +26,7 @@ const NOTE = "text-[0.8em] text-muted-foreground max-md:text-[12px]";
 export const AGENTS_PATH = workspaceSectionPath("assistant-settings");
 
 /** Whether `error` says Ember AI is off. */
-const isOff = (error: unknown) => error instanceof ApiError && error.status === 409 && error.message === ASSISTANT_OFF;
+export const isOff = (error: unknown) => error instanceof ApiError && error.status === 409 && error.message === ASSISTANT_OFF;
 
 /**
  * Sends anyone but an administrator away from the agents' pages to workspace settings, as the bot pages

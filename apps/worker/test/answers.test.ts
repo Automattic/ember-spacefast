@@ -1,5 +1,5 @@
 import { ASSISTANT_ID, ASSISTANT_NAME, MAX_MESSAGE_LENGTH, type BotAnswer, type BotSettings, type DirectRoom, type Message, type NewWorkspace, type RoomId, type User } from "@ember/protocol";
-import { DEFAULT_LEVELS, MAX_CONVERSATION_LENGTH, maxTokensAt, TOP_LEVELS, UNTHINKING_TOKENS, type AnswerLevelChanges } from "@ember/protocol/assistant";
+import { DEFAULT_LEVELS, MAX_CONVERSATION_LENGTH, maxTokensAt, THINKING_LEVELS, TOP_LEVELS, UNTHINKING_TOKENS, type AnswerLevelChanges } from "@ember/protocol/assistant";
 import { CARDS_PROMPT } from "@ember/protocol/prompts";
 import { MENTION_CONTENT_TYPE, mentionSgid, OPENGRAPH_EMBED_CONTENT_TYPE, prepareBody } from "@ember/richtext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,35 +16,42 @@ import {
 } from "../src/assistant/answers";
 import { markdownHtml } from "../src/bots/markdown";
 import { keptCards } from "../src/cards";
-import { api, apiWith, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type Session } from "./support";
+import { answerWithKeptModel, api, apiWith, connect, cookieOf, freshDeploy, post, roomSql, settle, shown, startDirect, workspaceSql, type Client, type KeptModel, type Session } from "./support";
 
 // What @ember answers when someone asks it something: in the room or thread they asked in, having read
 // the conversation there, as rich text, with the pictures it shows in a card and a preview of its first
 // link, at addresses people wrote there, or a note saying why it can't, and only while Ember AI is on.
 
 const EMBER: User = { id: ASSISTANT_ID, name: ASSISTANT_NAME };
-/** A Workers AI model, which takes Chat Completions, whose turns AI Gateway is sent as they are. */
+/**
+ * One of Workers AI's models, which a copy set up before Ember stopped offering them may answer with,
+ * which takes Chat Completions, through Cloudflare's REST API, whose turns AI Gateway is sent as they are.
+ */
 const MODEL = "@cf/zai-org/glm-4.7-flash";
-/** Anthropic's model, which takes Messages, and OpenAI's, which takes Responses. */
+const GLM: KeptModel = { id: MODEL, name: "GLM-4.7 Flash", format: "chat", thinkingLevels: [...THINKING_LEVELS] };
+/** Anthropic's model, which takes Messages, and OpenAI's, which takes Responses, through their providers' endpoints. */
 const [MESSAGES_MODEL, RESPONSES_MODEL] = ["anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol"];
-const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api-token-with-workers-ai-read_0123456", model: MODEL };
+const SETUP = { accountId: "0123456789abcdef0123456789abcdef", apiToken: "an-api-token-with-ai-gateway-run_0123456" };
 
-/** Sets Ember up with Ada as its administrator, signed in, and Ember AI on with `model`, answering her session and the general room. */
+/**
+ * Sets Ember up with Ada as its administrator, signed in, and Ember AI on with `model`, answering her
+ * session and the general room: GLM, kept from before Ember stopped offering it, unless it's one Ember offers.
+ */
 async function setUp(model = MODEL): Promise<{ ada: Session; general: RoomId }> {
   const response = await api("/api/first_run", { method: "POST", body: JSON.stringify({ name: "Ada Lovelace", emailAddress: "ada@example.com", password: "analytical engine" }) });
   expect(response.status).toBe(201);
   const ada = { user: shown(((await response.json()) as NewWorkspace).user), cookie: cookieOf(response) };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => answerAt(new Request(input, init).url, "Hello, team!"));
-  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: ada.cookie }, body: JSON.stringify({ ...SETUP, model }) });
-  expect(saved.status, await saved.clone().text()).toBe(200);
+  await setUpAgain(ada, model === MODEL ? MESSAGES_MODEL : model);
   vi.restoreAllMocks();
+  if (model === MODEL) await answerWithKeptModel(GLM);
   const [{ id: general }] = (await workspaceSql("SELECT id FROM rooms WHERE name = 'general'")) as [{ id: RoomId }];
   return { ada, general };
 }
 
-/** Sets Ember AI up again as `administrator`, with its model, which asks the model its test question at each level of thinking. */
-async function setUpAgain(administrator: Session): Promise<void> {
-  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify(SETUP) });
+/** Sets Ember AI up as `administrator` with `model`, one Ember offers, which asks the model its test question at each level of thinking. */
+async function setUpAgain(administrator: Session, model: string): Promise<void> {
+  const saved = await api("/api/account/assistant", { method: "PUT", headers: { Cookie: administrator.cookie }, body: JSON.stringify({ ...SETUP, model }) });
   expect(saved.status, await saved.clone().text()).toBe(200);
 }
 
@@ -117,16 +124,16 @@ const PAGE =
   '<meta property="og:url" content="https://example.com/"><meta property="og:title" content="Example"><meta property="og:description" content="An example page."><meta property="og:image" content="https://example.com/card.png">';
 
 /**
- * Stands in for AI Gateway, whose model answers each question with what `answer` makes of it, and for
- * the Internet, where every name is at one public address and http://www.example.com/ has a preview.
- * Keeps the questions, in the order they came.
+ * Stands in for AI Gateway, through Cloudflare's REST API or its endpoints for each provider, whose model
+ * answers each question with what `answer` makes of it, and for the Internet, where every name is at one
+ * public address and http://www.example.com/ has a preview. Keeps the questions, in the order they came.
  */
 function internet(answer: (asked: Asked) => Response | Promise<Response>): Asked[] {
   const questions: Asked[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (url.hostname === "api.cloudflare.com") {
+    if (url.hostname === "api.cloudflare.com" || url.hostname === "gateway.ai.cloudflare.com") {
       const asked = { url: request.url, metadata: request.headers.get("cf-aig-metadata"), body: (await request.json()) as Asked["body"] };
       questions.push(asked);
       return answer(asked);
@@ -445,16 +452,16 @@ describe("@ember", () => {
   });
 
   it("asks a model at the level of thinking it took its test question at nearest the asker's, below it first, and one that took none at no level, in the room the asker's level gives", async () => {
-    const { ada, general } = await setUp();
+    const { ada, general } = await setUp(RESPONSES_MODEL);
     vi.spyOn(console, "log").mockImplementation(() => {});
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     let refused = ["none", "medium"];
-    const questions = internet(({ body }) =>
-      body.reasoning_effort !== undefined && refused.includes(body.reasoning_effort)
-        ? Response.json({ error: { message: `Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model.` } }, { status: 400 })
-        : chatAnswer("Here's the plan."),
+    const questions = internet(({ url, body }) =>
+      body.reasoning !== undefined && refused.includes(body.reasoning.effort)
+        ? Response.json({ error: { message: `Unsupported value: 'reasoning.effort' does not support '${body.reasoning.effort}' with this model.` } }, { status: 400 })
+        : answerAt(url, "Here's the plan."),
     );
-    await setUpAgain(ada);
+    await setUpAgain(ada, RESPONSES_MODEL);
     const client = await connect(general, ada);
 
     for (const thinking of ["off", "medium", "high"] as const) {
@@ -462,15 +469,15 @@ describe("@ember", () => {
       await post(client, `<p>${mention(EMBER)} plan the launch?</p>`);
       await nextAnswer(client);
     }
-    // As xAI refuses each for Grok 4.20 Reasoning.
+    // As a model can refuse each.
     refused = ["none", "low", "medium", "high"];
-    await setUpAgain(ada);
+    await setUpAgain(ada, RESPONSES_MODEL);
     await post(client, `<p>${mention(EMBER)} and the party?</p>`);
     expect(await nextAnswer(client)).toMatchObject({ plainText: "Here's the plan." });
 
     // Past the test question and its levels each time Ember AI was set up.
     const answers = [...questions.slice(5, 8), ...questions.slice(13)];
-    expect(answers.map(({ body }) => [body.reasoning_effort, body.max_completion_tokens])).toEqual([
+    expect(answers.map(({ body }) => [body.reasoning?.effort, body.max_output_tokens])).toEqual([
       ["low", UNTHINKING_TOKENS + 2_000],
       ["low", 16_000 + 2_000],
       ["high", 32_000 + 2_000],
@@ -698,10 +705,10 @@ describe("What @ember asks its model", () => {
 
   it("follows who it is with the instructions administrators added, and labels the question with who answers", () => {
     const told = questionFor({ ...ASSISTANT, instructions: "Answer in British English." }, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW);
-    expect(told.instructions).toContain(`You are Ember, the AI assistant in the team chat "Fernwood". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.\n\nAnswer in British English.\n\nYou're asked in the room "general".`);
-    expect(told.instructions).toContain("as a helpful teammate would: plainly, and in at most about 400 words.");
+    expect(told.instructions).toContain(`You are Ember, the AI assistant in the team chat "Fernwood". People ask you things by mentioning @ember in a room or a thread, or by writing to you directly.\n\nAnswer in British English.\n\nWrite in Markdown.`);
+    expect(told.instructions).toMatch(/\n\nYou're asked in the room "general"\. .* as a helpful teammate would: plainly, and in at most about 400 words\.$/);
     expect(told.agentId).toBe(ASSISTANT_ID);
-    expect(questionFor(ASSISTANT, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).instructions).toContain(`directly.\n\nYou're asked in the room "general".`);
+    expect(questionFor(ASSISTANT, [message("1", "Hi")], ADA, IN_GENERAL, DEFAULT_LEVELS, NOW).instructions).toContain("directly.\n\nWrite in Markdown.");
   });
 
   it("reads the newest messages that fit, the question always, and a thread's first message first", () => {
@@ -720,11 +727,11 @@ describe("What an agent asks its model", () => {
       [
         `You are Scout, an AI agent in the team chat "Fernwood". People ask you things by mentioning @Scout in a room or a thread, or by writing to you directly.`,
         SCOUT.instructions,
-        `You're asked in a thread in the room "general". Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, in at most about 150 words.`,
         "Write in Markdown. Links, bold, italics, lists, quotes, code blocks and tables show as they do in the chat, and a picture you show with ![what it shows](its address) appears under your answer when a person in the conversation wrote its address. Don't begin with your name.",
         CARDS_PROMPT,
         "You can't search the web or open links. When someone asks you to, say so, and that an administrator can turn on Search the web under AI assistant in community settings.",
         "Today is Saturday, October 31, 2026, in UTC.",
+        `You're asked in a thread in the room "general". Its messages follow, oldest first, each after its writer's name. Answer the last one, which Ada Lovelace wrote, in at most about 150 words.`,
       ].join("\n\n"),
     );
     expect([askerId, agentId]).toEqual(["ada", "scout"]);
@@ -823,6 +830,94 @@ describe("@ember's answer", () => {
       { source: "attachment", color: "good", parts: [{ kind: "title", text: "Checks" }, { kind: "text", html: "<p>All <strong>green</strong></p>" }] },
     ]);
     expect(answerOf(slackBlock(STATUS))).toEqual({ markup: "", cards: [STATUS_CARD], firstLink: null });
+  });
+
+  it("shows the guide's example as the card the guide says it is, under its words, wherever they're written", () => {
+    const [, example = ""] = /\n```slack\n([\s\S]*?)\n```$/.exec(CARDS_PROMPT) ?? [];
+    const answer = answerOf(`The launch slipped.\n\n\`\`\`slack\n${example}\n\`\`\`\n\nAsk me again tomorrow.`);
+    expect(answer.markup).toBe(markdownHtml("The launch slipped.\n\nAsk me again tomorrow."));
+    const field = (title: string, value: string) => ({ html: `<p><strong>${title}</strong><br>${value}</p>`, short: true });
+    expect(answer.cards).toEqual([
+      {
+        source: "attachment",
+        color: "warning",
+        parts: [
+          { kind: "header", text: "Spring launch: at risk" },
+          { kind: "section", html: "<p>Three of five tasks are done. The <strong>pricing page</strong> waits on legal review.</p>" },
+          { kind: "section", fields: [field("Owner", "Web team"), field("Launch", "March 14"), field("Done", "3 of 5"), field("Waiting on", "Legal review")] },
+          { kind: "context", items: [{ html: "<p>From the launch tracker, updated this morning</p>" }] },
+        ],
+      },
+    ]);
+  });
+
+  it("shows each kind of block the guide teaches, as the guide writes them, and its markup as it says", () => {
+    const plain = (text: string) => ({ type: "plain_text", text });
+    const mrkdwn = (text: string) => ({ type: "mrkdwn", text });
+    const cell = (text: string) => ({ type: "raw_text", text });
+    const button = (text: string, url: string, style?: string) => ({ type: "button", text: plain(text), url, ...(style && { style }) });
+    const offsite = {
+      blocks: [
+        { type: "header", text: plain("Team offsite") },
+        { type: "section", text: mrkdwn("*Two* fit _all_ of us, ~three~ `28`, on <https://maps.example/offsite|the map> :white_check_mark:\n• Lake\n• Trails"), accessory: button("Map", "https://maps.example/offsite") },
+        { type: "section", fields: [mrkdwn("*Owner*\nDana"), mrkdwn("*Pick by*\nFriday")], accessory: { type: "image", image_url: "https://example.com/lodge.png", alt_text: "The lodge" } },
+        { type: "context", elements: [mrkdwn("From <@U123|Priya>'s list, for <@U456>")] },
+        { type: "divider" },
+        { type: "image", image_url: "https://example.com/lake.png", alt_text: "The lake" },
+        { type: "table", rows: [[cell("Venue"), cell("Per day")], [cell("Juniper Lodge, by the lake"), cell("$3,200")]], column_settings: [{ align: "left", is_wrapped: true }, { align: "right" }] },
+        { type: "carousel", elements: [{ type: "card", title: plain("Juniper Lodge"), subtitle: plain("Up to 40"), body: mrkdwn("A lake and *trails*"), actions: [button("Visit", "https://juniperlodge.example")] }] },
+        { type: "actions", elements: [button("Book it", "https://juniperlodge.example/book", "primary"), button("Call it off", "https://juniperlodge.example/cancel", "danger"), button("Ask", "https://juniperlodge.example/ask")] },
+        { type: "markdown", text: "- Lake\n- **Trails**" },
+      ],
+    };
+    const answer = answerOf(slackBlock(offsite), [], ["The lodge https://example.com/lodge.png and the lake https://example.com/lake.png"]);
+    const html = (text: string) => `<p>${text}</p>`;
+    expect(answer.cards).toEqual([
+      {
+        source: "blocks",
+        parts: [
+          { kind: "header", text: "Team offsite" },
+          {
+            kind: "section",
+            html: html(`<strong>Two</strong> fit <em>all</em> of us, <s>three</s> <code>28</code>, on <a href="https://maps.example/offsite">the map</a> ✅<br>• Lake<br>• Trails`),
+            button: { text: "Map", href: "https://maps.example/offsite" },
+          },
+          {
+            kind: "section",
+            fields: [{ html: html("<strong>Owner</strong><br>Dana"), short: true }, { html: html("<strong>Pick by</strong><br>Friday"), short: true }],
+            thumb: { url: "https://example.com/lodge.png", alt: "The lodge" },
+          },
+          // A Slack mention shows as its text, which notifies nobody.
+          { kind: "context", items: [{ html: html("From @Priya's list, for @U456") }] },
+          { kind: "divider" },
+          { kind: "image", image: { url: "https://example.com/lake.png", alt: "The lake" } },
+          {
+            kind: "table",
+            rows: [
+              [html("Venue"), html("Per day")],
+              [html("Juniper Lodge, by the lake"), html("$3,200")],
+            ],
+            columns: [
+              { align: "left", wrap: true },
+              { align: "right", wrap: false },
+            ],
+          },
+          {
+            kind: "tiles",
+            tiles: [{ title: "Juniper Lodge", subtitle: "Up to 40", body: html("A lake and <strong>trails</strong>"), buttons: [{ text: "Visit", href: "https://juniperlodge.example" }] }],
+          },
+          {
+            kind: "buttons",
+            buttons: [
+              { text: "Book it", href: "https://juniperlodge.example/book", style: "primary" },
+              { text: "Call it off", href: "https://juniperlodge.example/cancel", style: "danger" },
+              { text: "Ask", href: "https://juniperlodge.example/ask" },
+            ],
+          },
+          { kind: "text", html: "<ul><li>Lake</li><li><strong>Trails</strong></li></ul>" },
+        ],
+      },
+    ]);
   });
 
   it("keeps the links and pictures its text names by reference when it takes a block out, wherever their definitions are", () => {

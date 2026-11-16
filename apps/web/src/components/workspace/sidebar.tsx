@@ -1,13 +1,14 @@
-import { useId, useMemo, useState, type MouseEvent } from "react";
-import type { Favorites, Me, RoomId, SidebarRoom, User, UserId } from "@ember/protocol";
-import { ChatPlusIn, StarSolid } from "@/components/icons/iconoir";
+import { useContext, useId, useMemo, useState, type MouseEvent } from "react";
+import type { Favorites, LiveHuddle, Me, RoomId, SidebarRoom, User, UserId } from "@ember/protocol";
+import { ChatPlusIn, Headset, StarSolid } from "@/components/icons/iconoir";
 import { RoomIcon } from "@/components/icons/room-icon";
 import { useAccount } from "@/hooks/use-account";
-import { useNameOf } from "@/hooks/use-directory";
+import { PeopleContext, useNameOf } from "@/hooks/use-directory";
 import { useMounted } from "@/hooks/use-mounted";
 import { leave, NEW_DIRECT_PATH, roomPath } from "@/hooks/use-route";
 import { useStarOrder } from "@/hooks/use-star-order";
 import { membersShown } from "@/lib/directs";
+import { inItsHuddle } from "@/lib/huddle-people";
 import { apart, inDirectOrder, inSidebarOrder, markedUnread, suggestedPeople, type DirectSidebarRoom } from "@/lib/room-list";
 import { cn } from "@/lib/utils";
 import { AgentBadge, useIsWithAgent } from "./agent-badge";
@@ -20,6 +21,9 @@ const ROW =
 
 /** How many avatars a group DM's row shows. */
 const MAX_FACES = 4;
+
+/** How many of the people in a huddle its room's row shows the faces of. */
+const MAX_HUDDLE_FACES = 2;
 
 interface Props {
   /** The workspace's name, which heads the list. */
@@ -36,6 +40,8 @@ interface Props {
   favorites: Favorites;
   /** The rooms the workspace's shared order ranks, which come next, in its order. */
   sharedOrder: RoomId[];
+  /** The huddles going on in their rooms, by room, whose rows say who's in them. */
+  huddles: Record<RoomId, LiveHuddle>;
   currentRoomId: string | null;
   /** Whether Activity is on, which shows only the rows marked unread. */
   unreadOnly: boolean;
@@ -57,8 +63,9 @@ interface Props {
  * with no grip, as the project's owner chose: held, the row can be dragged among the other starred rows,
  * or moved with Alt and an arrow (`useStarOrder`). The DMs come latest active first, and a DM's row shows
  * who else is in it. People suggested for DMs follow. A room or DM marked unread is bold with a dot at
- * the end of its row. With Activity on, only those rows show, and with none it says everything's read;
- * with it off and nothing to list, it says it found nothing.
+ * the end of its row, and a room with a huddle going on ends its row with who's in it. With Activity on,
+ * only the unread rows show, and with none it says everything's read; with it off and nothing to list,
+ * it says it found nothing.
  */
 export function Sidebar({
   workspaceName,
@@ -68,6 +75,7 @@ export function Sidebar({
   suggestions,
   favorites,
   sharedOrder,
+  huddles,
   currentRoomId,
   unreadOnly,
   onSelect,
@@ -92,6 +100,7 @@ export function Sidebar({
   const empty = loaded && listed.length === 0 && directsListed.length === 0 && suggested.length === 0;
   const helpId = useId();
   const unreadId = useId();
+  const huddleId = useId();
   const mounted = useMounted();
   // Who's suggested whose DM is starting, which another click doesn't start again.
   const [starting, setStarting] = useState<UserId | null>(null);
@@ -135,6 +144,9 @@ export function Sidebar({
           {listed.map((room) => {
             const unread = markedUnread(room, currentRoomId);
             const star = starred.has(room.id);
+            const huddle = huddles[room.id];
+            // The words for who's in the room's huddle, which come with its mark.
+            const inHuddleId = `${huddleId}-${room.id}`;
             return (
               <a
                 key={room.id}
@@ -142,9 +154,9 @@ export function Sidebar({
                 href={roomPath(room.id)}
                 draggable={false}
                 aria-current={room.id === currentRoomId ? "page" : undefined}
-                // Every row says how the stars are reordered, and a marked one says it's unread, which the eye
-                // sees by its weight and dot.
-                aria-describedby={unread ? `${unreadId} ${helpId}` : helpId}
+                // Every row says how the stars are reordered, a marked one says it's unread, which the eye sees
+                // by its weight and dot, and one with a huddle says who's in it, which the eye sees by its mark.
+                aria-describedby={[huddle && inHuddleId, unread && unreadId, helpId].filter(Boolean).join(" ")}
                 aria-keyshortcuts={star ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                 onClick={(event) => select(event, room.id)}
                 className={cn(
@@ -157,10 +169,11 @@ export function Sidebar({
               >
                 <RoomIcon icon={room.icon} size={19} className="w-[18px] shrink-0 text-center text-[22px] leading-none text-muted-foreground" />
                 <span className="truncate">{room.name}</span>
-                {/* The dot and star sit together at the row's end, pushed there by one auto margin. The star's
-                    muted at 65%. */}
-                {unread && <span aria-hidden="true" className="ml-auto size-[7px] shrink-0 rounded-full bg-foreground" />}
-                {star && <StarSolid aria-label="Favorite" className={cn("size-3.5 shrink-0 text-muted-foreground/65", !unread && "ml-auto")} />}
+                {/* The huddle's mark, the dot and the star sit together at the row's end, pushed there by one auto
+                    margin. The star's muted at 65%. */}
+                {huddle && <HuddleMark huddle={huddle} meId={meId} wordsId={inHuddleId} className="ml-auto" />}
+                {unread && <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full bg-foreground", !huddle && "ml-auto")} />}
+                {star && <StarSolid aria-label="Favorite" className={cn("size-3.5 shrink-0 text-muted-foreground/65", !huddle && !unread && "ml-auto")} />}
               </a>
             );
           })}
@@ -202,6 +215,44 @@ export function Sidebar({
         <p className="px-[9px] text-[13px] text-muted-foreground">{unreadOnly ? "You’re all caught up. No unread conversations." : "No conversations found."}</p>
       )}
     </div>
+  );
+}
+
+interface HuddleMarkProps {
+  huddle: LiveHuddle;
+  /** Who the sidebar is for, whom the words call you. */
+  meId: UserId;
+  /** The id of the words that say who's in the huddle, for the row to be described by. */
+  wordsId: string;
+  className?: string;
+}
+
+/**
+ * What a room's row ends with while a huddle is going on in it, as Slack's does: the faces of the first
+ * two people in it, the headphones and how many are in it, in green. Hovering it says who they are, in
+ * the words that follow it, hidden, for the row to say to screen readers, which the mark is hidden from.
+ */
+function HuddleMark({ huddle, meId, wordsId, className }: HuddleMarkProps) {
+  const people = useContext(PeopleContext);
+  const faces = huddle.userIds.flatMap((userId) => people.get(userId) ?? []).slice(0, MAX_HUDDLE_FACES);
+  const others = huddle.userIds.filter((userId) => userId !== meId);
+  const who = inItsHuddle(others.flatMap((userId) => people.get(userId)?.name ?? []), others.length, others.length < huddle.userIds.length);
+  return (
+    <>
+      <span aria-hidden="true" title={who} className={cn("flex shrink-0 items-center gap-1 text-xs font-medium text-positive", className)}>
+        {/* Each ringed in the sidebar's color, which parts it from the face it overlaps. */}
+        <span className="flex -space-x-1">
+          {faces.map((person) => (
+            <UserAvatar key={person.id} user={person} className="size-4 ring-1 ring-surface" />
+          ))}
+        </span>
+        <Headset className="size-3.5" />
+        <span className="tabular-nums">{huddle.userIds.length}</span>
+      </span>
+      <span id={wordsId} hidden>
+        {who}
+      </span>
+    </>
   );
 }
 
