@@ -2,6 +2,7 @@ import { CloseCode, type User } from "@ember/protocol";
 import { HuddleCloseCode, type HuddlePerson, type HuddleServerFrame, type OfferedHuddleTrack } from "@ember/protocol/huddles";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ANSWER_TIMEOUT_MS, joinHuddle, LISTEN_AGAIN_MS, PUBLISH_AGAIN_MS } from "./huddle";
+import { MUSIC_AFTER_MS } from "./huddle-sounds";
 import { hearHuddleEnd, joinedHuddle, leaveHuddle, muteHuddle, watchHuddle } from "./huddle-store";
 
 /** Stands in for the browser's WebSocket; tests play the room and the network. */
@@ -168,8 +169,18 @@ const connection = () => FakeConnection.all.at(-1)!;
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 /** Once what a frame started has run as far as it goes without the room or the browser. */
 const settled = () => wait(0);
-const voices = () => [...document.querySelectorAll<HTMLAudioElement>("[data-huddle-voices] audio")];
+const voices = () => [...document.querySelectorAll<HTMLAudioElement>("[data-huddle-voices] audio[data-user-id]")];
 const voiceOf = (user: User) => voices().find((audio) => audio.dataset.userId === user.id);
+/** The huddle's music, while it plays. */
+const music = () => document.querySelector<HTMLAudioElement>("[data-huddle-voices] audio[data-huddle-sound=music]");
+/** What an `<audio>` is of: the id of the person whose voice it is, or the name of one of the huddle's own sounds. */
+const whatIs = (audio: HTMLMediaElement) => audio.dataset.userId ?? audio.dataset.huddleSound;
+/** What each call of an `<audio>`'s method was made on, in order. */
+const madeOn = (method: { mock: { contexts: unknown[] } }) => (method.mock.contexts as HTMLMediaElement[]).map(whatIs);
+/** What the tab has had the browser play, each as often as it was started. */
+const played = () => madeOn(vi.mocked(HTMLMediaElement.prototype.play));
+/** And what it has had it stop. */
+const stopped = () => madeOn(vi.mocked(HTMLMediaElement.prototype.pause));
 /** The track `audio` plays, as the stream it was given holds it. */
 const playedBy = (audio: HTMLAudioElement | undefined) => (audio?.srcObject as unknown as FakeStream | null | undefined)?.tracks[0];
 
@@ -224,12 +235,18 @@ beforeEach(() => {
   vi.stubGlobal("RTCPeerConnection", FakeConnection);
   vi.stubGlobal("MediaStream", FakeStream);
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  // The huddle's own sounds, which the page fetches once and keeps a copy of.
+  vi.stubGlobal("fetch", async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }));
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sound");
   vi.useFakeTimers();
   vi.spyOn(Math, "random").mockReturnValue(0.5); // no jitter: back-off delays come out exact
 });
 
-afterEach(() => {
+afterEach(async () => {
   leaveHuddle();
+  // The sound of leaving plays a moment after, while the browser is still stood in for.
+  await settled();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -429,7 +446,8 @@ describe("Hearing the others in a huddle", () => {
     expect(voices()).toHaveLength(1);
     expect(playedBy(voiceOf(grace))).toBe(receiving.transceivers[0]!.receiver.track);
     expect(voiceOf(grace)!.autoplay).toBe(true);
-    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+    // After the sound of the tab's person joining.
+    expect(played()).toEqual(["joined", grace.id]);
     // Kept in the page, where nobody sees them.
     expect(document.querySelector<HTMLElement>("[data-huddle-voices]")!.hidden).toBe(true);
   });
@@ -670,8 +688,9 @@ describe("Hearing the others in a huddle", () => {
       const room = await joined([person(grace)], { speakerId: "headphones" });
       room.receive(offer(["0", grace]));
       await settled();
-      expect(setSinkId).toHaveBeenCalledExactlyOnceWith("headphones");
-      expect(setSinkId.mock.contexts[0]).toBe(voiceOf(grace));
+      // The sound of the tab's person joining plays there, and then her voice.
+      expect(setSinkId.mock.calls).toEqual([["headphones"], ["headphones"]]);
+      expect(madeOn(setSinkId)).toEqual(["joined", grace.id]);
     } finally {
       delete (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId;
     }
@@ -744,15 +763,17 @@ describe("Hearing the others in a huddle", () => {
     const room = await joined([person(grace), person(linus)]);
     room.receive(offer(["0", grace]));
     await settled();
-    expect(play).toHaveBeenCalledTimes(1);
+    // Refused too, the sound of joining isn't kept for a touch: its moment has passed by then.
+    expect(played()).toEqual(["joined", grace.id]);
+    play.mockClear();
 
     // A finger landing isn't yet a touch to the browser, which would refuse again.
     document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    expect(play).toHaveBeenCalledTimes(1);
+    expect(play).not.toHaveBeenCalled();
     // A key the browser doesn't count leaves the next touch to try.
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await settled();
-    expect(play).toHaveBeenCalledTimes(2);
+    expect(played()).toEqual([grace.id]);
 
     // A click plays it, even one that what was clicked keeps to itself.
     refusing = false;
@@ -760,19 +781,118 @@ describe("Hearing the others in a huddle", () => {
     button.addEventListener("click", (event) => event.stopPropagation());
     button.click();
     button.remove();
-    expect(play).toHaveBeenCalledTimes(3);
-    expect(play.mock.contexts[2]).toBe(voiceOf(grace));
+    expect(played()).toEqual([grace.id, grace.id]);
 
     // Whoever plays is left playing, and whoever the browser refuses next waits for the next touch.
     refusing = true;
     await offeredRound(["1", linus]);
-    expect(play).toHaveBeenCalledTimes(4);
+    expect(played()).toEqual([grace.id, grace.id, linus.id]);
     refusing = false;
     document.body.click();
-    expect(play).toHaveBeenCalledTimes(5);
-    expect(play.mock.contexts[4]).toBe(voiceOf(linus));
+    expect(played()).toEqual([grace.id, grace.id, linus.id, linus.id]);
     document.body.click();
-    expect(play).toHaveBeenCalledTimes(5);
+    expect(played()).toHaveLength(4);
+  });
+});
+
+describe("A huddle's own sounds", () => {
+  it("play as the room lets the tab in and as someone else joins, and as someone leaves and the tab does", async () => {
+    const room = await joined([person(grace)]);
+    expect(played()).toEqual(["joined"]);
+
+    room.receive({ type: "huddle.joined", person: person(linus) });
+    await settled();
+    expect(played()).toEqual(["joined", "joined"]);
+    // Someone who mutes, or moves to another of their tabs, hasn't joined,
+    room.receive({ type: "huddle.changed", person: person(linus, { muted: true }) });
+    await settled();
+    expect(played()).toHaveLength(2);
+
+    room.receive({ type: "huddle.left", userId: linus.id });
+    await settled();
+    expect(played().slice(2)).toEqual(["left"]);
+    // and someone the tab didn't know was in the huddle hasn't left it.
+    room.receive({ type: "huddle.left", userId: linus.id });
+    await settled();
+    expect(played()).toHaveLength(3);
+
+    leaveHuddle();
+    await settled();
+    expect(played().slice(3)).toEqual(["left"]);
+  });
+
+  it("play nothing as the room lets the tab back in, to a huddle others have joined and left meanwhile", async () => {
+    const room = await joined([person(grace)]);
+    room.drop();
+    await wait(500);
+    socket().open();
+    await welcomed([person(linus)]);
+    expect(played()).toEqual(["joined"]);
+  });
+
+  it("play the leaving sound as the room ends the huddle for the tab's person, unless it never let them in", async () => {
+    const room = await joined([person(grace)]);
+    room.drop(HuddleCloseCode.Off);
+    await settled();
+    expect(played()).toEqual(["joined", "left"]);
+
+    joinHuddle({ roomId: "general", muted: false, microphone: null, speakerId: "" });
+    socket().open();
+    socket().drop(HuddleCloseCode.Full);
+    await settled();
+    expect(played()).toHaveLength(2);
+  });
+
+  it("play music to whoever is alone in the huddle, from five seconds after they find themselves alone until someone joins them", async () => {
+    const room = await joined();
+    await wait(MUSIC_AFTER_MS - 1);
+    expect(music()).toBeNull();
+    await wait(1);
+    expect(music()!.loop).toBe(true);
+    expect(played()).toEqual(["joined", "music"]);
+    // Muting is nothing to it.
+    muteHuddle(true);
+    await wait(MUSIC_AFTER_MS);
+    expect(played()).toHaveLength(2);
+
+    room.receive({ type: "huddle.joined", person: person(grace) });
+    await settled();
+    expect(music()).toBeNull();
+    expect(stopped()).toEqual(["music"]);
+
+    // Alone again, they hear it go on after another five seconds,
+    room.receive({ type: "huddle.left", userId: grace.id });
+    await wait(MUSIC_AFTER_MS - 1);
+    expect(music()).toBeNull();
+    await wait(1);
+    expect(music()).not.toBeNull();
+    expect(played().slice(2)).toEqual(["joined", "left", "music"]);
+
+    // but not while the tab has lost the room, which may have let someone in since.
+    room.drop();
+    expect(music()).toBeNull();
+    await wait(500);
+    socket().open();
+    await welcomed();
+    await wait(MUSIC_AFTER_MS - 1);
+    expect(music()).toBeNull();
+    await wait(1);
+    expect(music()).not.toBeNull();
+
+    leaveHuddle();
+    expect(music()).toBeNull();
+    await wait(MUSIC_AFTER_MS);
+    expect(played().slice(5)).toEqual(["music", "left"]);
+  });
+
+  it("play no music to someone who joins others, or who leaves within five seconds of finding themselves alone", async () => {
+    const room = await joined([person(grace)]);
+    await wait(MUSIC_AFTER_MS * 2);
+    room.receive({ type: "huddle.left", userId: grace.id });
+    await wait(MUSIC_AFTER_MS - 1);
+    leaveHuddle();
+    await wait(MUSIC_AFTER_MS);
+    expect(played()).toEqual(["joined", "left", "left"]);
   });
 });
 

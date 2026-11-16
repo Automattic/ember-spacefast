@@ -22,6 +22,7 @@ import {
   isReservedName,
   isInvolvement,
   isMessageTooLong,
+  isNewer,
   isPasswordTooLong,
   isPasswordTooShort,
   isRoomIcon,
@@ -235,6 +236,34 @@ describe("Catch up after a reconnect", () => {
     expect(read({ since: "0" })).toBe(0);
     for (const since of ["", "-1", "1.5", "1e3", "0x10", " 42", "9".repeat(16)]) expect(read({ since }), since).toBeUndefined();
     expect(read({})).toBeUndefined();
+  });
+});
+
+describe("Clicks on a card's buttons", () => {
+  it("takes a click by its id, its message and its button, in its block if it has one, with its value if it has one", () => {
+    const click = { type: "card.click", clickId: "c1", messageId: "m1", actionId: "approve" };
+    expect(parse(click)).toEqual(click);
+    expect(parse({ ...click, blockId: "deploy-42", value: '{"build":42}', extra: 1 })).toEqual({ ...click, blockId: "deploy-42", value: '{"build":42}' });
+    expect(parse({ ...click, value: "" })).toEqual({ ...click, value: "" });
+    const longest = { actionId: "x".repeat(255), blockId: "x".repeat(255), value: "x".repeat(2000) };
+    expect(parse({ ...click, ...longest })).toEqual({ ...click, ...longest });
+    const wrongs = [
+      { clickId: "" },
+      { clickId: 1 },
+      { messageId: undefined },
+      { actionId: "" },
+      { actionId: "x".repeat(256) },
+      { actionId: 7 },
+      { blockId: "" },
+      { blockId: null },
+      { blockId: "x".repeat(256) },
+      { value: null },
+      { value: 42 },
+      { value: "x".repeat(2001) },
+    ];
+    for (const wrong of wrongs) {
+      expect(parse({ ...click, ...wrong }), JSON.stringify(wrong).slice(0, 40)).toBeNull();
+    }
   });
 });
 
@@ -1221,5 +1250,23 @@ describe("Set up the workspace", () => {
     expect(isPasswordTooLong("🔐".repeat(36))).toBe(false);
     expect(isPasswordTooLong("x".repeat(73))).toBe(true);
     expect(isPasswordTooLong("🔐".repeat(37))).toBe(true);
+  });
+});
+
+describe("Check for updates", () => {
+  it("puts a beta after the release before it and before its own, as copies take it", () => {
+    for (const [later, earlier] of [
+      ["0.5.0-beta.1", "0.4.2"],
+      ["0.5.0-beta.2", "0.5.0-beta.1"],
+      ["0.5.0-beta.10", "0.5.0-beta.9"],
+      ["0.5.0", "0.5.0-beta.10"],
+      ["0.5.1", "0.5.0"],
+      ["0.6.0-beta.1", "0.5.9"],
+      ["0.10.0", "0.9.0"],
+    ]) {
+      expect(isNewer(later!, earlier!), `${later} after ${earlier}`).toBe(true);
+      expect(isNewer(earlier!, later!), `${earlier} after ${later}`).toBe(false);
+      expect(isNewer(later!, later!), `${later} after itself`).toBe(false);
+    }
   });
 });

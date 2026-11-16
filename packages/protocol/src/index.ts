@@ -3,10 +3,12 @@
 // worker and the web app both import it directly as TypeScript.
 
 import type { AgentProfile } from "./agents.ts";
+import type { YourApp } from "./apps.ts";
 import type { AssistantSettings, YourAssistant } from "./assistant.ts";
-import type { Card } from "./cards.ts";
+import { isActionId, isActionValue, type Card } from "./cards.ts";
 import type { StoredFile } from "./files.ts";
 import type { HuddlesSettings, LiveHuddle } from "./huddles.ts";
+import type { OutsideConnection } from "./outside.ts";
 import { MAX_ID_LENGTH } from "./pages.ts";
 import { MAX_PUSH_ENDPOINT_LENGTH } from "./push.ts";
 import { ROOM_ICON_NAMES } from "./room-icons.ts";
@@ -27,12 +29,17 @@ export {
   MAX_LOGO_SIZE,
 } from "./avatars.ts";
 export {
+  isActionId,
+  isActionValue,
+  MAX_ACTION_ID_LENGTH,
+  MAX_ACTION_VALUE_LENGTH,
   MAX_CARDS,
   parseCards,
   parseParts,
   showsAnything,
   type AddressUse,
   type Card,
+  type CardAction,
   type CardAddress,
   type CardButton,
   type CardColumn,
@@ -51,7 +58,6 @@ export type {
   AnswerLength,
   AnswerLevelChanges,
   AnswerLevels,
-  AssistantCatalog,
   AssistantChanged,
   AssistantChanges,
   AssistantForgotten,
@@ -63,6 +69,8 @@ export type {
   ModelFormat,
   ModelPrice,
   NewAssistantModel,
+  OfferedModel,
+  OfferedModels,
   ThinkingLevel,
   WebSearchChange,
   WebSearchChanged,
@@ -97,6 +105,7 @@ export {
   type Upload,
 } from "./files.ts";
 export {
+  APP_SIGNED_IN_PATH,
   BOTS_PATH,
   CUSTOM_STYLES_PATH,
   EMAIL_SIGN_UP_PATH,
@@ -108,6 +117,7 @@ export {
   KIND_SEGMENTS,
   MAX_ID_LENGTH,
   NEW_AGENT_PATH,
+  NEW_APP_PATH,
   NEW_BOT_PATH,
   NEW_DIRECT_PATH,
   PASSWORD_RESET_PATH,
@@ -437,9 +447,9 @@ export interface Account {
    */
   openSignUp: boolean;
   /**
-   * Whether the members of the deployment's Memberful site join, and sign in, with their Memberful
-   * account, which an administrator turns on in Membership as Memberful. Off until one does. Members who
-   * joined with it keep signing in with it once it's off, while the deployment has its keys.
+   * Whether the members of Ember's Memberful site join, and sign in, with their Memberful account, which
+   * an administrator turns on in Membership as Memberful. Off until one does. Members who joined with it
+   * keep signing in with it once it's off, while Ember has the site's keys.
    */
   memberfulJoin: boolean;
   /**
@@ -488,16 +498,29 @@ export interface WorkspaceSettings {
   canAdminister: boolean;
   /**
    * The address of the Memberful site whose members can sign in, such as https://example.memberful.com,
-   * once the deployment has the keys of its custom app (`MEMBERFUL_URL` and the rest), or null while it
+   * once Ember has the keys of its custom app, as `memberfulKeys` says where from, or null while it
    * hasn't, when Memberful can't be turned on.
    */
   memberfulSite: string | null;
   /**
-   * Whether the deployment also has what Memberful's webhooks take, their signing secret and the custom
-   * app's API key (`MEMBERFUL_WEBHOOK_SECRET` and `MEMBERFUL_API_KEY`), so that Ember hears when a
-   * membership lapses or is renewed, and checks what it hears with Memberful.
+   * Whether Ember also has what Memberful's webhooks take, their signing secret and the custom app's API
+   * key, so that it hears when a membership lapses or is renewed, and checks what it hears with Memberful:
+   * always with the keys an administrator gave, and with the deployment's while it has
+   * `MEMBERFUL_WEBHOOK_SECRET` and `MEMBERFUL_API_KEY`.
    */
   memberfulWebhooks: boolean;
+  /**
+   * Where Memberful's keys come from, as Membership's Memberful card says: the deployment's secrets
+   * (`MEMBERFUL_URL` and the rest), which take the place of any others, the ones an administrator gave
+   * Ember in Set up Memberful, or null while it has neither.
+   */
+  memberfulKeys: "secret" | "saved" | null;
+  /**
+   * The Memberful site Set up Memberful keeps, for administrators, since people here sign in with their
+   * accounts at it, which are linked to them by that site and their member id there, or null while nobody
+   * does, or for anyone else, or while the deployment's secrets give Memberful's keys.
+   */
+  memberfulSiteKept: string | null;
   /**
    * Where the keys of the Cloudflare Turnstile widget come from that checks whoever signs up, or asks
    * Ember to email them, is a person, as Membership's Turnstile card says: the deployment's secrets
@@ -518,6 +541,8 @@ export interface WorkspaceSettings {
   assistant: AssistantSettings | null;
   /** Huddles as the Huddles tab's card shows them, for administrators while they're on, and null otherwise. */
   huddles: HuddlesSettings | null;
+  /** Whether AI apps, such as Claude, may connect to Ember, as the AI assistant tab's Outside AI card shows administrators, and false for anyone else. */
+  outsideAi: boolean;
   /**
    * The ID of the Cloudflare account Ember is deployed to, which Set up Ember AI fills in, for
    * administrators once the deploy has given it to the Worker, and null otherwise.
@@ -716,8 +741,8 @@ export interface AccountChanges {
 
 /**
  * The workspace's settings that workspace settings' switches change, the ways to join among them: the
- * join link's switch, Open, Memberful, its Members only, which the Worker turns on only with the
- * deployment's Memberful keys, and Email domain, which it turns on only with a domain to let in, while
+ * join link's switch, Open, Memberful, its Members only, which the Worker turns on only once Ember has
+ * Memberful's keys, and Email domain, which it turns on only with a domain to let in, while
  * Ember can send email. Members only turns Memberful on with it, turning Memberful off turns it off, and
  * it's never on together with Open.
  */
@@ -806,24 +831,40 @@ export const TRYING_BETAS = `${EMBER_REPOSITORY}/blob/main/docs/self-hosting.md#
  * What `GET /api/account/release` answers an administrator, for General settings to say, and `POST
  * /api/account/release_checks`, which opening Admin, and its Check for updates, make to have the Worker
  * ask GitHub afresh: the release this Ember is, named without its version's trailing ".0", such as "0.1",
- * and the newest release of Ember on GitHub, named so too, with the address of its notes there and
- * whether it's newer than this one, or null when GitHub didn't name one.
+ * and the newest release of Ember on GitHub, named so too, with its version, such as "0.1.0", the address
+ * of its notes there and whether it's newer than this one, or null when GitHub didn't name one.
  */
 export interface ReleaseCheck {
   release: string;
   /** Whether this Ember is a beta, such as "0.5 beta 1", ahead of the newest release, which GitHub never names a beta. */
   beta: boolean;
-  newest: { release: string; notes: string; newer: boolean } | null;
+  newest: { release: string; version: string; notes: string; newer: boolean } | null;
   /** When GitHub named that release, as an ISO time, which General says it last checked, or null with it. */
   checkedAt: string | null;
   /**
-   * Ember's newest beta while it's ahead of the newest release, named as "0.6 beta 1", with its notes and
-   * whether it's newer than this one, or null when it isn't ahead, or GitHub didn't say: what General
-   * offers a release to try, and a beta to update to (docs/self-hosting.md#betas).
+   * Ember's newest beta while it's ahead of the newest release, named as "0.6 beta 1", with its version,
+   * "0.6.0-beta.1", its notes and whether it's newer than this one, or null when it isn't ahead, or GitHub
+   * didn't say: what General offers a release to try, and a beta to update to (docs/self-hosting.md#betas).
    */
-  newestBeta: { release: string; notes: string; newer: boolean } | null;
+  newestBeta: { release: string; version: string; notes: string; newer: boolean } | null;
   /** The copy of Ember this is on GitHub, as its deploy said, or null where it said none. */
   copy: CopyOnGitHub | null;
+}
+
+/**
+ * A version's numbers, such as [0, 1, 0] for "0.1.0", and then its beta's, which is Infinity for a
+ * release, as it comes after its betas: [0, 5, 0, 1] for "0.5.0-beta.1", and [0, 5, 0, Infinity] for "0.5.0".
+ */
+function numbersOf(version: string): number[] {
+  const [, ...numbers] = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version) ?? [];
+  return numbers.map((number) => (number === undefined ? Infinity : Number(number)));
+}
+
+/** Whether version `a` of Ember, a release's or a beta's, comes after version `b`. */
+export function isNewer(a: string, b: string): boolean {
+  const [later, earlier] = [numbersOf(a), numbersOf(b)];
+  const differs = later.findIndex((number, at) => number !== earlier[at]);
+  return differs !== -1 && later[differs]! > (earlier[differs] ?? -1);
 }
 
 /**
@@ -894,12 +935,16 @@ export interface Profile {
   /**
    * Where you stand with Memberful (`MemberfulStatus`): the account at the Memberful site you've connected
    * your account to, which you can sign in with then, or none yet while Memberful is members only. Null
-   * when there's nothing to show: while the deployment lacks Memberful's keys, for a guest, who has
+   * when there's nothing to show: while Ember lacks Memberful's keys, for a guest, who has
    * nothing to connect, or while Memberful isn't members only and you haven't connected one.
    */
   memberful: MemberfulStatus | null;
   /** How much @ember thinks and how long it answers you, and the most each may be, and the model you picked, if you did, and the ones you can pick, or null while Ember AI is off. */
   assistant: YourAssistant | null;
+  /** The connected apps you can sign in to yourself, by name, each with your sign-in to it, if you've made one: none while Ember AI is off, or for a guest. */
+  apps: YourApp[];
+  /** The AI apps connected to Ember as you, newest first, or null when none can be: while an administrator hasn't let AI apps connect, or for a guest. */
+  outsideAi: OutsideConnection[] | null;
 }
 
 /** What `GET /api/users/me/profile` answers, and `PATCH` once it has saved. */
@@ -958,8 +1003,8 @@ export interface Bootstrap {
   /** Whether people may sign in with just a name (`EMBER_GUEST_SIGN_IN`). */
   guestSignIn: boolean;
   /**
-   * Whether the sign-in page offers Sign in with Memberful, once the deployment has the keys of its
-   * Memberful site's custom app: while Memberful lets that site's members join, or while anyone here signs
+   * Whether the sign-in page offers Sign in with Memberful, once Ember has the keys of its Memberful
+   * site's custom app: while Memberful lets that site's members join, or while anyone here signs
    * in with an account there, as members who joined with it keep doing once it's off.
    */
   signInWithMemberful: boolean;
@@ -1304,7 +1349,10 @@ export interface MemberfulConnection {
  * what that page then says.
  */
 export const MEMBERFUL_SIGN_IN_PROBLEMS = {
-  /** Memberful sent the browser back without a sign-in, or with one this browser didn't start, or didn't answer as it should. */
+  /**
+   * Memberful sent the browser back without a sign-in, or with one this browser didn't start, or didn't
+   * answer as it should, or an administrator gave Ember another site's keys while it signed in.
+   */
   failed: "Signing in with Memberful didn't work. Try again.",
   /** The Memberful account has no active subscription, nor the all access pass. */
   membership: "Your Memberful account has no active membership.",
@@ -1321,7 +1369,7 @@ export const MEMBERFUL_SIGN_IN_PROBLEMS = {
   off: "Joining with Memberful is off.",
   /** Someone connected their account to one at Memberful once Memberful stopped being members only, when their password signs them in. */
   unneeded: "Memberful isn't members only anymore, so there's nothing to connect. Your password signs you in.",
-  /** It's on, but the deployment has no Memberful keys. */
+  /** It's on, but Ember has no Memberful keys, neither the deployment's nor any an administrator gave. */
   unavailable: "Memberful sign-in isn't set up. Ask an administrator for help.",
   /** Too many sign-ins from the address, or the account was removed or banned, which this doesn't tell apart. */
   refused: SIGN_IN_REFUSED,
@@ -1344,8 +1392,8 @@ export const MEMBERFUL_PASSWORD_NEEDED = "Enter your password to connect Memberf
 
 /** Why disconnecting it is refused without your password. */
 export const MEMBERFUL_DISCONNECT_PASSWORD_NEEDED = "Enter your password to disconnect Memberful.";
-/** Why it's refused while you have no password, which you'd have nothing to sign in with without. */
-export const MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD = "Set a password first, so that you can still sign in once Memberful is disconnected.";
+/** Why it's refused while you have no password, which you'd have nothing to sign in with without, and which Memberful signing you in gives you none of. */
+export const MEMBERFUL_DISCONNECT_WITHOUT_PASSWORD = "You sign in with Memberful alone, so it can't be disconnected.";
 /** Why it's refused while you have no email address, which signing in with your password takes. */
 export const MEMBERFUL_DISCONNECT_WITHOUT_EMAIL = "Add your email address first, so that you can still sign in once Memberful is disconnected.";
 /** Why it's refused while you haven't connected a Memberful account. */
@@ -1430,6 +1478,11 @@ export const PASSWORD_TOO_LONG = "Password must be at most 72 characters.";
 export const CURRENT_PASSWORD_NEEDED = "Enter your current password to change your email address or password.";
 /** Why it's refused with a current password that isn't yours. */
 export const CURRENT_PASSWORD_WRONG = "That isn't your current password.";
+/**
+ * Why a first password is refused to someone Memberful signs in, while it does: it's their way in, and
+ * a password that whoever holds their session could set would be another.
+ */
+export const PASSWORD_WITH_MEMBERFUL = "You sign in with Memberful, so there's no password to set.";
 
 export interface Boost {
   id: string;
@@ -1549,6 +1602,13 @@ export type ClientFrame =
   | { type: "thread.before"; parentId: string; before: string; limit?: number }
   /** Says the tab has been shown, or hidden, for a few seconds, since the socket's address or the last of these said otherwise. */
   | { type: "presence.visible"; visible: boolean }
+  /**
+   * A click on a button that acts, on one of a bot's message's cards: the button `actionId` names there, in the
+   * block `blockId` names when it has one, with the `value` it has, which tells apart two that share a name.
+   * The room reports it to the bot, and answers `card.clicked`, or an `error`, with `clickId`, which the tab
+   * makes up.
+   */
+  | { type: "card.click"; clickId: string; messageId: string; actionId: string; blockId?: string; value?: string }
   | { type: "ping" };
 
 /**
@@ -1613,11 +1673,13 @@ export type ServerFrame =
   | { type: "thread.opened"; parentId: string; parent: Message | null; messages: Message[]; hasMore: boolean }
   /** Answers thread.before: the replies before `before`, oldest first, and whether there are older ones still. */
   | { type: "thread.history"; parentId: string; before: string; messages: Message[]; hasMore: boolean }
+  /** Answers card.click once the bot has answered the click: what it does to the room, if anything, comes as any change does. */
+  | { type: "card.clicked"; clickId: string }
   /**
    * `failed` names the request that went wrong, when the error answers one, and `clientMessageId` or
-   * `clientMessageIds` the messages it was about.
+   * `clientMessageIds` the messages it was about, or `clickId` the click.
    */
-  | { type: "error"; message: string; clientMessageId?: string; clientMessageIds?: string[]; failed?: ClientFrame["type"] }
+  | { type: "error"; message: string; clientMessageId?: string; clientMessageIds?: string[]; clickId?: string; failed?: ClientFrame["type"] }
   | { type: "pong" };
 
 /**
@@ -1897,6 +1959,13 @@ export function parseClientFrame(raw: string): ClientFrame | null {
       return id(f.parentId) && id(f.before) ? { type: f.type, parentId: f.parentId, before: f.before, limit: pageLimit(f.limit) } : null;
     case "presence.visible":
       return typeof f.visible === "boolean" ? { type: f.type, visible: f.visible } : null;
+    case "card.click": {
+      if (!id(f.clickId) || !id(f.messageId) || !isActionId(f.actionId)) return null;
+      if (f.blockId !== undefined && !isActionId(f.blockId)) return null;
+      if (f.value !== undefined && !isActionValue(f.value)) return null;
+      const { blockId, value } = f;
+      return { type: f.type, clickId: f.clickId, messageId: f.messageId, actionId: f.actionId, ...(blockId !== undefined && { blockId }), ...(value !== undefined && { value }) };
+    }
     case "typing.start":
     case "typing.stop":
     case "ping":

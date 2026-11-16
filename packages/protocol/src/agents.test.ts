@@ -34,12 +34,11 @@ const RECAP: NewAgent = {
 const ROOMS = ["0mgk3x2a9b4c5a", "0mgk3x2a9b4c5b"];
 
 describe("New agent", () => {
-  it("takes every field, the model's name when it's given, and text without the spaces around it", () => {
+  it("takes every field, and text without the spaces around it, leaving out a model's name, as Ember names the models it offers", () => {
     expect(parseNewAgent(RECAP)).toEqual(RECAP);
     expect(parseNewAgent({ ...RECAP, name: " Recap ", description: "\tSums up long threads ", instructions: "\n  Sum up.  \n", model: " anthropic/claude-haiku-5.5 ", modelName: " Claude Haiku 5.5 " })).toEqual({
       ...RECAP,
       instructions: "Sum up.",
-      modelName: "Claude Haiku 5.5",
     });
     expect(parseNewAgent({ ...RECAP, webSearch: true, rooms: ROOMS, other: true })).toEqual({ ...RECAP, webSearch: true, rooms: ROOMS });
   });
@@ -50,9 +49,11 @@ describe("New agent", () => {
     expect(parseNewAgent({ ...RECAP, instructions })).toEqual({ ...RECAP, instructions });
   });
 
-  it("leaves out a model's name that can't be one", () => {
-    expect(parseNewAgent({ ...RECAP, modelName: "Claude\nHaiku" })).toEqual(RECAP);
-    expect(parseNewAgent({ ...RECAP, modelName: 7 })).toEqual(RECAP);
+  it("takes a model by its ID, as whether Ember offers it is the Worker's to say, and refuses anything else on its field", () => {
+    expect(parseNewAgent({ ...RECAP, model: "@cf/zai-org/glm-5.2" })).toEqual({ ...RECAP, model: "@cf/zai-org/glm-5.2" });
+    for (const model of ["gpt-5.5", "openai/gpt 5.5", 5]) {
+      expect(parseNewAgent({ ...RECAP, model }), String(model)).toEqual({ error: MODEL_REFUSED, field: "model" });
+    }
   });
 
   it("takes what Ember adds around its instructions as an administrator changed it, or else Ember's own", () => {
@@ -88,8 +89,8 @@ describe("An agent's page", () => {
     expect(parseAgentChanges({ thinking: "high" })).toEqual({ thinking: "high" });
     expect(parseAgentChanges({ webSearch: true, rooms: ROOMS })).toEqual({ webSearch: true, rooms: ROOMS });
     expect(parseAgentChanges({ rooms: null })).toEqual({ rooms: null });
-    expect(parseAgentChanges({ model: "openai/gpt-6.1-sol", modelName: "GPT-6.1 Sol" })).toEqual({ model: "openai/gpt-6.1-sol", modelName: "GPT-6.1 Sol" });
-    // A model's name goes with its model.
+    // Without a name, as Ember names the models it offers.
+    expect(parseAgentChanges({ model: "openai/gpt-6.1-sol", modelName: "GPT-6.1 Sol" })).toEqual({ model: "openai/gpt-6.1-sol" });
     expect(parseAgentChanges({ modelName: "GPT-6.1 Sol" })).toEqual({});
     expect(parseAgentChanges({ promptTemplate: "{{instructions}}" })).toEqual({ promptTemplate: "{{instructions}}" });
     // Ember's own, as the page puts it back, goes back to following Ember's.
@@ -146,7 +147,7 @@ describe("Try it", () => {
 
   it("takes the agent as its page sets it up, and the question, leaving out what it does and its rooms, which it doesn't answer by", () => {
     expect(parseAgentTrial(TRIAL)).toEqual(TRIAL);
-    expect(parseAgentTrial({ ...TRIAL, modelName: "Claude Haiku 5.5", question: "\n Sum up this week. \n" })).toEqual({ ...TRIAL, modelName: "Claude Haiku 5.5" });
+    expect(parseAgentTrial({ ...TRIAL, modelName: "Claude Haiku 5.5", question: "\n Sum up this week. \n" })).toEqual(TRIAL);
     // What it does and its rooms may be anything while they're unsaved.
     expect(parseAgentTrial({ ...TRIAL, description: "", rooms: "Launch!" })).toEqual(TRIAL);
     const longest = "x".repeat(MAX_MESSAGE_LENGTH);

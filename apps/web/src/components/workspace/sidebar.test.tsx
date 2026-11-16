@@ -1,4 +1,4 @@
-import type { Account, DirectoryUser, Favorites, SidebarRoom, User } from "@ember/protocol";
+import type { Account, DirectoryUser, Favorites, LiveHuddle, SidebarRoom, User } from "@ember/protocol";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
@@ -34,6 +34,7 @@ function renderSidebar(props: Partial<Props> = {}, account = EMBER, people: read
     rooms,
     favorites: unstarred,
     sharedOrder: [],
+    huddles: {},
     loaded: true,
     suggestions: [],
     currentRoomId: null,
@@ -231,6 +232,107 @@ describe("Star rooms", () => {
     expect(within(row("general")).queryByRole("img")).not.toBeInTheDocument();
     expect(row("general").querySelector("svg")).toBeNull();
     expect(within(row("random")).getByRole("img", { name: "Favorite" })).toBeInTheDocument();
+  });
+});
+
+describe("Rooms with a huddle", () => {
+  /** Someone as the people directory lists them. */
+  const inDirectory = (user: User): DirectoryUser => ({ ...user, bio: null, role: "member", status: "active", avatarUrl: `/users/${user.id}/avatar` });
+  const everyone = [ada!, grace!, linus!, alan!].map(inDirectory);
+  /** A huddle with those people in it, in the order they joined. */
+  const huddleOf = (...people: User[]): LiveHuddle => ({ startedAt: at(0), userIds: people.map(({ id }) => id) });
+  /** What a room's row ends with while a huddle is going on in it. */
+  const mark = (row: HTMLElement) => row.querySelector<HTMLElement>("[title]");
+  const faces = (row: HTMLElement) => [...mark(row)!.querySelectorAll("img")].map((face) => face.getAttribute("src"));
+
+  it("ends the row with the faces of the first two people in it, the headphones and how many are in it, in green", () => {
+    renderSidebar({ huddles: { general: huddleOf(grace!, linus!, alan!) } }, EMBER, everyone);
+    const [general, random] = rows();
+    // Nothing shows after it: the words that follow it are hidden.
+    expect(mark(general!)!.nextElementSibling).toBe(general!.lastElementChild);
+    expect(general!.lastElementChild).not.toBeVisible();
+    expect(mark(general!)).toHaveClass("ml-auto", "shrink-0", "text-positive");
+    expect(faces(general!)).toEqual(["/users/u2/avatar", "/users/u3/avatar"]);
+    for (const face of mark(general!)!.querySelectorAll("img")) expect(face).toHaveClass("size-4", "rounded-full", "ring-1", "ring-surface");
+    expect(mark(general!)!.querySelector("svg")).toHaveClass("iconoir-headset", "size-3.5");
+    expect(within(mark(general!)!).getByText("3")).toHaveClass("tabular-nums");
+
+    expect(mark(random!)).toBeNull();
+    expect(random!.querySelector("svg")).toBeNull();
+  });
+
+  it("says who's in it under a pointer, and to screen readers as the row's description, calling you you", () => {
+    const { rerender } = renderSidebar({ huddles: { general: huddleOf(grace!, linus!) } }, EMBER, everyone);
+    const general = () => rows()[0]!;
+    expect(mark(general())).toHaveAttribute("title", "Grace and Linus are in the huddle");
+    // The mark is the eye's, and the row keeps its room's name.
+    expect(mark(general())).toHaveAttribute("aria-hidden", "true");
+    expect(general()).toHaveAccessibleName("general");
+    expect(general()).toHaveAccessibleDescription(`Grace and Linus are in the huddle ${HELP}`);
+    expect(rows()[1]).toHaveAccessibleDescription(HELP);
+
+    rerender({ huddles: { general: huddleOf(grace!, ada!) } });
+    expect(mark(general())).toHaveAttribute("title", "Grace and you are in the huddle");
+    expect(general()).toHaveAccessibleDescription(`Grace and you are in the huddle ${HELP}`);
+    expect(faces(general())).toEqual(["/users/u2/avatar", "/users/u1/avatar"]);
+
+    rerender({ huddles: { general: huddleOf(ada!) } });
+    expect(mark(general())).toHaveAttribute("title", "Just you in the huddle");
+    expect(within(mark(general())!).getByText("1")).toBeInTheDocument();
+  });
+
+  it("counts the people the directory doesn't list, whose faces it can't show", () => {
+    const { rerender } = renderSidebar({ huddles: { general: huddleOf(linus!, grace!, alan!) } }, EMBER, [inDirectory(grace!)]);
+    const general = () => rows()[0]!;
+    expect(mark(general())).toHaveAttribute("title", "Grace and 2 others are in the huddle");
+    expect(faces(general())).toEqual(["/users/u2/avatar"]);
+    expect(within(mark(general())!).getByText("3")).toBeInTheDocument();
+
+    // With you in it, everyone is counted.
+    rerender({ huddles: { general: huddleOf(linus!, ada!) } });
+    expect(mark(general())).toHaveAttribute("title", "2 people are in the huddle");
+    expect(faces(general())).toEqual([]);
+  });
+
+  it("comes before the row's unread dot and its star, and takes the space before them", () => {
+    const starred: Favorites = { rooms: ["general", "random"], version: 2 };
+    renderSidebar({ rooms: [{ ...rooms[0]!, unread: true }, rooms[1]!], favorites: starred, huddles: { general: huddleOf(grace!), random: huddleOf(linus!) } }, EMBER, everyone);
+    const [general, random] = rows();
+    const [first, words, dot, star] = Array.from(general!.children).slice(-4);
+    expect(first).toBe(mark(general!));
+    expect(first).toHaveClass("ml-auto");
+    expect(words).not.toBeVisible();
+    expect(dot).toHaveClass("size-[7px]", "rounded-full");
+    expect(dot).not.toHaveClass("ml-auto");
+    expect(star).toHaveAccessibleName("Favorite");
+    expect(star).not.toHaveClass("ml-auto");
+    expect(general).toHaveAccessibleDescription(`Grace is in the huddle Unread ${HELP}`);
+
+    const [its, , itsStar] = Array.from(random!.children).slice(-3);
+    expect(its).toBe(mark(random!));
+    expect(its).toHaveClass("ml-auto");
+    expect(itsStar).toHaveAccessibleName("Favorite");
+    expect(itsStar).not.toHaveClass("ml-auto");
+  });
+
+  it("follows the huddle as people join and leave it, and goes when it ends", () => {
+    const { rerender } = renderSidebar({ huddles: { random: huddleOf(grace!) } }, EMBER, everyone);
+    const random = () => rows()[1]!;
+    /** How many it says are in it, and who under a pointer. */
+    const says = () => [mark(random())!.textContent, mark(random())!.title];
+    expect(says()).toEqual(["1", "Grace is in the huddle"]);
+
+    rerender({ huddles: { random: huddleOf(grace!, linus!, alan!) } });
+    expect(says()).toEqual(["3", "Grace, Linus, and Alan are in the huddle"]);
+    rerender({ huddles: { random: huddleOf(linus!) } });
+    expect(says()).toEqual(["1", "Linus is in the huddle"]);
+    expect(faces(random())).toEqual(["/users/u3/avatar"]);
+
+    // The row is as it was, its words gone with its mark.
+    rerender({ huddles: {} });
+    expect(mark(random())).toBeNull();
+    expect(random()).toHaveAccessibleDescription(HELP);
+    expect(listed()).toEqual(["#general", "#random"]);
   });
 });
 
@@ -504,7 +606,7 @@ describe("Group DMs and DM names", () => {
     render(
       <PeopleContext value={new Map([[renamed.id, renamed]])}>
         <Sidebar
-          {...{ workspaceName: "Ember", meId: ada!.id, loaded: true, suggestions: [], favorites: unstarred, sharedOrder: [], currentRoomId: null, unreadOnly: false }}
+          {...{ workspaceName: "Ember", meId: ada!.id, loaded: true, suggestions: [], favorites: unstarred, sharedOrder: [], huddles: {}, currentRoomId: null, unreadOnly: false }}
           {...{ onSelect: vi.fn(), onNewDirect: vi.fn(), onStartDirect: vi.fn(), onStarred: vi.fn(), onSessionChanged: vi.fn() }}
           rooms={[direct("d1", [ada!, grace!])]}
         />

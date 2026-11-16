@@ -1,7 +1,8 @@
 import { CloseCode, parseServerFrame, type RoomId, type UserId } from "@ember/protocol";
 import { HuddleCloseCode, huddleSocketQuery, MAX_HUDDLE_PEOPLE, type HuddleClientFrame, type HuddlePerson, type HuddleServerFrame, type OfferedHuddleTrack } from "@ember/protocol/huddles";
 import { socketUrl } from "./api";
-import { listsSpeaker, watchDevices } from "./huddle-devices";
+import { huddleSounds } from "./huddle-sounds";
+import { huddleSpeaker, type HuddleSpeaker } from "./huddle-speaker";
 import { endHuddle, leaveHuddle, showHuddle, type HuddleControls, type JoinedHuddle } from "./huddle-store";
 import { reconnectingSocket } from "./reconnecting-socket";
 
@@ -10,6 +11,7 @@ import { reconnectingSocket } from "./reconnecting-socket";
 // passes between them. What people say goes over two connections to the SFU: one sends the tab's
 // microphone, and one receives everyone else, so that neither's changes wait on the other's. The room
 // has the SFU close both whenever the socket closes, so a socket that connects again starts both afresh.
+// The tab plays the huddle's own sounds as well (huddle-sounds.ts), through the speaker the voices use.
 //
 // The room's answers don't say which frame they're to, so the tab asks one thing at a time of each
 // connection, and waits for the answer before it asks the next.
@@ -68,46 +70,17 @@ function growingWait([least, most]: readonly [number, number]) {
   };
 }
 
-/** What a browser takes for the person's touch, and lets a voice play from. A tap is one at its click, and not as the finger lands. */
-const TOUCHES = ["click", "keydown"] as const;
-
-/** Plays `audio` through the speaker `deviceId`, or the system's for none. Safari has no way to choose one, and plays through the system's. */
-function playThrough(audio: HTMLAudioElement, deviceId: string): void {
-  if (typeof audio.setSinkId === "function") void audio.setSinkId(deviceId).catch(() => {});
-}
-
 /**
- * The others' voices: an `<audio>` each, kept in the page, hidden, which plays its person's track from
- * when the tab is offered it until they leave. A browser that won't play one until the person has
- * touched the page plays it at their next click or key. They play through the speaker `speakerId`, or
- * through the system's when that's empty, and for as long as that speaker is unplugged, when it would
- * play nothing.
+ * The others' voices: an `<audio>` each, which plays its person's track through `speaker` from when the
+ * tab is offered it until they leave.
  */
-function voicesThrough(speakerId: string) {
+function voicesThrough(speaker: HuddleSpeaker) {
   const playing = new Map<UserId, HTMLAudioElement>();
-  const box = document.createElement("div");
-  box.hidden = true;
-  box.dataset.huddleVoices = "";
-  /** The speaker they play through now, by its device's id, or empty for the system's. */
-  let speaker = speakerId;
-  const followSpeaker = async () => {
-    if (!speakerId) return;
-    speaker = (await listsSpeaker(speakerId)) ? speakerId : "";
-    for (const audio of playing.values()) playThrough(audio, speaker);
-  };
-  const stopWatching = watchDevices(() => void followSpeaker());
-  const playRefused = () => {
-    for (const audio of playing.values()) if (audio.paused) void audio.play().catch(() => {});
-  };
-  // In the capture phase, which hears a click that whatever it lands on keeps to itself.
-  const playOnceTouched = () => {
-    for (const touch of TOUCHES) document.addEventListener(touch, playRefused, true);
-  };
   const stop = (userId: UserId) => {
     const audio = playing.get(userId);
     if (!audio) return;
     audio.srcObject = null;
-    audio.remove();
+    speaker.stop(audio);
     playing.delete(userId);
   };
   return {
@@ -116,21 +89,18 @@ function voicesThrough(speakerId: string) {
       audio.dataset.userId = userId;
       audio.autoplay = true;
       audio.srcObject = new MediaStream([track]);
-      if (speaker) playThrough(audio, speaker);
       playing.set(userId, audio);
-      if (!box.isConnected) document.body.append(box);
-      box.append(audio);
-      void audio.play().catch(playOnceTouched);
+      speaker.play(audio);
     },
     stop,
     stopAll() {
       for (const userId of [...playing.keys()]) stop(userId);
-      for (const touch of TOUCHES) document.removeEventListener(touch, playRefused, true);
-      stopWatching();
-      box.remove();
     },
   };
 }
+
+/** Whether the tab's person is the only one in its huddle, as far as the room has said. */
+const isAlone = ({ connected, you, people }: JoinedHuddle) => connected && people.every(({ user }) => user.id === you?.id);
 
 /** Joins room `roomId`'s huddle, which starts it when nobody's in it, leaving any the tab was in. */
 export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin): void {
@@ -158,7 +128,9 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
   /** Runs out on the room's answer to that round, or brings the next. */
   let listenTimer: ReturnType<typeof setTimeout> | undefined;
   const listenWait = growingWait(LISTEN_AGAIN_MS);
-  const voices = voicesThrough(speakerId);
+  const speaker = huddleSpeaker(speakerId);
+  const voices = voicesThrough(speaker);
+  const sounds = huddleSounds(speaker);
 
   const socket = reconnectingSocket<HuddleClientFrame>({
     url: () => huddleSocketUrl(roomId, huddle.muted),
@@ -199,6 +171,7 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
     const next = { ...huddle, ...changes };
     const people = next.people.map((person) => (person.user.id === next.you?.id && person.muted !== next.muted ? { ...person, muted: next.muted } : person));
     showHuddle((huddle = { ...next, people }), controls);
+    sounds.setAlone(isAlone(huddle));
   }
 
   // A microphone that's unplugged, or that the browser stops letting the page use, leaves its person listening.
@@ -208,12 +181,17 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
   };
   track?.addEventListener("ended", microphoneGone);
 
-  /** Leaves for good: the socket closes, which is how the room hears, and so do both connections and the microphone. */
+  /**
+   * Leaves for good: the socket closes, which is how the room hears, and so do both connections and the
+   * microphone. A tab the room had let in hears the leaving sound, however its huddle ended.
+   */
   function stop() {
     over = true;
     socket.close();
     hangUp();
     voices.stopAll();
+    sounds.end(huddle.you !== null);
+    speaker.stopAll();
     track?.removeEventListener("ended", microphoneGone);
     for (const each of microphone?.getTracks() ?? []) each.stop();
   }
@@ -420,6 +398,8 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
         // The address said whether the tab was muted as it asked to join, which it may not be now.
         const mine = frame.people.find(({ user }) => user.id === frame.you.id);
         if (mine && mine.muted !== huddle.muted) socket.send({ type: "huddle.mute", muted: huddle.muted });
+        // Let in, and not let back in after the tab's connection to the room dropped.
+        if (!huddle.you) sounds.joined();
         show({ connected: true, you: frame.you, people: frame.people });
         void publish();
         return listen();
@@ -429,11 +409,13 @@ export function joinHuddle({ roomId, muted, microphone, speakerId }: HuddleJoin)
         const { person } = frame;
         if (!person.audio) forget(person.user.id);
         const known = huddle.people.some(({ user }) => user.id === person.user.id);
+        if (!known) sounds.joined();
         show({ people: known ? huddle.people.map((other) => (other.user.id === person.user.id ? person : other)) : [...huddle.people, person] });
         return listen();
       }
       case "huddle.left":
         forget(frame.userId);
+        if (huddle.people.some(({ user }) => user.id === frame.userId)) sounds.left();
         return show({ people: huddle.people.filter(({ user }) => user.id !== frame.userId) });
       case "huddle.published":
         return void published(frame.sdp);

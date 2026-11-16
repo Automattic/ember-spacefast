@@ -87,7 +87,7 @@ const scrollTo = (log: HTMLElement, top: number) => {
 };
 
 const ada: Me = { id: "u1", name: "Ada", administrator: false };
-const actions = { boost: vi.fn(), unboost: vi.fn(), edit: vi.fn(), remove: vi.fn() };
+const actions = { boost: vi.fn(), unboost: vi.fn(), edit: vi.fn(), remove: vi.fn(), click: vi.fn() };
 const editors = { open: vi.fn(), close: vi.fn(), returnFocus: vi.fn(), attach: vi.fn(), reply: vi.fn() };
 
 /** Messages from Ada named m`from` to m`to`. */
