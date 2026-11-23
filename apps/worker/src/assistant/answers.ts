@@ -27,6 +27,12 @@ export const ROOM_MESSAGES_READ = 20;
 /** How many of a thread's latest replies it reads when it's asked in one, the question among them, after the thread's first message. */
 export const THREAD_REPLIES_READ = 50;
 
+/**
+ * How many of the room's messages before a thread's first message it reads when it's asked in the
+ * thread, for what led to it, such as the question that message answers when it's an answer.
+ */
+export const ROOM_MESSAGES_READ_BEFORE_THREAD = 10;
+
 /** How long @ember waits for its model at the least, which most answers take a fraction of. */
 const LEAST_WAIT_MS = 120_000;
 
@@ -56,6 +62,18 @@ export interface Answerer {
 /** What's read of a message in a conversation: who wrote it, its plain text, whether it shares a file, and whether it was deleted. */
 export type ReadMessage = Pick<Message, "creator" | "plainText" | "attachment" | "deleted">;
 
+/**
+ * The conversation a question is asked in, oldest first: `messages`, the room's latest, or a thread's
+ * first message and latest replies, ending with the question, and for a thread, `before`, the room's
+ * messages before its first message.
+ */
+export interface Conversation<T extends ReadMessage = ReadMessage> {
+  messages: T[];
+  before?: T[];
+}
+
+/** Every message of `conversation`, oldest first: the room's before a thread, then the thread's. */
+export const allOf = <T extends ReadMessage>({ messages, before = [] }: Conversation<T>): T[] => [...before, ...messages];
 
 /** Why a question for @ember gets no answer, which the room logs. */
 export class AnswerError extends Error {}
@@ -71,7 +89,7 @@ export class AnswerError extends Error {}
  */
 export function questionFor(
   answerer: Answerer,
-  conversation: ReadMessage[],
+  conversation: Conversation,
   asker: User,
   where: AskedIn,
   levels: AnswerLevels,
@@ -106,15 +124,16 @@ const WEB_TOOLS_REFUSED =
   "You can't search the web or open links this time, as AI Gateway didn't take the tools for them with the model you answer with. When someone asks you to, say so.";
 
 /**
- * The messages of `conversation` @ember reads: the question it ends with, and as many of those before it
- * as fit in `MAX_CONVERSATION_LENGTH` characters, the newest first, but for a thread's first message, which
- * comes before them all.
+ * The part of `conversation` @ember reads: the question it ends with, and as many of the messages before
+ * it as fit in `MAX_CONVERSATION_LENGTH` characters, the newest first, but for a thread's first message,
+ * which comes before them all, and the room's messages before the thread, which come after them all, the
+ * nearest the thread first.
  */
-function readable<T extends ReadMessage>(conversation: T[], inThread: boolean): T[] {
-  const question = conversation.at(-1)!;
-  const before = conversation.slice(0, -1);
-  const [first, ...replies] = before;
-  const candidates = inThread && first ? [first, ...replies.reverse()] : before.reverse();
+export function readable<T extends ReadMessage>({ messages, before = [] }: Conversation<T>, inThread: boolean): Conversation<T> {
+  const question = messages.at(-1)!;
+  const earlier = messages.slice(0, -1);
+  const [first, ...replies] = earlier;
+  const candidates = [...(inThread && first ? [first, ...replies.reverse()] : earlier.reverse()), ...before.toReversed()];
   const kept = new Set<T>([question]);
   let length = question.plainText.length;
   for (const message of candidates) {
@@ -122,21 +141,42 @@ function readable<T extends ReadMessage>(conversation: T[], inThread: boolean): 
     if (length > MAX_CONVERSATION_LENGTH) break;
     kept.add(message);
   }
-  return conversation.filter((message) => kept.has(message));
+  const isKept = (message: T) => kept.has(message);
+  return { messages: messages.filter(isKept), before: before.filter(isKept) };
 }
+
+/** What a model is told ahead of the room's messages before the thread it's asked in. */
+export const BEFORE_THE_THREAD = "The room's messages before the thread, oldest first:";
+
+/** What it's told after them. */
+export const THE_THREAD = "The thread follows, starting with the message it's under.";
 
 /**
  * The conversation as the model of the answerer `answererId` reads it: each message after its writer's
- * name, a file as its name, and the answerer's own answers as the model's turns, leaving out what was
- * deleted and what has nothing to read. Other bots' messages, @ember's and agents' among them, are read
- * as anyone's.
+ * name, a file as its name, and the answerer's own answers as the model's turns, but for one that would
+ * come first, as a model's conversation starts with someone's, leaving out what was deleted and what has
+ * nothing to read. Other bots' messages, @ember's and agents' among them, are read as anyone's. The
+ * room's messages before a thread are one turn ahead of the thread's, each as anyone's, as they're only
+ * what led to it.
  */
-function turnsOf(answererId: UserId | null, messages: ReadMessage[]): Turn[] {
-  return messages.flatMap((message): Turn[] => {
-    const text = message.attachment ? `(shares a file, ${message.plainText})` : message.plainText.trim();
-    if (message.deleted || text === "") return [];
-    return [message.creator.id === answererId ? { role: "assistant", text } : { role: "user", text: `${message.creator.name}: ${text}` }];
+function turnsOf(answererId: UserId | null, { messages, before = [] }: Conversation): Turn[] {
+  const lines = before.flatMap((message) => {
+    const text = textOf(message);
+    return text === null ? [] : [`${message.creator.name}: ${text}`];
   });
+  const turns: Turn[] = lines.length > 0 ? [{ role: "user", text: [BEFORE_THE_THREAD, ...lines, THE_THREAD].join("\n\n") }] : [];
+  for (const message of messages) {
+    const text = textOf(message);
+    if (text === null) continue;
+    turns.push(message.creator.id === answererId && turns.length > 0 ? { role: "assistant", text } : { role: "user", text: `${message.creator.name}: ${text}` });
+  }
+  return turns;
+}
+
+/** What a model reads of `message`: its text, or the name of the file it shares, or null when it's deleted or has nothing to read. */
+function textOf(message: ReadMessage): string | null {
+  const text = message.attachment ? `(shares a file, ${message.plainText})` : message.plainText.trim();
+  return message.deleted || text === "" ? null : text;
 }
 
 /**
@@ -144,8 +184,8 @@ function turnsOf(answererId: UserId | null, messages: ReadMessage[]): Turn[] {
  * text, with the pages its answer came from, whose addresses the answer may have fetched (`answerOf`).
  * Its own answers and bots' messages are left out, as their writers aren't among `people`.
  */
-export function writtenBy(people: ReadonlySet<UserId>, conversation: Message[], inThread: boolean): string[] {
-  return readable(conversation, inThread).flatMap(({ creator, plainText, deleted }) => (!deleted && people.has(creator.id) ? [plainText] : []));
+export function writtenBy(people: ReadonlySet<UserId>, conversation: Conversation<Message>, inThread: boolean): string[] {
+  return allOf(readable(conversation, inThread)).flatMap(({ creator, plainText, deleted }) => (!deleted && people.has(creator.id) ? [plainText] : []));
 }
 
 /**
@@ -381,9 +421,12 @@ const YOUR_LEVELS = "Ember AI on your profile";
 export const NOTES: Record<RefusalReason | "unopened token", string> = {
   token: `I can't answer right now: Cloudflare didn't take Ember AI's API token. An administrator can give it another under ${AI_SETTINGS}.`,
   account: `I can't answer right now: Cloudflare can't find Ember AI's account. An administrator can set it up again under ${AI_SETTINGS}.`,
-  credits: "I can't answer right now: the AI Gateway credits that pay for my model have run out. An administrator can top them up in AI Gateway, or choose a Workers AI model.",
+  credits: "I can't answer right now: the AI Gateway credits that pay for my model have run out. An administrator can top them up in AI Gateway.",
   model: `I can't answer right now: AI Gateway didn't take my question for its model. An administrator can choose another model under ${AI_SETTINGS}.`,
+  retired: `I can't answer right now: Cloudflare no longer runs my model. An administrator can choose another model under ${AI_SETTINGS}.`,
   busy: "I can't answer right now: AI Gateway is turning requests away, or a spend limit was reached. Try again later.",
+  neurons:
+    "I can't answer right now: Ember AI's Cloudflare account has used the Neurons Workers AI runs my model on free each day, which start again at midnight UTC. An administrator can move the account to Workers Paid, or have AI Gateway's credits pay for Workers AI, to go on before then.",
   "too long": "I can't answer that here: the conversation is longer than my model reads at once. Try asking in a new thread.",
   unanswered: "I couldn't answer: AI Gateway didn't answer in time. Try again in a moment.",
   nothing: "I couldn't answer: my model answered with nothing. Try asking again.",
@@ -395,6 +438,9 @@ export const NOTES: Record<RefusalReason | "unopened token", string> = {
   "unopened token": `I can't answer right now: Ember AI's API token no longer opens here. An administrator can set it up again under ${AI_SETTINGS}.`,
 };
 
+/** What @ember or an agent says in place of an answer with a word Blocked words keeps out, which isn't posted. */
+export const BLOCKED_ANSWER = "I can't answer that here: my answer had a word this community doesn't allow.";
+
 /** What an agent says instead, for the reasons only administrators, who set it up, can do something about. */
 export const AGENT_NOTES: Partial<Record<RefusalReason, string>> = {
   "out of room": `I couldn't answer: my model thought for as long as it may before it wrote anything. Try asking again, or an administrator can choose less Thinking for me under ${AI_SETTINGS}.`,
@@ -404,4 +450,6 @@ export const AGENT_NOTES: Partial<Record<RefusalReason, string>> = {
 export const PICKED_MODEL_NOTES: Partial<Record<RefusalReason, string>> = {
   credits: `I can't answer right now: the AI Gateway credits that pay for the model you picked have run out. An administrator can top them up in AI Gateway, or you can pick another model under ${YOUR_LEVELS}.`,
   model: `I can't answer right now: AI Gateway didn't take my question for the model you picked. Pick another model under ${YOUR_LEVELS}.`,
+  retired: `I can't answer right now: Cloudflare no longer runs the model you picked. Pick another model under ${YOUR_LEVELS}.`,
+  neurons: `I can't answer right now: Ember AI's Cloudflare account has used the Neurons Workers AI runs the model you picked on free each day, which start again at midnight UTC. Pick a model Workers AI doesn't run under ${YOUR_LEVELS}, or an administrator can move the account to Workers Paid, or have AI Gateway's credits pay for Workers AI.`,
 };
