@@ -8,9 +8,10 @@ const PENDING: Bootstrap = {
   setupPlaceholders: { name: "Kevin Rose", emailAddress: "kevin@kevinrose.com" },
   guestSignIn: true,
   signInWithMemberful: false,
+  signInWithSso: null,
   turnstileSiteKey: null,
   passwordResetCodes: false,
-  account: { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {}, huddles: false },
+  account: { name: "Ember", tagline: "", hideTranslationButtons: true, customStyles: "", restrictRoomCreation: false, restrictChannelMentions: false, restrictEveryoneMention: false, warnBeforeNotifying: true, logo: null, customDomain: null, joinLink: true, openSignUp: false, memberfulJoin: false, memberfulSignIn: false, ssoJoin: false, ssoSignIn: false, emailDomainSignUp: false, emailDomains: [], navigationIcons: {}, huddles: false, huddleCameras: true, huddleScreens: true, huddleVideo: "hd" },
   version: "0.1",
   vapidPublicKey: null,
   platform: { ios: false, android: false, desktop: true, windows: false, chrome: false, firefox: false, safari: false, edge: false, browser: "Mozilla", operatingSystem: "" },
@@ -74,7 +75,7 @@ test("setup's question about huddles, its two steps with a key refused, and Hudd
   const app = { appId: "ca11".repeat(8), appSecret: "5ec7".repeat(16) };
   await page.route("**/api/first_run", (route) => route.fulfill({ status: 201, json: made }));
   await page.route("**/api/account", (route) => route.fulfill({ json: { cloudflareAccountId: null } }));
-  await page.route("**/api/account/huddles", (route) => route.fulfill({ json: { huddles: { appId: app.appId } } satisfies HuddlesSaved }));
+  await page.route("**/api/account/huddles", (route) => route.fulfill({ json: { huddles: { appId: app.appId, relayKeyId: null } } satisfies HuddlesSaved }));
   await page.goto("/first_run");
   await page.getByLabel("Name").fill("Pat on a phone");
   await page.getByLabel("Email address").fill("pat@example.com");
