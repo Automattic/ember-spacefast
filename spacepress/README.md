@@ -1,6 +1,6 @@
 # Ember on SpacePress
 
-Ember uses the fork's existing React UI with WordPress sign-in and SpacePress actions, tables, private uploads, and background jobs. Open rooms and threads poll for updates every two seconds.
+Ember uses the fork's existing React UI with WordPress sign-in and SpacePress actions, tables, private uploads, and background jobs. Open rooms and threads poll for updates every two seconds and fetch missed messages from history when polls resume.
 
 The workspace supports open rooms, private rooms, direct messages, threaded replies, formatting, edits, reactions, search, unread state, favorites, room administration, and device-encrypted files. Invitations use WordPress mail. WordPress Action Scheduler runs push, outgoing bot, and assistant delivery after a message commits.
 
@@ -44,7 +44,7 @@ Use the same build steps, including a final `spacepress build spacepress` after 
 | Browser push | `EMBER_PUSH_PRIVATE_KEY` and `EMBER_PUSH_CONTACT`. Set the matching `EMBER_PUSH_PUBLIC_KEY` to reuse the generated public key |
 | AI assistants | `EMBER_OPENAI_API_KEY`, `EMBER_OPENAI_MODEL`, `EMBER_OPENAI_WEBHOOK_SECRET`, and an enabled assistant profile. Register `/assistant/openai` for OpenAI response events. |
 
-File uploads need an active Ember membership and an open reservation from the past hour. The hourly byte quota applies when Ember creates the reservation. Private-room and direct-message files need an enrolled browser for each person. The browser encrypts chunks before uploading and wraps the file key for the enrolled devices in the room.
+Uploading and finalizing a file require an active Ember membership and an open reservation from the past hour. The hourly byte quota applies when Ember creates the reservation. Private-room and direct-message files need an enrolled browser for each person. The browser encrypts chunks before uploading and wraps the file key for the enrolled devices in the room.
 
 ## Verify room permissions in a browser
 

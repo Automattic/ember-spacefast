@@ -136,8 +136,9 @@ export async function readTimeline(roomId: number, before?: number) {
 
 export async function roomAfter(roomId: number, after: number) {
   await requireRoom(roomId);
-  const anchor = await messages.system.get(after);
-  if (anchor?.roomId !== roomId) throw new HttpError(404, "message_unavailable", "Message unavailable.");
+  if (after !== 0 && (await messages.system.get(after))?.roomId !== roomId) {
+    throw new HttpError(404, "message_unavailable", "Message unavailable.");
+  }
   const rows = await messages.system.list({ where: { roomId, inRoom: true, id: { gt: after } }, orderBy: { id: "asc" }, limit: 51 });
   return { messages: await views(rows.slice(0, 50)), hasNewer: rows.length > 50 };
 }

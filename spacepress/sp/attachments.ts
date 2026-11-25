@@ -3,6 +3,7 @@ import { attachmentDevices, attachments, memberships } from "spacepress:db";
 import { attachmentChunks } from "./schema";
 import { actor, numericId, personView, requireRoom } from "./access";
 import { consumeRate } from "./records";
+import { attachmentReservationCutoff } from "./upload-access";
 
 const chunkSize = 4194304;
 const maxFileSize = 262144000;
@@ -143,7 +144,10 @@ export async function acceptAttachment(value: string, manifest: Manifest, withMe
   if (!file || file.personId !== me.wpId) throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
   const room = await requireRoom(file.roomId);
   if (file.status === "attached" && withMessage) return file;
-  if (file.status !== "uploading" || manifest.name !== file.name || manifest.type !== file.type || manifest.size !== file.size) throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
+  if (file.status !== "uploading" || file.createdAt <= attachmentReservationCutoff() ||
+    manifest.name !== file.name || manifest.type !== file.type || manifest.size !== file.size) {
+    throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
+  }
   if (manifest.version !== (room.closed ? 2 : 1) || JSON.stringify(manifest).length > 150000) throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
   if (room.closed) {
     const current = await roster(room.id);
