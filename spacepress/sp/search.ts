@@ -2,7 +2,7 @@ import { HttpError, mutation, query } from "spacepress";
 import { messages, recentSearches, searchTokens } from "spacepress:db";
 import { actor, numericId, visibleRooms } from "./access";
 import { messageView, type MessageView } from "./messages";
-import { words } from "./search-index";
+import { MAX_INDEXED_WORD_LENGTH, words } from "./search-index";
 
 function enabled(value?: boolean | string) {
   return value === true || value === "true" || value === "1";
@@ -22,7 +22,7 @@ export const emberSearch = query({ access: "authenticated" }, async (input: {
   if (!ids.length) return { messages: matches, cursor: null };
   const cursor = input.cursor ? numericId(input.cursor) : 0;
   const descending = input.sort !== "oldest";
-  const token = tokens[0];
+  const token = tokens.find(word => word.length <= MAX_INDEXED_WORD_LENGTH);
   const upper = cursor || 9007199254740991;
   const unindexed = token
     ? descending
@@ -51,7 +51,7 @@ export const emberSearch = query({ access: "authenticated" }, async (input: {
     if (enabled(input.hasFile) && !row.attachmentId) continue;
     const body = words(row.body);
     if (!tokens.every(token => body.includes(token))) continue;
-    if (enabled(input.hasLink) && !row.markup.includes("https://") && !row.markup.includes("http://") && !row.body.includes("https://") && !row.body.includes("http://")) continue;
+    if (enabled(input.hasLink) && !/https?:\/\//i.test(row.markup) && !/https?:\/\//i.test(row.body)) continue;
     const parentId = row.parentId || row.id;
     if (enabled(input.inThread) && !row.parentId && !await messages.system.count({ where: { parentId, removed: false } })) continue;
     const view = await messageView(row);
@@ -76,16 +76,15 @@ export async function recent() {
 
 export const rememberSearch = mutation({ access: "authenticated" }, async ({ query: value }: { query: string }) => {
   const personId = (await actor()).wpId;
-  if (value.length > 1000) throw new HttpError(422, "invalid_search", "Search is too long.");
+  // JSON escaping can expand each character of the search to six, before adding filters.
+  if (value.length > 8192) throw new HttpError(422, "invalid_search", "Search is too long.");
   const saved = await recent();
+  let kept = 0;
   for (const row of saved) {
-    if (row.query === value) await recentSearches.system.delete(row.id);
+    if (row.query === value || kept >= 19) await recentSearches.system.delete(row.id);
+    else kept++;
   }
   await recentSearches.system.create({ personId, query: value });
-  if (saved.length >= 20) {
-    const last = saved[19];
-    if (last && last.query !== value) await recentSearches.system.delete(last.id);
-  }
   return true;
 });
 

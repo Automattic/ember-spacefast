@@ -21,7 +21,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
   if (!closed) networkChanged();
  };
  const emit=(frame:any)=>{if(!closed)options.onMessage(JSON.stringify(frame));};
- const fail=(error:any,frame:any)=>emit({type:'error',message:error.message,failed:frame.type,clientMessageId:frame.clientMessageId});
+ const fail=(error:any,frame:any)=>emit({type:'error',message:error.message,failed:frame.type,clientMessageId:frame.clientMessageId,clientMessageIds:frame.clientMessageIds});
  const markCatchUp = watchHealth('catch-up');
  let pendingRoom: RoomSnapshot | undefined;
  let catchUp: number | undefined;
@@ -248,7 +248,16 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'history.before':{const v=await readNative('room',roomId,frame.before);rememberRoomHistory(v.messages);emit({...v,type:'history',before:frame.before});break;}
  case 'history.after':{const v=await readNative('roomAfter',roomId,frame.after);emit({...v,type:'history.after',after:frame.after});break;}
  case 'history.around':{const v=await readNative('roomAround',roomId,frame.messageId);rememberRoomHistory(v.messages);emit({...v,type:'history.around'});break;}
- case 'message.check':{const ids=new Set(prior?.messages.map((m:any)=>m.clientMessageId));emit({type:'message.checked',stored:frame.clientMessageIds.filter((id:string)=>ids.has(id)),missing:frame.clientMessageIds.filter((id:string)=>!ids.has(id))});break;}
+ case 'message.check':{
+  if (readAction) {
+   const result = await readNative('messageCheck', roomId, frame.clientMessageIds);
+   emit({type:'message.checked', ...result});
+  } else {
+   const ids = new Set(prior?.messages.map(message => message.clientMessageId));
+   emit({type:'message.checked',stored:frame.clientMessageIds.filter((id:string)=>ids.has(id)),missing:frame.clientMessageIds.filter((id:string)=>!ids.has(id))});
+  }
+  break;
+ }
  case 'ping':emit({type:'pong'});break;
  }}
  window.addEventListener('online', networkChanged);

@@ -30,7 +30,7 @@ function safeTag(tag: string) {
   if (!tags.includes(name)) return "";
   if (match?.[1] === "/") return "</" + name + ">";
   if (name === "a") {
-    const url = tag.match(/ href="((?:https?:\/\/|mailto:)[^"<>\s]+)"/)?.[1];
+    const url = tag.match(/ href="((?:https?:\/\/|mailto:)[^"<>\s]+)"/i)?.[1];
     if (url) return '<a href="' + esc_html(url) + '">';
   }
   if (name === "code" || name === "pre") {
@@ -203,6 +203,21 @@ type MessageInput = {
   roomId: string; clientMessageId: string; body: string; plainText?: string; expectedCreatorId?: string;
   parentId?: string; alsoSent?: boolean; fileId?: string;
 };
+
+export const messageCheck = query({ access: "authenticated" }, async ({ roomId, clientMessageIds }: {
+  roomId: string; clientMessageIds: string[];
+}) => {
+  const user = await actor();
+  const room = await requireRoom(numericId(roomId));
+  if (clientMessageIds.length > 50 || clientMessageIds.some(id => !/^[a-zA-Z0-9_-]{1,80}$/.test(id))) {
+    throw new HttpError(422, "invalid_message", "Invalid message identifier.");
+  }
+  const rows = clientMessageIds.length === 0 ? [] : await messages.system.list({
+    where: { roomId: room.id, authorId: user.wpId, clientId: { in: clientMessageIds } }, limit: 50,
+  });
+  const stored = clientMessageIds.filter(id => rows.some(row => row.clientId === id));
+  return { stored, missing: clientMessageIds.filter(id => !stored.includes(id)) };
+});
 
 async function writeMessage(input: MessageInput, protectedUpload: boolean) {
   const user = await actor();

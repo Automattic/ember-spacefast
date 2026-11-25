@@ -1,11 +1,13 @@
 import { cron } from "spacepress";
 import { messages, searchTokens } from "spacepress:db";
 
+export const MAX_INDEXED_WORD_LENGTH = 100;
+
 export function words(text: string) {
   const tokens = text.toLowerCase().split(/[\s.,!?;:()\[\]{}<>"'\/\\|@#$%^&*+=~`]+/);
   const unique: string[] = [];
   for (const word of tokens) {
-    if (word && word.length <= 100 && !unique.includes(word)) unique.push(word);
+    if (word && !unique.includes(word)) unique.push(word);
   }
   return unique;
 }
@@ -18,7 +20,9 @@ export async function indexMessage(messageId: number, roomId: number, body: stri
       if (prior.length < 250) break;
     }
   }
-  for (const token of words(body)) await searchTokens.system.create({ token, roomId, messageId });
+  for (const token of words(body)) {
+    if (token.length <= MAX_INDEXED_WORD_LENGTH) await searchTokens.system.create({ token, roomId, messageId });
+  }
 }
 
 export const backfillSearch = cron("* * * * *", async () => {

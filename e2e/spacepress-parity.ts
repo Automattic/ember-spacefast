@@ -113,25 +113,70 @@ async function verifyOpenFile(sender: Session, receiver: Session) {
   await receiver.page.goto(site + "/rooms/" + room.id);
   const content = "Ember file for an open room";
   const name = "spacepress-open.txt";
-  const commitRoute = "**/wp-json/wp-abilities/v1/abilities/ember/commit-file/run";
-  let discardedCommit = false;
-  await sender.page.route(commitRoute, async route => {
-    const response = await route.fetch();
-    if (!discardedCommit && response.ok()) {
-      discardedCommit = true;
-      await route.abort();
-    } else {
-      await route.fulfill({ response });
-    }
-  });
+  const actions = ["commit-file", "send-message"];
+  const dropped = new Set<string>();
+  const routePattern = (action: string) => "**" + abilityPath + action + "/run";
+  for (const action of actions) {
+    await sender.page.route(routePattern(action), async route => {
+      const response = await route.fetch();
+      if (response.ok() && !dropped.has(action)) {
+        dropped.add(action);
+        await route.abort();
+      } else {
+        await route.fulfill({ response });
+      }
+    });
+  }
   await sender.page.locator('input[type="file"]').setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(content) });
   await sender.page.getByRole("button", { name: "Send Message", exact: true }).click();
   const link = receiver.page.getByRole("link", { name: "Download " + name, exact: true });
   await link.waitFor();
   const decoded = await link.evaluate(async anchor => (await fetch((anchor as HTMLAnchorElement).href)).text());
   assert.equal(decoded, content);
-  assert(discardedCommit, "The browser recovered after losing the successful upload finalization response.");
-  await sender.page.unroute(commitRoute);
+  assert.deepEqual([...dropped], actions, "The browser recovered after losing both successful attachment responses.");
+  const roomHistory = await call(receiver, "ember-read", { operation: "room", id: Number(room.id) }, true);
+  assert.equal(roomHistory.messages.length, 1, "Retrying the send created just one attachment message.");
+  for (const action of actions) await sender.page.unroute(routePattern(action));
+}
+
+async function verifyFilteredSearch(sender: Session, reader: Session) {
+  const room = await call(sender, "create-room", { name: "SpacePress search filter check", kind: "open" });
+  const root = await send(sender, room.id, "Root without a link");
+  const linked = (text: string, parentId?: string) => call(sender, "send-message", {
+    roomId: room.id, parentId, clientMessageId: randomUUID(),
+    body: '<p><a href="HTTPS://example.org/">' + text + "</a></p>", plainText: text,
+  });
+  const timeline = await linked("A link in the room timeline");
+  assert.match(timeline.body, /href="HTTPS:\/\/example\.org\/"/);
+  await send(sender, room.id, "A reply without a link", root.id);
+  await linked("A link in a reply", root.id);
+  const searchPath = site + "/searches?in=" + room.id;
+  await reader.page.goto(searchPath + "&has=link&is=thread");
+  await reader.page.getByText("A link in a reply", { exact: true }).waitFor();
+  assert.equal(await reader.page.getByText("A link in the room timeline", { exact: true }).count(), 0);
+  assert.equal(await reader.page.getByText("A reply without a link", { exact: true }).count(), 0);
+  await reader.page.goto(searchPath + "&has=link&sort=oldest&cursor=" + timeline.id);
+  await reader.page.getByText("A link in a reply", { exact: true }).waitFor();
+  assert.equal(await reader.page.getByText("A link in the room timeline", { exact: true }).count(), 0);
+  assert.equal(await reader.page.getByText("A reply without a link", { exact: true }).count(), 0);
+  await reader.page.goto(searchPath + "&has=link&has=file");
+  await reader.page.getByRole("heading", { name: "No messages found" }).waitFor();
+
+  const longQuery = "x".repeat(1000);
+  await reader.page.goto(searchPath);
+  await reader.page.getByRole("button", { name: /^Change search:/ }).click();
+  const field = reader.page.getByRole("combobox", { name: "Search" });
+  await field.fill(longQuery);
+  await field.press("Enter");
+  await reader.page.waitForURL(url => url.searchParams.get("q") === longQuery);
+  await reader.page.getByRole("heading", { name: "No messages found" }).waitFor();
+  const recent = await call(reader, "ember-read", { operation: "recentSearches" }, true);
+  assert.equal(JSON.parse(recent[0].query).q, longQuery, "Recent searches preserve the full supported query.");
+
+  const longWord = "code".repeat(30);
+  await send(sender, room.id, "Reference " + longWord);
+  const longWordResult = await call(reader, "ember-search", { q: longWord, roomId: room.id }, true);
+  assert.deepEqual(longWordResult.messages.map((message: { plainText: string }) => message.plainText), ["Reference " + longWord]);
 }
 
 try {
@@ -163,6 +208,11 @@ try {
   const thread = await call(maya, "ember-read", { operation: "thread", id: Number(root.id) }, true);
   assert.equal(thread.messages[0].id, reply.id);
   assert.equal(thread.messages[0].parentId, root.id);
+  const check = { roomId: room.id, clientMessageIds: [reply.clientMessageId, root.clientMessageId] };
+  assert.deepEqual(await call(jules, "message-check", check, true), {
+    stored: [reply.clientMessageId], missing: [root.clientMessageId],
+  });
+  await call(outsider, "message-check", check, true, 404);
 
   const boost = await call(jules, "react", { messageId: root.id, content: "🌱" });
   const reacted = await call(jules, "ember-read", { operation: "thread", id: Number(root.id) }, true);
@@ -190,6 +240,7 @@ try {
 
   await verifyProtectedFile(maya, jules, room.id);
   await verifyOpenFile(maya, jules);
+  await verifyFilteredSearch(maya, jules);
   await call(jules, "update-membership", { roomId: room.id, favorite: true, involvement: "everything" });
   const sidebar = await call(jules, "ember-read", { operation: "sidebar" }, true);
   assert(sidebar.favorites.rooms.includes(room.id));

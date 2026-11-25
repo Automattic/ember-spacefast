@@ -7,6 +7,10 @@ const client = createClient();
 const refreshListeners = new Set<() => void>();
 
 export async function readAction(operation: string, args: unknown[]) {
+  if (operation === "messageCheck") {
+    const [roomId, clientMessageIds] = args as [string, string[]];
+    return client.actions.messageCheck({ roomId, clientMessageIds });
+  }
   if (operation === "threadChanges") {
     const [parentId, after, before, since, until] = args as [string, number, number, string, string];
     return client.actions.threadChanges({ parentId, after, before, since, until });
@@ -131,8 +135,8 @@ export function useMutation(operation: string) {
       input = { ...message, body: prepared.html, plainText: prepared.plainText };
     }
     const result = await actions[operation](input).catch((error: ReadFailure) => {
-      // A missing response can still mean the attachment was committed.
-      if (operation !== "commitFile" || (error.status && error.status < 500)) throw error;
+      // These mutations can return the record saved before a response was lost.
+      if ((operation !== "commitFile" && operation !== "sendMessage") || (error.status && error.status < 500)) throw error;
       return actions[operation](input);
     });
     if (operation !== "roomPresence") refreshListeners.forEach(refresh => refresh());
