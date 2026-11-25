@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "20261125175939_ttpfj8_index_memberships",
+  "ops": [
+    {
+      "op": "addIndex",
+      "table": "memberships",
+      "index": {
+        "name": "lastReadId_queried",
+        "unique": false,
+        "columns": [
+          "lastReadId"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "memberships",
+      "meta": {
+        "addQueried": [
+          "lastReadId"
+        ]
+      }
+    }
+  ]
+}

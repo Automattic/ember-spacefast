@@ -4107,7 +4107,7 @@ index f4ad7d8..b16b10b 100644
            nodes={quoted}
            row={article}
 diff --git a/client/ember/components/workspace/message-list.tsx b/client/ember/components/workspace/message-list.tsx
-index f773572..56c6200 100644
+index f773572..6ee6251 100644
 --- a/client/ember/components/workspace/message-list.tsx
 +++ b/client/ember/components/workspace/message-list.tsx
 @@ -1,13 +1,14 @@
@@ -4130,12 +4130,54 @@ index f773572..56c6200 100644
 +import { ScrollIntoViewContext } from "../../hooks/use-scroll-into-view";
 +import { dropTarget } from "../../lib/drop-target";
 +import { dateLabel, dateTimeLabel, timeline } from "../../lib/messages";
-+import type { Focus, RoomState } from "../../lib/room-state";
++import { isPending, type Focus, type RoomState } from "../../lib/room-state";
 +import { cn } from "../../lib/utils";
  import { InvitationCard } from "./invitation-card";
  import { MessageItem, type MessageActions, type MessageEditors, type ThreadPlace } from "./message-item";
  
-@@ -176,7 +177,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+@@ -122,6 +123,7 @@ interface Props {
+   editors: MessageEditors;
+   onLoadOlder: () => void;
+   onLoadNewer: () => void;
++  onReadThrough?: (messageId: string) => void;
+   /** Goes to the newest messages, answering whether it could, which it can't while the room is away and they aren't loaded. */
+   onJumpToNewest: () => boolean;
+   /** Files dropped on the messages, which go to the composer. */
+@@ -145,7 +147,7 @@ interface Props {
+  * else, it keeps the reader's place, loads the pages before and after as they near either end, and
+  * offers Jump to newest message when new ones come.
+  */
+-export function MessageList({ roomName, direct = false, invitation, onDismissInvitation, state, me, actions, editing, editors, onLoadOlder, onLoadNewer, onJumpToNewest, onDropFiles = () => {}, thread, openThread, newSince = null }: Props) {
++export function MessageList({ roomName, direct = false, invitation, onDismissInvitation, state, me, actions, editing, editors, onLoadOlder, onLoadNewer, onReadThrough, onJumpToNewest, onDropFiles = () => {}, thread, openThread, newSince = null }: Props) {
+   const scroller = useRef<HTMLDivElement>(null);
+   const content = useRef<HTMLDivElement>(null);
+   const top = useRef<HTMLDivElement>(null);
+@@ -172,23 +174,47 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+
+   const nearEnd = (el: HTMLElement) => !state.hasNewer && el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;
+
++  const reportRead = useEffectEvent(() => {
++    const el = scroller.current;
++    if (!onReadThrough || !el || document.visibilityState !== "visible" ||
++      state.status !== "open" || state.offline || state.loadingPage || !nearEnd(el)) return;
++    const latest = state.messages.findLast(message => !isPending(message));
++    if (!latest) return;
++    const row = rowsIn(el).find(message => message.dataset.messageId === latest.id);
++    if (!row) return;
++    const view = el.getBoundingClientRect();
++    const box = row.getBoundingClientRect();
++    if (box.top < view.bottom && box.bottom > view.top) onReadThrough(latest.id);
++  });
++
++  useEffect(() => {
++    if (!onReadThrough) return;
++    const onVisibility = () => reportRead();
++    onVisibility();
++    document.addEventListener("visibilitychange", onVisibility);
++    return () => document.removeEventListener("visibilitychange", onVisibility);
++  }, [onReadThrough, state.status, state.offline, state.loadingPage]);
++
+   // Keeps the reader at the end, or in their place, as the timeline or what it shows changes, but not as only what it
    // shows resizes while something's open in a message (`opened`). A short last page of later messages can leave them
    // at the end without scrolling them, so this asks again.
    const settle = useEffectEvent((contentResized = false) => {
@@ -4145,7 +4187,12 @@ index f773572..56c6200 100644
      const scroll = !contentResized || open.current === 0;
      if (scroll && atEnd.current) el.scrollTop = el.scrollHeight;
      else if (scroll && place.current) restore(el, place.current);
-@@ -188,7 +190,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+     atEnd.current = nearEnd(el);
+     if (atEnd.current) setBehind(false);
+     place.current = placeIn(el);
++    reportRead();
+   });
+
    // Goes to a message, centred and outlined, as a permalink opens it, or, for none, to the end, as
    // sending and Jump to newest message go.
    const go = useEffectEvent((messageId: string | null) => {
@@ -4155,7 +4202,15 @@ index f773572..56c6200 100644
      const row = messageId === null ? undefined : rowsIn(el).find((r) => r.dataset.messageId === messageId);
      if (row) {
        const view = el.getBoundingClientRect();
-@@ -226,15 +229,19 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+@@ -201,6 +227,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+     atEnd.current = nearEnd(el);
+     place.current = placeIn(el);
+     setBehind(false);
++    reportRead();
+   });
+
+   // Something open in a message that scrolls itself into view, as its editor or New boost's form, grows and scrolls
+@@ -226,15 +253,19 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
    // A page that showed its newest messages first draws the rest above them once they're on screen, or before the
    // view is painted where they don't fill it with room to spare, so that nothing shows above them meanwhile.
    useLayoutEffect(() => {
@@ -4178,7 +4233,7 @@ index f773572..56c6200 100644
      const observer = new ResizeObserver(() => {
        const contentResized = el.clientHeight === viewHeight.current && el.clientWidth === viewWidth.current;
        viewHeight.current = el.clientHeight;
-@@ -242,7 +249,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+@@ -242,7 +273,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
        settle(contentResized);
      });
      observer.observe(el);
@@ -4187,7 +4242,7 @@ index f773572..56c6200 100644
      return () => observer.disconnect();
    }, []);
  
-@@ -265,12 +272,15 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+@@ -265,12 +296,15 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
      // for the reader instead of retrying in a loop.
      const shown = state.messages;
      const root = scroller.current;
@@ -4205,7 +4260,7 @@ index f773572..56c6200 100644
      return () => {
        older.disconnect();
        newer.disconnect();
-@@ -278,7 +288,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+@@ -278,7 +312,8 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
    }, [state.messages]);
  
    const onScroll = () => {
@@ -4215,6 +4270,14 @@ index f773572..56c6200 100644
      // A resize scrolls the timeline to keep its end in view for a reader at it, and that scroll can arrive once
      // the timeline has resized again, before the resize observer has caught up, leaving them at the end of the
      // view as it was. They didn't move, so they're still at the end. Any other scroll is the reader's, even one
+@@ -287,6 +322,7 @@ export function MessageList({ roomName, direct = false, invitation, onDismissInv
+     atEnd.current = nearEnd(el) || stillAtEnd;
+     if (atEnd.current) setBehind(false);
+     place.current = placeIn(el);
++    reportRead();
+   };
+
+   // The card shows in its room while the room is new, and it's the room's welcome, but only to the
 diff --git a/client/ember/components/workspace/model-picker.tsx b/client/ember/components/workspace/model-picker.tsx
 index b64492a..5f43bdc 100644
 --- a/client/ember/components/workspace/model-picker.tsx
@@ -5888,10 +5951,10 @@ index 672b951..07d87a6 100644
  export function DeleteButton({ label, text, disabled, onClick }: { label: string; text: string; disabled: boolean; onClick: () => void }) {
    return (
 diff --git a/client/ember/components/workspace/room-view.tsx b/client/ember/components/workspace/room-view.tsx
-index 184555d..1ca5b43 100644
+index 184555d..1634265 100644
 --- a/client/ember/components/workspace/room-view.tsx
 +++ b/client/ember/components/workspace/room-view.tsx
-@@ -1,19 +1,21 @@
+@@ -1,19 +1,22 @@
 -import { useEffect, useEffectEvent, useImperativeHandle, useRef, type Ref } from "react";
 -import type { Favorites, Invitation, Involvement, Me } from "@ember/protocol";
 -import { MainContent } from "@/components/main-content";
@@ -5914,6 +5977,7 @@ index 184555d..1ca5b43 100644
 +import { useMediaQuery } from "../../hooks/use-media-query";
 +import { useMessageEditors } from "../../hooks/use-message-editors";
 +import { useRoom } from "../../hooks/use-room";
++import { useMarkRoomRead } from "../../hooks/use-mark-room-read";
 +import { useVisit } from "../../hooks/use-route";
 +import { useTitle } from "../../hooks/use-title";
 +import type { Room } from "../../lib/api";
@@ -5927,7 +5991,7 @@ index 184555d..1ca5b43 100644
  import { RoomHeader } from "./room-header";
  import { RoomNotice } from "./room-notice";
  import { ThreadPanel } from "./thread-panel";
-@@ -51,7 +53,7 @@ interface Props {
+@@ -51,7 +54,7 @@ interface Props {
    onFailed: (error: unknown) => void;
    /** When the room turns out to be gone for this person: deleted, or no longer theirs. */
    onGone: (room: Room) => void;
@@ -5936,7 +6000,7 @@ index 184555d..1ca5b43 100644
  }
  
  export interface RoomViewHandle {
-@@ -59,8 +61,24 @@ export interface RoomViewHandle {
+@@ -59,8 +62,24 @@ export interface RoomViewHandle {
    focusComposer(): void;
  }
  
@@ -5963,7 +6027,7 @@ index 184555d..1ca5b43 100644
    const nameOf = useNameOf();
    const name = roomName(room, me.id, nameOf);
    const direct = room.kind === "direct";
-@@ -72,7 +90,6 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -72,7 +91,6 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
    useEffect(() => {
      if (foundGone) roomGone();
    }, [foundGone]);
@@ -5971,7 +6035,7 @@ index 184555d..1ca5b43 100644
  
    // The room opens at the message its address names. Following its permalink, or one to another message
    // in it, or the room's own link, goes there, or to the newest, even when it's the page shown. One
-@@ -93,7 +110,7 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -93,9 +111,10 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
      .filter((u) => u.id !== me.id);
    const composer = useRef<ComposerHandle>(null);
    const { editing, editors } = useMessageEditors(composer);
@@ -5979,8 +6043,11 @@ index 184555d..1ca5b43 100644
 +  useImperativeHandle(imperativeRef, () => ({ focusComposer: editors.returnFocus }), [editors]);
    // A thread that covers the room leaves nothing of it to reach until it's closed.
    const covered = useMediaQuery(THREAD_COVERS_ROOM) && threadId !== undefined;
++  const markRoomRead = useMarkRoomRead(room.id, me.id);
  
-@@ -105,6 +122,9 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+   // Up Arrow edits your newest message, unless it's still on its way, or the timeline is reading older
+   // history and may not hold it.
+@@ -105,6 +124,9 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
      if (newest && !isPending(newest)) editors.open(newest.id);
    };
  
@@ -5990,7 +6057,7 @@ index 184555d..1ca5b43 100644
    return (
      <>
        {/* The room's header and messages, placed in the page's grid as if they were its own. */}
-@@ -113,8 +133,6 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -113,8 +135,6 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
            room={room}
            name={name}
            present={state.present}
@@ -5999,7 +6066,7 @@ index 184555d..1ca5b43 100644
            favorite={favorite}
            onStarred={onStarred}
            involvement={involvement}
-@@ -124,6 +142,8 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -124,6 +144,8 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
          />
          {/* Backgrounds run under a landscape phone's notch; the room's contents stay clear of it. */}
          <MainContent className="relative flex min-h-0 min-w-0 flex-col bg-background pr-[env(safe-area-inset-right)] max-md:pl-[env(safe-area-inset-left)]">
@@ -6008,7 +6075,7 @@ index 184555d..1ca5b43 100644
            <RoomNotice notice={state.notice} onDismiss={dismissNotice} />
            <MessageList
              roomName={name}
-@@ -132,7 +152,7 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -132,27 +154,25 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
              onDismissInvitation={onDismissInvitation}
              state={state}
              me={me}
@@ -6017,7 +6084,10 @@ index 184555d..1ca5b43 100644
              editing={editing}
              editors={editors}
              onLoadOlder={loadOlder}
-@@ -142,17 +162,14 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+             onLoadNewer={loadNewer}
++            onReadThrough={covered ? undefined : markRoomRead}
+             onJumpToNewest={() => jump(null)}
+             onDropFiles={(files) => composer.current?.addFiles(files)}
              openThread={threadId}
              newSince={newSince}
            />
@@ -6038,7 +6108,7 @@ index 184555d..1ca5b43 100644
                // Only while the room's first messages are on their way, not once it's been out of reach a while.
                deferEditor={state.status === "connecting" && !state.offline}
                // The thread open beside the room takes focus as it opens.
-@@ -161,8 +178,7 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -161,8 +181,7 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
                onSendFiles={postFiles}
                onTyping={typing}
                onEditLastMessage={editLastMessage}
@@ -6048,7 +6118,7 @@ index 184555d..1ca5b43 100644
          </MainContent>
        </div>
        {threadId !== undefined && (
-@@ -176,7 +192,8 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
+@@ -176,7 +195,8 @@ export function RoomView({ room, messageId, threadId, replyId, invitation, onDis
            frames={frames}
            status={state.status}
            offline={state.offline}

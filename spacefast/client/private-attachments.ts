@@ -21,6 +21,12 @@ export type AttachmentStorage = {
   upload(file: Blob, options: { public: boolean }): Promise<{ id: string; url: string; size: number }>;
   delete(id: string): Promise<void>;
 };
+function isAttachmentAddress(address: URL, origin: string, id: string): boolean {
+  if (address.origin !== origin || !/^[a-f0-9]{32}$/.test(id)) return false;
+  if (address.pathname === `/__stattic/u/${id}`) return true;
+  const file = address.pathname.match(/^\/wp-json\/spacepress\/v1\/files\/attachmentChunks\/(\d+)\/download$/)?.[1];
+  return Boolean(file && Number.isSafeInteger(Number(file)) && Number(file).toString(16).padStart(32, "0") === id);
+}
 export const attachmentHex = (bytes: Uint8Array) => Array.from(bytes, (n) => n.toString(16).padStart(2, "0")).join("");
 export function attachmentUnhex(value: string, length: number): Uint8Array<ArrayBuffer> {
   if (typeof value !== "string" || value.length !== length * 2 || !/^[a-f0-9]+$/.test(value)) throw new Error("Invalid attachment encryption data");
@@ -66,7 +72,7 @@ export async function encryptAttachmentChunks(
       chunks.push({ id: object.id, url: object.url, iv: attachmentHex(iv), size: bytes.byteLength });
       const origin = options.origin ?? location.origin;
       const address = new URL(object.url, origin);
-      if (address.origin !== origin || address.pathname !== `/__stattic/u/${object.id}` || !/^[a-f0-9]{32}$/.test(object.id)) throw new Error("Invalid attachment storage address");
+      if (!isAttachmentAddress(address, origin, object.id)) throw new Error("Invalid attachment storage address");
       chunks[chunks.length - 1].url = address.pathname + address.search;
       cancelled(options.signal);
       options.progress?.(Math.min(offset + CHUNK_SIZE, file.size), file.size);
@@ -139,7 +145,7 @@ export async function decryptAttachmentChunks(
     cancelled(options.signal);
     const url = new URL(chunk.url, origin);
     // Never send a native storage bearer key to another origin or arbitrary route.
-    if (url.origin !== origin || !/^\/__stattic\/u\/[a-f0-9]{32}$/.test(url.pathname) || !/^[a-f0-9]{32}$/.test(chunk.id) || !url.pathname.endsWith(`/${chunk.id}`)) throw new Error("Invalid attachment storage address");
+    if (!isAttachmentAddress(url, origin, chunk.id)) throw new Error("Invalid attachment storage address");
     const expected = Math.min(CHUNK_SIZE, manifest.size - index * CHUNK_SIZE);
     if (chunk.size !== expected) throw new Error("Invalid attachment chunk size");
     const response = await (options.fetch ?? fetch)(url.href, { signal: options.signal, credentials: "same-origin", redirect: "error", referrerPolicy: "no-referrer" });

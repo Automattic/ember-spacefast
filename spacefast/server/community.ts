@@ -15,6 +15,20 @@ export async function invitations(ctx:Reader) {await administrator(ctx);const ro
 export async function revokeInvitation(ctx:Writer,id:string) {const me=await administrator(ctx);const row=await ctx.db.invitations.get(clean(id));if(!row)throw new Error('Invitation unavailable.');await ctx.db.invitations.delete(row.id);await audit(ctx,me.id,'invitation.revoke',row.id);ctx.invalidate('invitations');return true;}
 export async function favoriteOrder(ctx:Writer,roomIds:string[]) {const me=await person(ctx);if(!Array.isArray(roomIds)||roomIds.length>500||new Set(roomIds).size!==roomIds.length)throw new Error('Invalid room order.');const memberships=await ctx.db.members.withIndex('by_person',q=>q.eq('personId',me.id)).take(500);for(const id of roomIds){const m=memberships.find(m=>m.roomId===id);if(!m?.favorite)throw new Error('Only your starred rooms may be reordered.');}for(const [i,id]of roomIds.entries()){const m=memberships.find(m=>m.roomId===id)!;await ctx.db.members.update(m.id,{order:String(i).padStart(6,'0')});}ctx.invalidate('sidebar');return {favorites:await readFavorites(ctx,me.id)};}
 export async function sharedOrder(ctx:Writer,roomIds:string[]) {await administrator(ctx);if(!Array.isArray(roomIds)||roomIds.length>500||new Set(roomIds).size!==roomIds.length)throw new Error('Invalid room order.');for(const [i,id]of roomIds.entries()){const room=await ctx.db.rooms.get(clean(id));if(!room||room.kind==='direct'||room.archived)throw new Error('Room unavailable.');await ctx.db.rooms.update(id,{order:String(i).padStart(6,'0')});}ctx.invalidate('sidebar');return true;}
-export async function rememberSearch(ctx:Writer,input:{query:string}) {const me=await person(ctx);const value=clean(input.query,1000);if(!value)return true;const rows=await ctx.db.recentSearches.withIndex('by_person',q=>q.eq('personId',me.id)).order('desc').take(21);const old=rows.find(r=>r.query===value);if(old)await ctx.db.recentSearches.delete(old.id);await ctx.db.recentSearches.insert({personId:me.id,query:value});for(const row of rows.slice(19))await ctx.db.recentSearches.delete(row.id);ctx.invalidate('recentSearches');return true;}
+export async function rememberSearch(ctx:Writer,input:{query:string}) {
+ const me=await person(ctx);
+ // JSON escaping can expand each character of the search to six, before adding filters.
+ const value=clean(input.query,8192);
+ if(!value)return true;
+ const rows=await ctx.db.recentSearches.withIndex('by_person',q=>q.eq('personId',me.id)).order('desc').take(21);
+ let kept=0;
+ for(const row of rows){
+  if(row.query===value||kept>=19)await ctx.db.recentSearches.delete(row.id);
+  else kept++;
+ }
+ await ctx.db.recentSearches.insert({personId:me.id,query:value});
+ ctx.invalidate('recentSearches');
+ return true;
+}
 export async function recentSearches(ctx:Reader) {const me=await person(ctx);return ctx.db.recentSearches.withIndex('by_person',q=>q.eq('personId',me.id)).order('desc').take(20);}
 export async function clearSearches(ctx:Writer) {const me=await person(ctx);const rows=await ctx.db.recentSearches.withIndex('by_person',q=>q.eq('personId',me.id)).take(100);for(const r of rows)await ctx.db.recentSearches.delete(r.id);ctx.invalidate('recentSearches');return true;}

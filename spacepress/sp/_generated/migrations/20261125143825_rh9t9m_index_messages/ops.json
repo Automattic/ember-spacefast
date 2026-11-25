@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "20261125143825_rh9t9m_index_messages",
+  "ops": [
+    {
+      "op": "addIndex",
+      "table": "messages",
+      "index": {
+        "name": "updatedAt_queried",
+        "unique": false,
+        "columns": [
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "messages",
+      "meta": {
+        "addQueried": [
+          "updatedAt"
+        ]
+      }
+    }
+  ]
+}

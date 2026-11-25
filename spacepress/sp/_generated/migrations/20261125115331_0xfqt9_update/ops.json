@@ -1,0 +1,721 @@
+{
+  "version": 1,
+  "id": "20261125115331_0xfqt9_update",
+  "ops": [
+    {
+      "op": "createTable",
+      "table": "search_tokens",
+      "physicalTable": "{prefix}sp_search_tokens",
+      "def": {
+        "editor": false,
+        "drafts": false,
+        "columns": {
+          "id": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": true,
+            "autoIncrement": true,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "token": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 100.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "roomId": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": {
+              "table": "rooms",
+              "column": "id",
+              "onDelete": "cascade",
+              "onUpdate": null,
+              "unsigned": true
+            }
+          },
+          "messageId": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": {
+              "table": "messages",
+              "column": "id",
+              "onDelete": "cascade",
+              "onUpdate": null,
+              "unsigned": true
+            }
+          },
+          "author": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "createdAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "updatedAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "deletedAt": {
+            "type": "timestamp",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedBy": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedGroup": {
+            "type": "text",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 36.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "_live": {
+            "type": "boolean",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": true,
+            "references": null
+          }
+        },
+        "softDelete": true,
+        "queried": [
+          "messageId",
+          "roomId",
+          "token"
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "token",
+              "messageId"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "messageId"
+            ],
+            "unique": false
+          }
+        ]
+      }
+    },
+    {
+      "op": "createTable",
+      "table": "rate_counters",
+      "physicalTable": "{prefix}sp_rate_counters",
+      "def": {
+        "editor": false,
+        "drafts": false,
+        "columns": {
+          "id": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": true,
+            "autoIncrement": true,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "key": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": true,
+            "max": 100.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "window": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "count": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "author": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "createdAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "updatedAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "deletedAt": {
+            "type": "timestamp",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedBy": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedGroup": {
+            "type": "text",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 36.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "_live": {
+            "type": "boolean",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": true,
+            "references": null
+          }
+        },
+        "softDelete": true,
+        "queried": [
+          "key"
+        ]
+      }
+    },
+    {
+      "op": "createTable",
+      "table": "audit_events",
+      "physicalTable": "{prefix}sp_audit_events",
+      "def": {
+        "editor": false,
+        "drafts": false,
+        "columns": {
+          "id": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": true,
+            "autoIncrement": true,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "actorId": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "action": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 40.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "subjectId": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "details": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "",
+            "references": null
+          },
+          "author": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "createdAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "updatedAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "deletedAt": {
+            "type": "timestamp",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedBy": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedGroup": {
+            "type": "text",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 36.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "_live": {
+            "type": "boolean",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": true,
+            "references": null
+          }
+        },
+        "softDelete": true,
+        "indexes": [
+          {
+            "columns": [
+              "subjectId"
+            ],
+            "unique": false
+          }
+        ]
+      }
+    },
+    {
+      "op": "createTable",
+      "table": "link_previews",
+      "physicalTable": "{prefix}sp_link_previews",
+      "def": {
+        "editor": false,
+        "drafts": false,
+        "columns": {
+          "id": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": true,
+            "autoIncrement": true,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "key": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": true,
+            "max": 64.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "title": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 160.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "description": {
+            "type": "text",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 280.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "expiresAt": {
+            "type": "integer",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "author": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "createdAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "updatedAt": {
+            "type": "timestamp",
+            "notNull": true,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": "1970-01-01T00:00:00.000Z",
+            "references": null
+          },
+          "deletedAt": {
+            "type": "timestamp",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedBy": {
+            "type": "integer",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "deletedGroup": {
+            "type": "text",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": 36.0,
+            "enum": null,
+            "default": null,
+            "references": null
+          },
+          "_live": {
+            "type": "boolean",
+            "notNull": false,
+            "primaryKey": false,
+            "autoIncrement": false,
+            "unique": false,
+            "max": null,
+            "enum": null,
+            "default": true,
+            "references": null
+          }
+        },
+        "softDelete": true,
+        "queried": [
+          "expiresAt",
+          "key"
+        ],
+        "indexes": [
+          {
+            "columns": [
+              "expiresAt"
+            ],
+            "unique": false
+          }
+        ]
+      }
+    },
+    {
+      "op": "dropIndex",
+      "table": "messages",
+      "name": "authorId_queried"
+    },
+    {
+      "op": "addColumn",
+      "table": "messages",
+      "column": "searchIndexed",
+      "def": {
+        "type": "boolean",
+        "notNull": true,
+        "primaryKey": false,
+        "autoIncrement": false,
+        "unique": false,
+        "max": null,
+        "enum": null,
+        "default": false,
+        "references": null
+      }
+    },
+    {
+      "op": "addIndex",
+      "table": "messages",
+      "index": {
+        "name": "idx_authorId_clientId",
+        "unique": false,
+        "columns": [
+          "authorId",
+          "clientId"
+        ]
+      }
+    },
+    {
+      "op": "addIndex",
+      "table": "messages",
+      "index": {
+        "name": "idx_searchIndexed_id",
+        "unique": false,
+        "columns": [
+          "searchIndexed",
+          "id"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "messages",
+      "meta": {
+        "addIndexes": [
+          {
+            "columns": [
+              "authorId",
+              "clientId"
+            ],
+            "unique": false
+          },
+          {
+            "columns": [
+              "searchIndexed",
+              "id"
+            ],
+            "unique": false
+          }
+        ],
+        "addQueried": [
+          "searchIndexed"
+        ]
+      }
+    },
+    {
+      "op": "addColumn",
+      "table": "invitations",
+      "column": "domainVerification",
+      "def": {
+        "type": "boolean",
+        "notNull": true,
+        "primaryKey": false,
+        "autoIncrement": false,
+        "unique": false,
+        "max": null,
+        "enum": null,
+        "default": false,
+        "references": null
+      }
+    },
+    {
+      "op": "addIndex",
+      "table": "invitations",
+      "index": {
+        "name": "domainVerification_queried",
+        "unique": false,
+        "columns": [
+          "domainVerification"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "invitations",
+      "meta": {
+        "addQueried": [
+          "domainVerification"
+        ]
+      }
+    }
+  ]
+}

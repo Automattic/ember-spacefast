@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "20261125122724_tszqeg_index_service_deliveries",
+  "ops": [
+    {
+      "op": "addIndex",
+      "table": "service_deliveries",
+      "index": {
+        "name": "createdAt_queried",
+        "unique": false,
+        "columns": [
+          "createdAt"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "service_deliveries",
+      "meta": {
+        "addQueried": [
+          "createdAt"
+        ]
+      }
+    }
+  ]
+}

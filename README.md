@@ -4,6 +4,8 @@ Give your next project a room. Post the screenshot that explains the bug. Quote 
 
 Ember is open-source team chat with rooms, direct messages, reactions, and searchable history. This fork runs on Spacefast Zero, which handles sign-in, storage, and live updates.
 
+The [SpacePress edition](spacepress/README.md) runs Ember room chat on WordPress.
+
 See Ember running before you start a workspace of your own. [Open Ember](https://ember.space.fast/)
 
 **Put Ember on Spacefast**

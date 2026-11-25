@@ -144,6 +144,17 @@ test('indexed newest cursor includes all equal-time matches without repetition',
 test('indexed oldest cursor moves forward and filters author and room',async()=>{const f=fixture('carol');for(let i=0;i<60;i++)await seedSearch(f,`old${i}`,'public','needle',`2026-01-01T00:00:${String(i).padStart(2,'0')}.000Z`);const first=await searchModule.search(f.ctx,{q:'needle',sort:'oldest',roomId:'public',from:'alice'});const second=await searchModule.search(f.ctx,{q:'needle',sort:'oldest',roomId:'public',from:'alice',cursor:first.cursor});assert.equal(new Set([...first.messages,...second.messages].map(m=>m.id)).size,60);});
 test('editing replaces search terms and deleting removes the indexed hit',async()=>{const f=fixture('bob');const m=await send(f,'public',{body:'firstword'});assert.equal((await searchModule.search(f.ctx,{q:'firstword'})).messages.length,1);await writes.editMessage(f.ctx,{messageId:m.id,body:'replacement'});assert.equal((await searchModule.search(f.ctx,{q:'firstword'})).messages.length,0);assert.equal((await searchModule.search(f.ctx,{q:'replacement'})).messages.length,1);await writes.deleteMessage(f.ctx,m.id);assert.equal((await searchModule.search(f.ctx,{q:'replacement'})).messages.length,0);});
 test('search excludes private token metadata before reading candidates',async()=>{const f=fixture('carol');await seedSearch(f,'public-old','public','needle','2020-01-01T00:00:00.000Z');for(let i=0;i<205;i++)await seedSearch(f,`private${i}`,'private','needle',`2026-01-01T00:00:00.${String(i).padStart(3,'0')}Z`);const result=await searchModule.search(f.ctx,{q:'needle'});assert.deepEqual(result.messages.map(m=>m.id),['public-old']);assert.equal(result.hasMore,false);assert.equal(result.cursor,null);});
+test('repeating a full-length recent search retains the other nineteen searches',async()=>{
+ const f=fixture('bob');
+ for(let i=0;i<19;i++)f.seed('recentSearches',{personId:'bob',query:`search ${i}`,createdAt:'2025-01-01T00:00:00.000Z'});
+ const query=JSON.stringify({q:'x'.repeat(1000),hasLink:true,sort:'oldest'});
+ await community.rememberSearch(f.ctx,{query});
+ await community.rememberSearch(f.ctx,{query});
+ const recent=await community.recentSearches(f.ctx);
+ assert.equal(recent.length,20);
+ assert.equal(recent[0].query,query);
+ assert.equal(recent.filter(row=>row.query===query).length,1);
+});
 
 const secret='secure_webhook_secret_12345678901234567890';
 const webhookRequest=(botId,roomId='public',key=secret,id='delivery1',body=JSON.stringify({text:'hello webhook'}))=>({params:{botId,roomId,secret:key},headers:{get(name){return name==='Idempotency-Key'?id:null;}},async text(){return body;}});

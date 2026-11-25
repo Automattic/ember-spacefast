@@ -1,19 +1,24 @@
 import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { disableBrowserPush } from './ember/lib/native-push';
 import { confirmOutbox } from './ember/lib/outbox';
-import { useQuery, useMutation, signOut, useAuth } from './native-sdk';
+import { isSearchable, parseSearch, searchOfQuery } from './protocol/search';
+import { useQuery, useQueryStatus, useMutation, signOut, useAuth, readAction, unfurlAction } from './native-sdk';
 
-type Watch = { key:string; name:string; args:any[]; value?:any; listeners:Set<(value:any)=>void> };
+type Watch = { key:string; name:string; args:any[]; value?:any; failed?:boolean; listeners:Set<(value:any)=>void>; health:Set<(failed:boolean)=>void> };
 const watches = new Map<string,Watch>();
 const changed = new Set<()=>void>();
 let mutations: Record<string,(...args:any[])=>Promise<any>> = {};
-export function watchNative(name:string,args:any[],listener:(v:any)=>void) {
+export function watchNative(name:string,args:any[],listener:(v:any)=>void,onFailure?:(failed:boolean)=>void) {
  const key=JSON.stringify([name,args]); let item=watches.get(key);
- if(!item){item={key,name,args,listeners:new Set()};watches.set(key,item);changed.forEach(fn=>fn());}
+ if(!item){item={key,name,args,listeners:new Set(),health:new Set()};watches.set(key,item);changed.forEach(fn=>fn());}
+ if(onFailure){
+  item.health.add(onFailure);
+  if(item.failed)queueMicrotask(()=>{if(item.health.has(onFailure))onFailure(Boolean(item.failed));});
+ }
  item.listeners.add(listener); if(item.value!==undefined)queueMicrotask(()=>{if(item.listeners.has(listener))listener(item.value);});
- return ()=>{item.listeners.delete(listener);if(!item.listeners.size && watches.get(key)===item){watches.delete(key);changed.forEach(fn=>fn());}};
+ return ()=>{item.listeners.delete(listener);if(onFailure)item.health.delete(onFailure);if(!item.listeners.size && watches.get(key)===item){watches.delete(key);changed.forEach(fn=>fn());}};
 }
-export function readNative(name:string,...args:any[]):Promise<any>{return new Promise((resolve,reject)=>{let off=()=>{};const timeout=setTimeout(()=>{off();reject(new Error('The native service did not answer. Please try again.'));},20000);off=watchNative(name,args,value=>{clearTimeout(timeout);off();resolve(value)});});}
+export function readNative(name:string,...args:any[]):Promise<any>{if(readAction)return readAction(name,args);return new Promise((resolve,reject)=>{let off=()=>{};const timeout=setTimeout(()=>{off();reject(new Error('The native service did not answer. Please try again.'));},20000);off=watchNative(name,args,value=>{clearTimeout(timeout);off();resolve(value)});});}
 export async function mutateNative(name:string,...args:any[]) {
  const fn=mutations[name];
  if(!fn)throw new Error('Native connection is not ready.');
@@ -38,8 +43,17 @@ async function dispatchBotReplies(messageId:string, count:number) {
   if(!await mutateNative('dispatchBotDelivery',messageId))break;
  }
 }
-function Subscription({item}:{item:Watch}){const value=useQuery(item.name,...item.args);useEffect(()=>{if(value!==undefined){item.value=value;item.listeners.forEach(fn=>fn(value));}},[item,value]);return null;}
-const names=['setup','join','createRoom','startDirect','sendMessage','dispatchPush','removePush','dispatchBotDelivery','dispatchAssistant','editMessage','deleteMessage','react','unreact','markRead','typing','profile','updateAccount','updateRoom','updateMembership','reserveFile','commitFile','updatePerson','leaveRoom','archiveRoom','favoriteOrder','sharedOrder','rememberSearch','clearSearches','cancelFile','registerAttachmentDevice','revokeAttachmentDevice'];
+function Subscription({item}:{item:Watch}){
+ const {value,error}=useQueryStatus(item.name,...item.args);
+ const failed=error!==undefined;
+ useEffect(()=>{item.failed=failed;item.health.forEach(fn=>fn(failed));},[item,failed]);
+ useEffect(()=>{
+  if(failed && value===undefined)item.value=undefined;
+  if(!failed && value!==undefined){item.value=value;item.listeners.forEach(fn=>fn(value));}
+ },[item,value,failed]);
+ return null;
+}
+const names=['setup','join','createRoom','startDirect','sendMessage','dispatchPush','removePush','dispatchBotDelivery','dispatchAssistant','editMessage','deleteMessage','react','unreact','markRead','roomPresence','typing','profile','updateAccount','updateRoom','updateMembership','reserveFile','commitFile','updatePerson','leaveRoom','archiveRoom','favoriteOrder','sharedOrder','rememberSearch','clearSearches','cancelFile','registerAttachmentDevice','revokeAttachmentDevice'];
 function Mutation({name}:{name:string}){mutations[name]=useMutation(name);return null;}
 function NativeOutbox() {
  const auth = useAuth();
@@ -91,8 +105,21 @@ export async function nativeRequest(path:string,init:RequestInit={}) {
  if(room){const id=decodeURIComponent(room[1]),action=room[2];if(action==='settings'){const v=await readNative('roomSettings',id);return {...v,canAdminister:v.canEdit,people:v.users.map((p:any)=>({...p,member:v.memberIds.includes(p.id)}))};}if(!action&&method==='DELETE')return mutateNative('archiveRoom',id);if(action==='membership'&&method==='DELETE')return mutateNative('leaveRoom',id);if(!action&&method==='PATCH')return {room:await mutateNative('updateRoom',{roomId:id,...body})};if(['favorite','involvement'].includes(action??'')){return mutateNative('updateMembership',{roomId:id,...body});}}
  if(p==='/api/sidebar/order')return mutateNative('favoriteOrder',body.roomIds);
  if(p==='/api/account/room_order'){await mutateNative('sharedOrder',body.roomIds);return {sharedOrder:(await readNative('sidebar')).sharedOrder};}
- if(p==='/api/searches'){if(method==='DELETE')return mutateNative('clearSearches');const input=method==='GET'?Object.fromEntries(url.searchParams):body;if(method==='POST')await mutateNative('rememberSearch',{query:JSON.stringify(input)});const v=await readNative('search',{...input,roomId:input.in});const sidebar=await readNative('sidebar');return {search:input.q||input.in||input.from||input.withMe||input.hasLink||input.hasFile||input.inThread?input:null,matches:(v.messages??[]).map((message:any)=>({message,words:String(input.q??'').split(/\s+/)})),next:v.cursor,rooms:sidebar.rooms,recent:(await readNative('recentSearches')).map((r:any)=>{try{const saved=JSON.parse(r.query);return typeof saved.q==='string'?saved:{q:r.query};}catch{return {q:r.query};}})};}
+ if(p==='/api/searches'){
+  if(method==='DELETE')return mutateNative('clearSearches');
+  const parsed=method==='GET'?searchOfQuery(url.searchParams):parseSearch(body);
+  if(typeof parsed==='string')throw Object.assign(new Error(parsed),{status:422});
+  const {search,sort}=parsed;
+  const cursor='cursor' in parsed?parsed.cursor??undefined:undefined;
+  const searchable=isSearchable(search);
+  if(method==='POST'&&searchable)await mutateNative('rememberSearch',{query:JSON.stringify({...search,sort})});
+  const result=searchable?await readNative('search',{...search,roomId:search.in,sort,cursor}):{messages:[],cursor:null};
+  const sidebar=await readNative('sidebar');
+  const recent=await readNative('recentSearches');
+  return {search:searchable?search:null,matches:(result.messages??[]).map((message:any)=>({message,words:search.q.split(/\s+/).filter(Boolean)})),next:result.cursor,rooms:sidebar.rooms,recent:recent.map((r:any)=>{try{const saved=JSON.parse(r.query);return typeof saved?.q==='string'?saved:{q:r.query};}catch{return {q:r.query};}})};
+ }
  if(p==='/api/unfurl'&&method==='POST'){
+  if(unfurlAction)return unfurlAction(body.url);
   const response=await fetch('/link-preview',{
    method:'POST',
    headers:{'Content-Type':'application/json'},
