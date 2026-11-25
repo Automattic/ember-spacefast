@@ -107,7 +107,7 @@ const unsupported = () => {
   throw Object.assign(new Error("This feature is not available in Ember on SpacePress."), { status: 501 });
 };
 
-const byId = new Set(["archiveRoom", "leaveRoom", "markRead", "roomPresence", "deleteMessage", "unreact", "cancelFile", "revokeInvitation"]);
+const byId = new Set(["archiveRoom", "leaveRoom", "roomPresence", "deleteMessage", "unreact", "cancelFile", "revokeInvitation"]);
 
 export function useMutation(operation: string) {
   return useCallback(async (...args: unknown[]) => {
@@ -115,6 +115,7 @@ export function useMutation(operation: string) {
     const actions = client.actions as Record<string, (input?: unknown) => Promise<unknown>>;
     let input = args[0];
     if (byId.has(operation)) input = { id: args[0] };
+    if (operation === "markRead") input = { id: args[0], through: args[1], expectedPersonId: args[2] };
     if (operation === "typing") input = { id: args[0], on: args[1] };
     if (operation === "revokeAttachmentDevice") input = { id: args[0], expectedPersonId: args[1] };
     if (operation === "startDirect") input = { userIds: args[0] };

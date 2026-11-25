@@ -2,6 +2,7 @@ import { readNative, mutateNative, watchNative } from '../../native-transport';
 import { readAction } from '../../native-sdk';
 import type { ClientFrame, Message, Sidebar, User } from '../../protocol/index';
 type RoomSnapshot = { messages: Message[]; hasMore: boolean; present?: User[]; typing?: { user: User; typing: boolean }[]; seq?: number; observedAt?: string };
+type HistoryPage = { messages: Message[]; hasMore: boolean; hasNewer: boolean; around: string | null };
 type ThreadSnapshot = { parent: Message; messages: Message[]; hasMore: boolean; observedAt: string };
 type ThreadWatch = { stop: () => void; rememberHistory?: (messages: Message[]) => void };
 export const OFFLINE_AFTER_MS=5000;
@@ -28,6 +29,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  let lastDelivered: string | undefined;
  let oldestRoomMessage = Infinity;
  let roomVisible = url.searchParams.get('visible') !== 'false';
+ const openingMessage = url.searchParams.get('around');
  const rememberRoomHistory = (messages: Message[]) => {
   if (messages.length > 0) oldestRoomMessage = Math.min(oldestRoomMessage, Number(messages[0]!.id));
  };
@@ -45,14 +47,15 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    after = Number(changes.messages.at(-1)!.id);
   }
  }
- const applyRoom = (value: RoomSnapshot) => {
+ const applyRoom = (value: RoomSnapshot, opening?: HistoryPage) => {
   const nextTyping = new Map((value.typing ?? []).map(entry => [entry.user.id, entry]));
   for (const [id, typing] of nextTyping) if (!typingIds.has(id)) emit({type:'typing', ...typing});
   for (const [id, typing] of typingIds) if (!nextTyping.has(id)) emit({type:'typing', user:typing.user, typing:false});
   typingIds = nextTyping;
   if (!prior) {
    seq = value.seq ?? 0;
-   emit(value);
+   if (opening) rememberRoomHistory(opening.messages);
+   emit({...value, ...opening});
   } else {
    if (readAction && prior.present && value.present) {
     const present = new Set(value.present.map(user => user.id));
@@ -82,6 +85,14 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
     value = pendingRoom;
     pendingRoom = undefined;
     const first = Number(value.messages[0]?.id);
+    let opening: HistoryPage | undefined;
+    if (!prior && readAction && openingMessage) {
+     try {
+      opening = await readNative('roomAround', roomId, openingMessage);
+     } catch (error) {
+      if ((error as {status?: number}).status !== 404) throw error;
+     }
+    }
     if (readAction && prior?.observedAt && value.observedAt) {
      const before = Math.min(first, Number(lastDelivered ?? 0) + 1);
      await refreshHistory('roomChanges', roomId, oldestRoomMessage, before, prior.observedAt, value.observedAt, () => closed);
@@ -99,7 +110,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
      if (gap.length !== page.messages.length || !page.hasNewer) break;
     }
     if (closed) return;
-    applyRoom(value);
+    applyRoom(value, opening);
     if (failedReads.has('catch-up')) markCatchUp(false);
    }
   } catch {
@@ -204,7 +215,8 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    },
   };
  }
- if(roomId&&roomVisible)void mutateNative('markRead',roomId).catch(()=>{});
+ const visitRoom = () => mutateNative(readAction ? 'roomPresence' : 'markRead', roomId);
+ if(roomId&&roomVisible)void visitRoom().catch(()=>{});
  if(roomId&&readAction) {
   const heartbeat = window.setInterval(() => {
    if (roomVisible && !document.hidden) void mutateNative('roomPresence', roomId).catch(()=>{});
@@ -219,7 +231,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'boost.create':await mutateNative('react',{messageId:frame.messageId,content:frame.content});break;
  case 'boost.delete':await mutateNative('unreact',frame.boostId);break;
  case 'typing.start':case 'typing.stop':await mutateNative('typing',roomId,frame.type==='typing.start');break;
- case 'presence.visible':roomVisible=frame.visible;if(frame.visible)await mutateNative('markRead',roomId);break;
+ case 'presence.visible':roomVisible=frame.visible;if(frame.visible)await visitRoom();break;
  case 'thread.open':{
   if(!threads.has(frame.parentId)) threads.set(frame.parentId,watchThread(frame.parentId));
   break;

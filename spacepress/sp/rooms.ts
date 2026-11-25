@@ -1,4 +1,4 @@
-import { HttpError, mutation } from "spacepress";
+import { db, HttpError, mutation } from "spacepress";
 import { memberships, messages, rooms } from "spacepress:db";
 import { account, actor, admin, directory, ensureMember, membership, numericId, personView, requireRoom, roomView, visibleRooms, type RoomView } from "./access";
 import { serviceIdentity, serviceOffset } from "./service-identity";
@@ -23,7 +23,7 @@ export async function sidebar() {
   visible.sort((a, b) => a.position - b.position || a.id - b.id);
   for (const room of visible) {
     const member = await membership(room.id, user.wpId);
-    const [latest] = await messages.system.list({ where: { roomId: room.id, removed: false }, orderBy: { id: "desc" }, limit: 1 });
+    const [latest] = await messages.system.list({ where: { roomId: room.id, inRoom: true, removed: false }, orderBy: { id: "desc" }, limit: 1 });
     const lastReadId = member?.lastReadId ?? 0;
     const read = lastReadId ? await messages.system.get(lastReadId) : null;
     if (!room.directKey) sharedOrder.push(String(room.id));
@@ -31,7 +31,7 @@ export async function sidebar() {
     let unread = false;
     if (latest && latest.id > lastReadId) {
       unread = latest.authorId !== user.wpId || (await messages.system.list({
-        where: { roomId: room.id, removed: false, id: { gt: lastReadId }, authorId: { ne: user.wpId } },
+        where: { roomId: room.id, inRoom: true, removed: false, id: { gt: lastReadId }, authorId: { ne: user.wpId } },
         limit: 1,
       })).length > 0;
     }
@@ -197,12 +197,24 @@ export const sharedOrder = mutation({ access: "authenticated" }, async ({ roomId
   return true;
 });
 
-export const markRead = mutation({ access: "authenticated" }, async ({ id }: { id: string }) => {
+export const markRead = mutation({ access: "authenticated" }, async ({ id, through, expectedPersonId }: {
+  id: string; through?: string; expectedPersonId?: string;
+}) => {
   const me = await actor();
+  if (expectedPersonId && me.id !== expectedPersonId) throw new HttpError(403, "session_changed", "The signed-in account changed.");
   const room = await requireRoom(numericId(id));
+  const [latest] = through === undefined
+    ? await messages.system.list({ where: { roomId: room.id, inRoom: true, removed: false }, orderBy: { id: "desc" }, limit: 1 })
+    : await messages.system.list({ where: { id: numericId(through), roomId: room.id, inRoom: true }, limit: 1 });
+  if (through !== undefined && !latest) throw new HttpError(404, "message_unavailable", "Message unavailable.");
   const record = await ensureMember(room.id, me.wpId, Boolean(room.directKey));
-  const [latest] = await messages.system.list({ where: { roomId: room.id, removed: false }, orderBy: { id: "desc" }, limit: 1 });
-  await memberships.system.update(record.id, { lastReadId: latest?.id ?? 0, seenAt: Date.now() });
+  const lastReadId = latest?.id ?? 0;
+  const seenAt = Date.now();
+  if (lastReadId > record.lastReadId) {
+    await db.update(memberships).set({ lastReadId, seenAt }).where({ id: record.id, lastReadId: { lt: lastReadId } });
+  } else if (through === undefined) {
+    await memberships.system.update(record.id, { seenAt });
+  }
   return true;
 });
 
