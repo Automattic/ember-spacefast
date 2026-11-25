@@ -1,0 +1,7 @@
+.spacepress/
+.sp/
+dist/
+public/assets/
+sp/_generated/*
+!sp/_generated/migrations/
+!sp/_generated/wp-plugins.lock.json
