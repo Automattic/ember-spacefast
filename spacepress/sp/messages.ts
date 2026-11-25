@@ -1,4 +1,4 @@
-import { HttpError, mutation, type InferSelectModel } from "spacepress";
+import { HttpError, mutation, query, type InferSelectModel } from "spacepress";
 import { esc_html, wp_strip_all_tags } from "php/wordpress";
 import { attachments, memberships, messages, reactions } from "spacepress:db";
 import { actor, ensureMember, numericId, personView, requireRoom, type Person } from "./access";
@@ -161,14 +161,31 @@ async function accessibleMessage(id: number) {
   return row;
 }
 
-export async function thread(parentId: number, before?: number) {
+async function threadParent(parentId: number) {
   const parent = await accessibleMessage(parentId);
   if (parent.parentId) throw new HttpError(404, "thread_unavailable", "Thread unavailable.");
+  return parent;
+}
+
+export async function thread(parentId: number, before?: number) {
+  const observedAt = new Date().toISOString();
+  const parent = await threadParent(parentId);
   const rows = before
     ? await messages.system.list({ where: { parentId, id: { lt: before } }, orderBy: { id: "desc" }, limit: 101 })
     : await messages.system.list({ where: { parentId }, orderBy: { id: "desc" }, limit: 101 });
-  return { parent: await messageView(parent), messages: await views(rows.slice(0, 100).reverse()), hasMore: rows.length > 100, hasNewer: false, around: null };
+  return { parent: await messageView(parent), messages: await views(rows.slice(0, 100).reverse()), hasMore: rows.length > 100, hasNewer: false, around: null, observedAt };
 }
+
+export const threadChanges = query({ access: "authenticated" }, async ({ parentId, after, before, since, until }: {
+  parentId: string; after: number; before: number; since: string; until: string;
+}) => {
+  const parent = await threadParent(numericId(parentId));
+  const rows = await messages.system.list({
+    where: { parentId: parent.id, id: { gt: after, lt: before }, updatedAt: { gte: since, lt: until } },
+    orderBy: { id: "asc" }, limit: 51,
+  });
+  return { messages: await views(rows.slice(0, 50)), hasNewer: rows.length > 50 };
+});
 
 type MessageInput = {
   roomId: string; clientMessageId: string; body: string; plainText?: string; expectedCreatorId?: string;

@@ -7,6 +7,10 @@ const client = createClient();
 const refreshListeners = new Set<() => void>();
 
 export async function readAction(operation: string, args: unknown[]) {
+  if (operation === "threadChanges") {
+    const [parentId, after, before, since, until] = args as [string, number, number, string, string];
+    return client.actions.threadChanges({ parentId, after, before, since, until });
+  }
   if (operation === "invitations") return client.actions.invitationList();
   if (operation === "bots") return client.actions.botList();
   if (operation === "assistants") return client.actions.assistantList();
@@ -121,7 +125,11 @@ export function useMutation(operation: string) {
       if (!prepared) throw new Error("This message could not be formatted.");
       input = { ...message, body: prepared.html, plainText: prepared.plainText };
     }
-    const result = await actions[operation](input);
+    const result = await actions[operation](input).catch((error: ReadFailure) => {
+      // A missing response can still mean the attachment was committed.
+      if (operation !== "commitFile" || (error.status && error.status < 500)) throw error;
+      return actions[operation](input);
+    });
     refreshListeners.forEach(refresh => refresh());
     return result;
   }, [operation]);

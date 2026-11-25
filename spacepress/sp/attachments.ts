@@ -144,7 +144,8 @@ export async function acceptAttachment(value: string, manifest: Manifest, withMe
   if (!file || file.personId !== me.wpId) throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
   const room = await requireRoom(file.roomId);
   if (file.status === "attached" && withMessage) return file;
-  if (file.status !== "uploading" || file.createdAt <= attachmentReservationCutoff() ||
+  const ready = file.status === "ready";
+  if ((!ready && (file.status !== "uploading" || file.createdAt <= attachmentReservationCutoff())) ||
     manifest.name !== file.name || manifest.type !== file.type || manifest.size !== file.size) {
     throw new HttpError(404, "file_unavailable", "Attachment unavailable.");
   }
@@ -175,8 +176,12 @@ export async function acceptAttachment(value: string, manifest: Manifest, withMe
       normalized = { width: picture.width, height: picture.height, thumbnail: { type: preview.type, size: preview.size, chunks: previewChunks } };
     } else normalized = { width: picture.width, height: picture.height };
   }
-  const stored = { ...manifest, chunks, picture: normalized };
-  return await attachments.system.update(id, { manifest: JSON.stringify(stored), status: "ready" });
+  const stored = JSON.stringify({ ...manifest, chunks, picture: normalized });
+  if (ready) {
+    if (file.manifest !== stored) throw new HttpError(409, "file_conflict", "Attachment already finalized.");
+    return file;
+  }
+  return await attachments.system.update(id, { manifest: stored, status: "ready" });
 }
 
 async function signedChunks(chunks: Chunk[]) {

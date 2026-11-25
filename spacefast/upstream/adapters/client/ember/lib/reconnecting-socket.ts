@@ -2,7 +2,8 @@ import { readNative, mutateNative, watchNative } from '../../native-transport';
 import { readAction } from '../../native-sdk';
 import type { ClientFrame, Message, Sidebar, User } from '../../protocol/index';
 type RoomSnapshot = { messages: Message[]; hasMore: boolean; typing?: { user: User; typing: boolean }[]; seq?: number };
-type ThreadSnapshot = { parent: Message; messages: Message[]; hasMore: boolean };
+type ThreadSnapshot = { parent: Message; messages: Message[]; hasMore: boolean; observedAt: string };
+type ThreadWatch = { stop: () => void; rememberHistory?: (messages: Message[]) => void };
 export const OFFLINE_AFTER_MS=5000;
 export type SocketStatus='connecting'|'reconnecting';
 export interface ReconnectingSocketOptions {url:()=>string;onMessage:(data:string)=>void;onSidebar?:(sidebar:Sidebar)=>void;onConnecting?:(status:SocketStatus)=>void;onOffline?:(offline:boolean)=>void;onClose:(code:number,opened:boolean)=>boolean;deploySpreadMs?:readonly[number,number];}
@@ -10,7 +11,7 @@ export interface ReconnectingSocket<Frame=ClientFrame>{send(frame:Frame):boolean
 export function openAhead(_url:string){return ()=>{};}
 export const waitingAhead=(_url:string)=>false;
 export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocketOptions):ReconnectingSocket<Frame>{
- const url=new URL(options.url()),roomId=decodeURIComponent(url.pathname.match(/\/rooms\/([^/]+)/)?.[1]??'');let closed=false,seq=0,prior:RoomSnapshot|undefined;let typingIds=new Map<string,{user:User;typing:boolean}>();const threadStops=new Map<string,()=>void>();const off:(()=>void)[]=[];
+ const url=new URL(options.url()),roomId=decodeURIComponent(url.pathname.match(/\/rooms\/([^/]+)/)?.[1]??'');let closed=false,seq=0,prior:RoomSnapshot|undefined;let typingIds=new Map<string,{user:User;typing:boolean}>();const threads=new Map<string,ThreadWatch>();const off:(()=>void)[]=[];
  const failedReads = new Set<string>();
  const networkChanged = () => options.onOffline?.(!navigator.onLine || failedReads.size > 0);
  const watchHealth = (key: string) => (failed: boolean) => {
@@ -86,12 +87,12 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    readingGap = false;
   }
  }
- function watchThread(parentId: string) {
+ function watchThread(parentId: string): ThreadWatch {
   const opened = (value: ThreadSnapshot) => emit({type:'thread.opened', parentId, ...value});
   const health = watchHealth('thread:'+parentId);
   if (!readAction) {
    const unsubscribe = watchNative('thread',[parentId],opened,health);
-   return () => { unsubscribe(); health(false); };
+   return {stop() { unsubscribe(); health(false); }};
   }
   const gapKey = 'thread-catch-up:'+parentId;
   const gapHealth = watchHealth(gapKey);
@@ -100,6 +101,10 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
   let pending: ThreadSnapshot | undefined;
   let reading = false;
   let retry: number | undefined;
+  let oldest = Infinity;
+  const rememberHistory = (messages: Message[]) => {
+   if (messages.length > 0) oldest = Math.min(oldest, Number(messages[0]!.id));
+  };
 
   async function drain() {
    reading = true;
@@ -109,6 +114,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
      value = pending;
      pending = undefined;
      if (!previous) {
+      rememberHistory(value.messages);
       opened(value);
      } else {
       const last = Number(previous.messages.at(-1)?.id ?? 0);
@@ -120,9 +126,23 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
        if (stopped) return;
        missed.push(page.messages.filter(message => Number(message.id) > last));
       }
+      // The latest snapshot covers newer replies. Only fetch edits to older replies already shown.
+      const before = Math.min(Number(value.messages[0]?.id), last + 1);
+      let after = oldest - 1;
+      while (after + 1 < before && previous.observedAt < value.observedAt) {
+       const changes = await readNative('threadChanges', parentId, after, before, previous.observedAt, value.observedAt) as {
+        messages: Message[]; hasNewer: boolean;
+       };
+       if (stopped) return;
+       for (const message of changes.messages) deliverMessage(message, true);
+       if (!changes.hasNewer) break;
+       after = Number(changes.messages.at(-1)!.id);
+      }
       for (const messages of missed.reverse()) {
+       rememberHistory(messages);
        for (const message of messages) deliverMessage(message, false);
       }
+      rememberHistory(value.messages);
       const known = new Map(previous.messages.map(message => [message.id, message]));
       for (const message of value.messages) {
        const old = known.get(message.id);
@@ -154,12 +174,15 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    pending = value;
    if (!reading && retry === undefined) void drain();
   }, health);
-  return () => {
-   stopped = true;
-   window.clearTimeout(retry);
-   unsubscribe();
-   failedReads.delete(gapKey);
-   health(false);
+  return {
+   rememberHistory,
+   stop() {
+    stopped = true;
+    window.clearTimeout(retry);
+    unsubscribe();
+    failedReads.delete(gapKey);
+    health(false);
+   },
   };
  }
  if(roomId&&url.searchParams.get('visible')!=='false')void mutateNative('markRead',roomId).catch(()=>{});
@@ -173,11 +196,18 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'typing.start':case 'typing.stop':await mutateNative('typing',roomId,frame.type==='typing.start');break;
  case 'presence.visible':if(frame.visible)await mutateNative('markRead',roomId);break;
  case 'thread.open':{
-  if(!threadStops.has(frame.parentId)) threadStops.set(frame.parentId,watchThread(frame.parentId));
+  if(!threads.has(frame.parentId)) threads.set(frame.parentId,watchThread(frame.parentId));
   break;
  }
- case 'thread.close':threadStops.get(frame.parentId)?.();threadStops.delete(frame.parentId);break;
- case 'thread.before':{const v=await readNative('thread',frame.parentId,frame.before);emit({type:'thread.history',parentId:frame.parentId,before:frame.before,...v});break;}
+ case 'thread.close':threads.get(frame.parentId)?.stop();threads.delete(frame.parentId);break;
+ case 'thread.before':{
+  const watcher=threads.get(frame.parentId);
+  const v=await readNative('thread',frame.parentId,frame.before);
+  if (watcher !== threads.get(frame.parentId)) break;
+  watcher?.rememberHistory?.(v.messages);
+  emit({type:'thread.history',parentId:frame.parentId,before:frame.before,...v});
+  break;
+ }
  case 'history.before':{const v=await readNative('room',roomId,frame.before);emit({...v,type:'history',before:frame.before});break;}
  case 'history.after':{const v=await readNative('roomAfter',roomId,frame.after);emit({...v,type:'history.after',after:frame.after});break;}
  case 'history.around':{const v=await readNative('roomAround',roomId,frame.messageId);emit({...v,type:'history.around'});break;}
@@ -191,8 +221,8 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  const stop = () => {
   closed = true;
   window.clearTimeout(catchUp);
-  threadStops.forEach(stopThread => stopThread());
-  threadStops.clear();
+  threads.forEach(thread => thread.stop());
+  threads.clear();
   off.forEach(fn => fn());
  };
  return {send(frame:Frame){if(closed || (frame as ClientFrame).type === 'message.create')return false;void send(frame).catch(error=>fail(error,frame));return true;},connected: networkChanged,retry(){},hold: stop,close: stop};

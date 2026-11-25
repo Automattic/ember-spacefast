@@ -113,12 +113,25 @@ async function verifyOpenFile(sender: Session, receiver: Session) {
   await receiver.page.goto(site + "/rooms/" + room.id);
   const content = "Ember file for an open room";
   const name = "spacepress-open.txt";
+  const commitRoute = "**/wp-json/wp-abilities/v1/abilities/ember/commit-file/run";
+  let discardedCommit = false;
+  await sender.page.route(commitRoute, async route => {
+    const response = await route.fetch();
+    if (!discardedCommit && response.ok()) {
+      discardedCommit = true;
+      await route.abort();
+    } else {
+      await route.fulfill({ response });
+    }
+  });
   await sender.page.locator('input[type="file"]').setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(content) });
   await sender.page.getByRole("button", { name: "Send Message", exact: true }).click();
   const link = receiver.page.getByRole("link", { name: "Download " + name, exact: true });
   await link.waitFor();
   const decoded = await link.evaluate(async anchor => (await fetch((anchor as HTMLAnchorElement).href)).text());
   assert.equal(decoded, content);
+  assert(discardedCommit, "The browser recovered after losing the successful upload finalization response.");
+  await sender.page.unroute(commitRoute);
 }
 
 try {
