@@ -56,6 +56,7 @@ export const join = mutation({ access: "authenticated", rateLimit: "12/hour" }, 
   const [profile] = await profiles.system.list({ where: { personId }, limit: 1 });
   if (profile && profile.status !== "active" && profile.status !== "pending") throw new HttpError(403, "inactive_account", "This account is inactive.");
   const workspace = await account();
+  if (!workspace) throw new HttpError(409, "workspace_unavailable", "An administrator needs to set up Ember.");
   if (input.invitationToken) {
     const tokenHash = createHash("sha256").update(input.invitationToken).digest("hex");
     const [invitation] = await invitations.system.list({ where: { tokenHash }, limit: 1 });
@@ -66,7 +67,7 @@ export const join = mutation({ access: "authenticated", rateLimit: "12/hour" }, 
       throw new HttpError(403, "invalid_invitation", "This invitation is unavailable for your WordPress email.");
     }
     await invitations.system.update(invitation.id, { accepted: true });
-  } else if (workspace && !workspace.openSignUp) {
+  } else if (!workspace.openSignUp) {
     const code = input.joinCode ?? "";
     const expected = workspace?.joinCode ?? "";
     const suppliedHash = createHash("sha256").update(code).digest("hex");

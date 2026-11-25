@@ -3,6 +3,7 @@ import { get_current_user_id, get_userdata } from "php/wordpress";
 import { memberships, people, profiles, rooms, serviceActors, workspaces } from "spacepress:db";
 import { rooms as roomSchema } from "./schema";
 import { serviceIdentity, serviceOffset } from "./service-identity";
+import { workspaceMemberStatus } from "./member-status";
 
 export type Room = InferSelectModel<typeof roomSchema>;
 
@@ -29,15 +30,7 @@ export async function personView(id: number): Promise<Person> {
   const [profile] = await profiles.system.list({ where: { personId: id }, limit: 1 });
   const user = get_userdata(id);
   const role = profile?.role || (user && user.roles.includes("administrator") ? "administrator" : "member");
-  let status = "deactivated";
-  if (user) {
-    status = profile?.status ?? "active";
-    if (!profile && role !== "administrator") {
-      const workspace = await account();
-      const registered = user.user_registered.replace(" ", "T") + ".000Z";
-      if (workspace && registered >= workspace.createdAt) status = "pending";
-    }
-  }
+  const status = user ? await workspaceMemberStatus(id, role, profile?.status) : "deactivated";
   return {
     id: String(id),
     name: profile?.name || (user ? user.display_name : "Former member"),

@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { job, type RouteRequest } from "spacepress";
+import { cron, job, type RouteRequest } from "spacepress";
 import { home_url } from "php/wordpress";
 import { memberships, messages, rooms, serviceActors, serviceDeliveries } from "spacepress:db";
 import { membership, numericId, personView } from "./access";
@@ -476,3 +476,10 @@ export async function slackWebhook(request: RouteRequest) {
     return { status: 400, body: "invalid_payload" };
   }
 }
+export const pruneServiceDeliveries = cron("*/15 * * * *", async () => {
+  const cutoff = new Date(Date.now() - 86400000).toISOString();
+  const expired = await serviceDeliveries.system.list({
+    where: { createdAt: { lt: cutoff } }, orderBy: { createdAt: "asc" }, limit: 200,
+  });
+  for (const delivery of expired) await serviceDeliveries.system.purge(delivery.id);
+});

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "id": "20261125123132_74tvf0_index_attachments",
+  "ops": [
+    {
+      "op": "addIndex",
+      "table": "attachments",
+      "index": {
+        "name": "personId_queried",
+        "unique": false,
+        "columns": [
+          "personId"
+        ]
+      }
+    },
+    {
+      "op": "addIndex",
+      "table": "attachments",
+      "index": {
+        "name": "status_queried",
+        "unique": false,
+        "columns": [
+          "status"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "attachments",
+      "meta": {
+        "addQueried": [
+          "personId",
+          "status"
+        ]
+      }
+    }
+  ]
+}

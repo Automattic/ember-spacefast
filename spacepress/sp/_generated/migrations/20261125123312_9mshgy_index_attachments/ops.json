@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "20261125123312_9mshgy_index_attachments",
+  "ops": [
+    {
+      "op": "addIndex",
+      "table": "attachments",
+      "index": {
+        "name": "createdAt_queried",
+        "unique": false,
+        "columns": [
+          "createdAt"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "attachments",
+      "meta": {
+        "addQueried": [
+          "createdAt"
+        ]
+      }
+    }
+  ]
+}

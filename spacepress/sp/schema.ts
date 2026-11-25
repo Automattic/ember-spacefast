@@ -1,4 +1,5 @@
 import { boolean, email, files, integer, ref, table, text, timestamp, userProjection } from "spacepress";
+import { canUploadAttachment } from "./upload-access";
 
 const internal = { read: false, create: false, update: false, delete: false };
 
@@ -111,7 +112,7 @@ export const recentSearches = table({
 export const attachmentChunks = files({
   accept: ["application/octet-stream", "text/plain"],
   maxBytes: 4194320,
-  access: { create: "authenticated", read: "owner", delete: "owner" },
+  access: { create: canUploadAttachment, read: "owner", delete: "owner" },
 });
 
 export const attachments = table({

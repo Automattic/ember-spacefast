@@ -23,7 +23,7 @@ spacepress dev spacepress
 
 The first build generates the typed client. The browser build reuses Ember's source overlay and CSS pipeline and writes the bundle to SpacePress's public assets. Re-run the browser build after editing the browser code or changing server action types.
 
-Sign in as a WordPress administrator to set up a new workspace. Create WordPress users with the Subscriber role. New users can accept an email invitation, use the workspace join code, or confirm their name when open sign-up is enabled. WordPress owns registration and password recovery. In Ember, open `/rooms/closeds/new` to create a private room and choose its members.
+Sign in as a WordPress administrator to set up the workspace. On older installs, setup keeps existing rooms and their members. Create WordPress users with the Subscriber role. They need an Ember membership to open rooms. They can accept an email invitation, use the workspace join code, or confirm their name when open sign-up is enabled. WordPress owns registration and password recovery. In Ember, open `/rooms/closeds/new` to create a private room and choose its members.
 
 For a tailnet preview, use `spacepress dev spacepress --port <local-port> --url https://<tailnet-host>:<https-port>` and point Tailscale Serve at the local listener. Keep the URL at the site root. Change Studio's default admin password before sharing the URL.
 
@@ -44,7 +44,7 @@ Use the same build steps, including a final `spacepress build spacepress` after 
 | Browser push | `EMBER_PUSH_PRIVATE_KEY` and `EMBER_PUSH_CONTACT`. Set the matching `EMBER_PUSH_PUBLIC_KEY` to reuse the generated public key |
 | AI assistants | `EMBER_OPENAI_API_KEY`, `EMBER_OPENAI_MODEL`, `EMBER_OPENAI_WEBHOOK_SECRET`, and an enabled assistant profile. Register `/assistant/openai` for OpenAI response events. |
 
-Private-room and direct-message files need an enrolled browser for each person. The browser encrypts chunks before uploading and wraps the file key for the enrolled devices in the room.
+File uploads need an active Ember membership and an open reservation from the past hour. The hourly byte quota applies when Ember creates the reservation. Private-room and direct-message files need an enrolled browser for each person. The browser encrypts chunks before uploading and wraps the file key for the enrolled devices in the room.
 
 ## Verify room permissions in a browser
 

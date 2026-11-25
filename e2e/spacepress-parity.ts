@@ -133,6 +133,11 @@ try {
   const maya = await signIn(first);
   const jules = await signIn(second);
   const outsider = await signIn(third);
+  const unreserved = await outsider.page.request.post(site + "/wp-json/spacepress/v1/files/attachmentChunks", {
+    headers: { "X-WP-Nonce": outsider.nonce },
+    multipart: { file: { name: "unreserved.txt", mimeType: "text/plain", buffer: Buffer.from("No attachment reservation") } },
+  });
+  assert.equal(unreserved.status(), 403, await unreserved.text());
   const me = await call(maya, "ember-read", { operation: "bootstrap" }, true);
   const other = await call(jules, "ember-read", { operation: "bootstrap" }, true);
   const room = await call(maya, "create-room", { name: "SpacePress parity check", kind: "closed", memberIds: [other.user.id] });

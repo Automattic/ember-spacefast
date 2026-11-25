@@ -36,7 +36,7 @@ export function canJoinByEmail(email: string) {
 }
 
 export async function initialized() {
-  return Boolean(await account()) || await rooms.system.count() > 0;
+  return Boolean(await account());
 }
 
 export const setup = mutation({ access: "authenticated" }, async (input: {
@@ -46,9 +46,12 @@ export const setup = mutation({ access: "authenticated" }, async (input: {
   if (await initialized()) throw new HttpError(409, "workspace_exists", "This workspace is already set up.");
   const name = input.workspaceName?.trim() || "Ember";
   if (name.length > 80) throw new HttpError(422, "invalid_name", "Enter a shorter workspace name.");
-  await workspaces.system.create({ singleton: 1, name });
-  const room = await rooms.system.create({ name: "General", owner: me.wpId });
-  await ensureMember(room.id, me.wpId, false);
+  const code = input.joinCode?.trim() ?? "";
+  await workspaces.system.create({ singleton: 1, name, joinCode: code, joinLink: Boolean(code) });
+  if (!(await rooms.system.count())) {
+    const room = await rooms.system.create({ name: "General", owner: me.wpId });
+    await ensureMember(room.id, me.wpId, false);
+  }
   await audit(me.wpId, "workspace.setup", me.wpId);
   return me;
 });

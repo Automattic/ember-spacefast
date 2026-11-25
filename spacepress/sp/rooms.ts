@@ -1,8 +1,9 @@
 import { HttpError, mutation } from "spacepress";
 import { memberships, messages, rooms } from "spacepress:db";
 import { account, actor, admin, directory, ensureMember, membership, numericId, personView, requireRoom, roomView, visibleRooms, type RoomView } from "./access";
-import { serviceIdentity } from "./service-identity";
+import { serviceIdentity, serviceOffset } from "./service-identity";
 import { assistantsEnabled, outgoingReady } from "./service-settings";
+import { preserveWorkspaceMembership } from "./member-status";
 
 export async function favorites() {
   const allowed = await visibleRooms();
@@ -122,6 +123,7 @@ export const updateRoom = mutation({ access: "authenticated" }, async (input: {
     const records = await memberships.system.list({ where: { roomId: room.id }, limit: 500 });
     for (const record of records) {
       if (!ids.includes(record.personId) && (await personView(record.personId)).status === "active") {
+        if (record.personId <= serviceOffset) await preserveWorkspaceMembership(record.personId);
         await memberships.system.delete(record.id);
       }
     }
@@ -141,7 +143,10 @@ export const leaveRoom = mutation({ access: "authenticated" }, async ({ id }: { 
   const room = await requireRoom(numericId(id));
   if (room.directKey) throw new HttpError(422, "fixed_membership", "Direct message membership is fixed.");
   const record = await membership(room.id, me.wpId);
-  if (record) await memberships.system.delete(record.id);
+  if (record) {
+    await preserveWorkspaceMembership(me.wpId);
+    await memberships.system.delete(record.id);
+  }
   return true;
 });
 

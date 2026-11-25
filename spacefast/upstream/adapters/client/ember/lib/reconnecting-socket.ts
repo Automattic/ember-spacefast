@@ -1,5 +1,7 @@
 import { readNative, mutateNative, watchNative } from '../../native-transport';
-import type { ClientFrame, Sidebar } from '../../protocol/index';
+import { readAction } from '../../native-sdk';
+import type { ClientFrame, Message, Sidebar, User } from '../../protocol/index';
+type RoomSnapshot = { messages: Message[]; typing?: { user: User; typing: boolean }[]; seq?: number };
 export const OFFLINE_AFTER_MS=5000;
 export type SocketStatus='connecting'|'reconnecting';
 export interface ReconnectingSocketOptions {url:()=>string;onMessage:(data:string)=>void;onSidebar?:(sidebar:Sidebar)=>void;onConnecting?:(status:SocketStatus)=>void;onOffline?:(offline:boolean)=>void;onClose:(code:number,opened:boolean)=>boolean;deploySpreadMs?:readonly[number,number];}
@@ -7,7 +9,7 @@ export interface ReconnectingSocket<Frame=ClientFrame>{send(frame:Frame):boolean
 export function openAhead(_url:string){return ()=>{};}
 export const waitingAhead=(_url:string)=>false;
 export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocketOptions):ReconnectingSocket<Frame>{
- const url=new URL(options.url()),roomId=decodeURIComponent(url.pathname.match(/\/rooms\/([^/]+)/)?.[1]??'');let closed=false,seq=0,prior:any=null;let typingIds=new Map<string,any>();const threadStops=new Map<string,()=>void>();const off:(()=>void)[]=[];
+ const url=new URL(options.url()),roomId=decodeURIComponent(url.pathname.match(/\/rooms\/([^/]+)/)?.[1]??'');let closed=false,seq=0,prior:RoomSnapshot|undefined;let typingIds=new Map<string,{user:User;typing:boolean}>();const threadStops=new Map<string,()=>void>();const off:(()=>void)[]=[];
  const failedReads = new Set<string>();
  const networkChanged = () => options.onOffline?.(!navigator.onLine || failedReads.size > 0);
  const watchHealth = (key: string) => (failed: boolean) => {
@@ -17,8 +19,74 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  };
  const emit=(frame:any)=>{if(!closed)options.onMessage(JSON.stringify(frame));};
  const fail=(error:any,frame:any)=>emit({type:'error',message:error.message,failed:frame.type,clientMessageId:frame.clientMessageId});
+ const markCatchUp = watchHealth('catch-up');
+ let pendingRoom: RoomSnapshot | undefined;
+ let catchUp: number | undefined;
+ let readingGap = false;
+ let lastDelivered: string | undefined;
+ const deliverMessage = (message: Message, updated: boolean) => {
+  if (message.deleted) emit({type:'message.deleted', messageId:message.id, seq:++seq});
+  else emit({type:updated ? 'message.updated' : 'message.created', message, seq:++seq});
+ };
+ const applyRoom = (value: RoomSnapshot) => {
+  const nextTyping = new Map((value.typing ?? []).map(entry => [entry.user.id, entry]));
+  for (const [id, typing] of nextTyping) if (!typingIds.has(id)) emit({type:'typing', ...typing});
+  for (const [id, typing] of typingIds) if (!nextTyping.has(id)) emit({type:'typing', user:typing.user, typing:false});
+  typingIds = nextTyping;
+  if (!prior) {
+   seq = value.seq ?? 0;
+   emit(value);
+  } else {
+   for (const message of value.messages) {
+    const old = prior.messages.find(item => item.id === message.id);
+    if (!old || JSON.stringify(old) !== JSON.stringify(message)) deliverMessage(message, Boolean(old));
+   }
+  }
+  prior = value;
+  lastDelivered = value.messages.at(-1)?.id ?? lastDelivered;
+ };
+ const receiveRoom = (value: RoomSnapshot) => {
+  pendingRoom = value;
+  if (readingGap || catchUp !== undefined) return;
+  void drainRoom();
+ };
+ async function drainRoom() {
+  readingGap = true;
+  let value: RoomSnapshot | undefined;
+  try {
+   while (!closed && pendingRoom) {
+    value = pendingRoom;
+    pendingRoom = undefined;
+    const first = Number(value.messages[0]?.id);
+    while (readAction && lastDelivered && Number(lastDelivered) < first && !closed) {
+     const page = await readNative('roomAfter', roomId, lastDelivered) as {messages: Message[]; hasNewer: boolean};
+     if (closed) return;
+     const gap = page.messages.filter(message => Number(message.id) < first);
+     if (gap.length === 0) break;
+     for (const message of gap) {
+      deliverMessage(message, false);
+      lastDelivered = message.id;
+     }
+     if (gap.length !== page.messages.length || !page.hasNewer) break;
+    }
+    if (closed) return;
+    applyRoom(value);
+    if (failedReads.has('catch-up')) markCatchUp(false);
+   }
+  } catch {
+   if (closed) return;
+   pendingRoom ??= value;
+   markCatchUp(true);
+   catchUp = window.setTimeout(() => {
+    catchUp = undefined;
+    void drainRoom();
+   }, 2000);
+  } finally {
+   readingGap = false;
+  }
+ }
  if(roomId&&url.searchParams.get('visible')!=='false')void mutateNative('markRead',roomId).catch(()=>{});
- if(roomId)off.push(watchNative('room',[roomId],value=>{const nextTyping=new Map<string,any>((value.typing??[]).map((t:any)=>[t.user.id,t]));for(const [id,t] of nextTyping)if(!typingIds.has(id))emit({type:'typing',...t});for(const [id,t] of typingIds)if(!nextTyping.has(id))emit({type:'typing',user:t.user,typing:false});typingIds=nextTyping;if(!prior){prior=value;seq=value.seq??0;emit(value);return;}for(const message of value.messages){const old=prior.messages.find((m:any)=>m.id===message.id);if(!old||JSON.stringify(old)!==JSON.stringify(message)){if(message.deleted)emit({type:'message.deleted',messageId:message.id,seq:++seq});else emit({type:old?'message.updated':'message.created',message,seq:++seq});}}prior=value;},watchHealth('room')));
+ if(roomId)off.push(watchNative('room',[roomId],receiveRoom,watchHealth('room')));
  else {off.push(watchNative('bootstrap',[],v=>{if(v.user)emit({type:'welcome',you:v.user,account:v.account});}));off.push(watchNative('sidebar',[],v=>{if(!closed)options.onSidebar?.(v);}));}
  async function send(frame:any){switch(frame.type){
  case 'message.update':await mutateNative('editMessage',{roomId,messageId:frame.messageId,body:frame.body});break;
@@ -48,6 +116,6 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  window.addEventListener('offline', networkChanged);
  off.push(() => window.removeEventListener('online', networkChanged), () => window.removeEventListener('offline', networkChanged));
  networkChanged();
- const stop = () => { closed = true; off.forEach(fn => fn()); };
+ const stop = () => { closed = true; window.clearTimeout(catchUp); off.forEach(fn => fn()); };
  return {send(frame:Frame){if(closed || (frame as ClientFrame).type === 'message.create')return false;void send(frame).catch(error=>fail(error,frame));return true;},connected: networkChanged,retry(){},hold: stop,close: stop};
 }
