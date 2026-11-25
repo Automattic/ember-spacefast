@@ -17,6 +17,7 @@ assert(creator && member && outsider, "Supply credentials for three different Wo
 const browser = await chromium.launch();
 async function signIn(user: Login, width: number, height: number) {
   const page = await browser.newPage({ viewport: { width, height } });
+  page.setDefaultTimeout(20_000);
   const login = new URL("/wp-login.php", site);
   login.searchParams.set("redirect_to", site + "/");
   await page.goto(login.href);
@@ -73,8 +74,13 @@ try {
     return { history: history.status, send: send.status, raw: raw.status };
   }, Number(room.split("/").pop()));
   assert.deepEqual(access, { history: 404, send: 404, raw: 403 });
-  await denied.goto(site + room);
-  await denied.waitForURL(site + "/");
+  const deniedRead = denied.waitForResponse(
+    response => response.url().includes("/ember-read/run") && response.status() === 404,
+    { timeout: 15_000 },
+  );
+  // The loaded sidebar can redirect before the room query returns.
+  const opened = denied.goto(site + room);
+  await Promise.any([deniedRead, opened.then(() => denied.waitForURL(site + "/", { timeout: 15_000 }))]);
   assert.equal(await denied.getByText(first, { exact: true }).count(), 0);
 
   if (screenshots) {
