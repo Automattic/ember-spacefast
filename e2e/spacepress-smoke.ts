@@ -24,7 +24,9 @@ async function signIn(user: Login, width: number, height: number) {
   await page.locator("#user_login").fill(user.username);
   await page.locator("#user_pass").fill(user.password);
   await page.locator("#wp-submit").click();
-  await page.waitForURL(site + "/");
+  await page.waitForURL(url => url.origin === site && (url.pathname === "/" || url.pathname.startsWith("/rooms/")), {
+    waitUntil: "domcontentloaded",
+  });
   return page;
 }
 

@@ -1,5 +1,7 @@
-import Ember from "../page";
+import { EmberShell } from "../../components/EmberShell";
+
+export const metadata = { robots: { index: false, follow: false } };
 
 export default function EmberRoute() {
-  return <Ember />;
+  return <EmberShell invite={null} />;
 }

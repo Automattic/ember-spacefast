@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { disableBrowserPush } from './ember/lib/native-push';
 import { confirmOutbox } from './ember/lib/outbox';
-import { useQuery, useMutation, signOut, useAuth } from './native-sdk';
+import { useQuery, useMutation, signOut, useAuth, readAction, unfurlAction } from './native-sdk';
 
 type Watch = { key:string; name:string; args:any[]; value?:any; listeners:Set<(value:any)=>void> };
 const watches = new Map<string,Watch>();
@@ -13,7 +13,7 @@ export function watchNative(name:string,args:any[],listener:(v:any)=>void) {
  item.listeners.add(listener); if(item.value!==undefined)queueMicrotask(()=>{if(item.listeners.has(listener))listener(item.value);});
  return ()=>{item.listeners.delete(listener);if(!item.listeners.size && watches.get(key)===item){watches.delete(key);changed.forEach(fn=>fn());}};
 }
-export function readNative(name:string,...args:any[]):Promise<any>{return new Promise((resolve,reject)=>{let off=()=>{};const timeout=setTimeout(()=>{off();reject(new Error('The native service did not answer. Please try again.'));},20000);off=watchNative(name,args,value=>{clearTimeout(timeout);off();resolve(value)});});}
+export function readNative(name:string,...args:any[]):Promise<any>{if(readAction)return readAction(name,args);return new Promise((resolve,reject)=>{let off=()=>{};const timeout=setTimeout(()=>{off();reject(new Error('The native service did not answer. Please try again.'));},20000);off=watchNative(name,args,value=>{clearTimeout(timeout);off();resolve(value)});});}
 export async function mutateNative(name:string,...args:any[]) {
  const fn=mutations[name];
  if(!fn)throw new Error('Native connection is not ready.');
@@ -93,6 +93,7 @@ export async function nativeRequest(path:string,init:RequestInit={}) {
  if(p==='/api/account/room_order'){await mutateNative('sharedOrder',body.roomIds);return {sharedOrder:(await readNative('sidebar')).sharedOrder};}
  if(p==='/api/searches'){if(method==='DELETE')return mutateNative('clearSearches');const input=method==='GET'?Object.fromEntries(url.searchParams):body;if(method==='POST')await mutateNative('rememberSearch',{query:JSON.stringify(input)});const v=await readNative('search',{...input,roomId:input.in});const sidebar=await readNative('sidebar');return {search:input.q||input.in||input.from||input.withMe||input.hasLink||input.hasFile||input.inThread?input:null,matches:(v.messages??[]).map((message:any)=>({message,words:String(input.q??'').split(/\s+/)})),next:v.cursor,rooms:sidebar.rooms,recent:(await readNative('recentSearches')).map((r:any)=>{try{const saved=JSON.parse(r.query);return typeof saved.q==='string'?saved:{q:r.query};}catch{return {q:r.query};}})};}
  if(p==='/api/unfurl'&&method==='POST'){
+  if(unfurlAction)return unfurlAction(body.url);
   const response=await fetch('/link-preview',{
    method:'POST',
    headers:{'Content-Type':'application/json'},

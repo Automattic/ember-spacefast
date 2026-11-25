@@ -1,15 +1,10 @@
-import { get_current_user_id, home_url, wp_login_url } from "php/wordpress";
-import { Link } from "spacepress/app";
+import { EmberShell } from "../components/EmberShell";
+import { text } from "spacepress";
+import { type PageProps } from "spacepress/app";
 
-export default function Ember() {
-  if (!get_current_user_id()) {
-    return <main style={{ fontFamily: "system-ui", margin: "12vh auto", maxWidth: "28rem", padding: "1.5rem" }}>
-      <h1>Ember</h1>
-      <a href={wp_login_url(home_url("/"))}>Sign in with WordPress</a>
-    </main>;
-  }
-  return <div id="ember-native-app" style={{ minHeight: "100dvh" }}>
-    <p>Loading Ember…</p>
-    <Link href="/">Return to Ember home</Link>
-  </div>;
+export const search = { invite: text().max(200).optional() };
+export const metadata = { robots: { index: false, follow: false } };
+
+export default function Ember({ search }: PageProps<"", { invite: string | null }>) {
+  return <EmberShell invite={search.invite} />;
 }

@@ -1,8 +1,10 @@
 # Ember on SpacePress
 
-Run Ember's room chat on WordPress using the React UI from the fork's existing Ember source overlay. SpacePress actions handle WordPress sessions, room membership, and messages. An open room polls WordPress every two seconds for updates.
+Ember uses the fork's existing React UI with WordPress sign-in and SpacePress actions, tables, private uploads, and background jobs. Open rooms and threads poll for updates every two seconds.
 
-The port covers WordPress sign-in, an open or private room, member selection when creating a private room, sending plain-text messages, and room history. DMs, threads, edits, reactions, search, push notifications, attachments, and the rest of the Zero feature set remain follow-up work. Some controls from the shared Ember UI still appear for these features. This uses a fresh WordPress database.
+The workspace supports open rooms, private rooms, direct messages, threaded replies, formatting, edits, reactions, search, unread state, favorites, room administration, and device-encrypted files. Invitations use WordPress mail. WordPress Action Scheduler runs push, outgoing bot, and assistant delivery after a message commits.
+
+An existing SpacePress preview upgrades its WordPress tables in place. Spacefast Zero and WordPress each have their own workspace data.
 
 ## Run locally
 
@@ -19,13 +21,28 @@ spacepress dev spacepress
 
 The first build generates the typed client. The browser build reuses Ember's source overlay and CSS pipeline and writes the bundle to SpacePress's public assets. Re-run the browser build after editing the browser code or changing server action types.
 
-Create users with WordPress's Subscriber role and sign in through the site's WordPress login. In Ember, open the private-room creation form at `/rooms/closeds/new`, choose the members, and save. The room is visible only to members.
+Sign in as a WordPress administrator to set up a new workspace. Create WordPress users with the Subscriber role. New users can accept an email invitation, use the workspace join code, or confirm their name when open sign-up is enabled. WordPress owns registration and password recovery. In Ember, open `/rooms/closeds/new` to create a private room and choose its members.
 
 For a tailnet preview, use `spacepress dev spacepress --port <local-port> --url https://<tailnet-host>:<https-port>` and point Tailscale Serve at the local listener. Keep the URL at the site root. Change Studio's default admin password before sharing the URL.
+
+Studio's built-in server needs a proxy that denies direct access to the private uploads directory. Run `node spacepress/dev-proxy.ts <proxy-port> <local-port>` and point Tailscale Serve at the proxy port. From the `spacepress` directory, run `spacepress wp eval 'echo \SpacePress\Wp\WpFiles::probe() ? "protected" : "exposed";'` to verify that WordPress can protect the directory. On a hosted site, SpacePress uses its configured private uploads backend.
 
 ## Build for Spacefast
 
 Use the same build steps, including a final `spacepress build spacepress` after generating the browser assets. Use the `spacepress` directory as the SpacePress project when pushing to a WordPress-enabled Spacefast site. Provision the WordPress users there and verify sign-in and private rooms on that host.
+
+## Optional services
+
+| Feature | WordPress runtime configuration |
+| --- | --- |
+| Email invitations | Working WordPress mail transport and a sending domain on the host |
+| Email-domain admission | `EMBER_SIGNUP_EMAIL_DOMAINS` as a comma-separated list |
+| Incoming Slack webhooks | Create a webhook in Ember's workspace settings and save its private posting URL |
+| Outgoing bot replies | `EMBER_BOT_SIGNING_KEY` with at least 32 characters and a public HTTPS callback configured in Ember |
+| Browser push | `EMBER_PUSH_PRIVATE_KEY` and `EMBER_PUSH_CONTACT`. Set the matching `EMBER_PUSH_PUBLIC_KEY` to reuse the generated public key |
+| AI assistants | `EMBER_OPENAI_API_KEY`, `EMBER_OPENAI_MODEL`, `EMBER_OPENAI_WEBHOOK_SECRET`, and an enabled assistant profile. Register `/assistant/openai` for OpenAI response events. |
+
+Private-room and direct-message files need an enrolled browser for each person. The browser encrypts chunks before uploading and wraps the file key for the enrolled devices in the room.
 
 ## Verify room permissions in a browser
 
@@ -33,6 +50,9 @@ Install the repository's pnpm dependencies and Playwright Chromium. Create three
 
 ```sh
 node e2e/spacepress-smoke.ts <site-url> <credentials.json> [screenshot-directory]
+node e2e/spacepress-parity.ts <site-url> <credentials.json> [admin-credentials.json]
 ```
 
 The smoke test creates a room, checks delivery in both directions without reload, reloads history, and verifies that a signed-in non-member cannot read or post to the room.
+
+The parity check exercises direct messages, threaded replies, formatted edits, reactions, search isolation, favorites, and encrypted downloads. An administrator credentials object with the same fields adds incoming webhook and integration settings checks.

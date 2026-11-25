@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "id": "20261125104734_4chkrn_update",
+  "ops": [
+    {
+      "op": "addColumn",
+      "table": "profiles",
+      "column": "avatar",
+      "def": {
+        "type": "text",
+        "notNull": true,
+        "primaryKey": false,
+        "autoIncrement": false,
+        "unique": false,
+        "max": 2000.0,
+        "enum": null,
+        "default": "",
+        "references": null
+      }
+    },
+    {
+      "op": "addColumn",
+      "table": "service_deliveries",
+      "column": "responseId",
+      "def": {
+        "type": "text",
+        "notNull": true,
+        "primaryKey": false,
+        "autoIncrement": false,
+        "unique": false,
+        "max": 126.0,
+        "enum": null,
+        "default": "",
+        "references": null
+      }
+    },
+    {
+      "op": "addIndex",
+      "table": "service_deliveries",
+      "index": {
+        "name": "idx_responseId",
+        "unique": false,
+        "columns": [
+          "responseId"
+        ]
+      }
+    },
+    {
+      "op": "updateTableMeta",
+      "table": "service_deliveries",
+      "meta": {
+        "addIndexes": [
+          {
+            "columns": [
+              "responseId"
+            ],
+            "unique": false
+          }
+        ],
+        "addQueried": [
+          "responseId"
+        ]
+      }
+    }
+  ]
+}

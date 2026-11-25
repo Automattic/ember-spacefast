@@ -4,6 +4,8 @@
 import {useCallback} from 'react';
 import {useQuery as useNativeQuery,useMutation as useNativeMutation} from '@spacefast/zero/react';
 export {useAuth,signInWithGoogle,signInWithSpacefast,signOut,storage} from '@spacefast/zero/react';
+export const readAction: ((operation: string, args: unknown[]) => Promise<unknown>) | undefined = undefined;
+export const unfurlAction: ((url: string) => Promise<unknown>) | undefined = undefined;
 export function useQuery<TResult=unknown,TArgs extends unknown[]=unknown[]>(operation:string,...args:TArgs):TResult|undefined {
  return useNativeQuery<TResult>('read',operation,args);
 }
