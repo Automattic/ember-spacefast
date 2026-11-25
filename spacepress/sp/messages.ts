@@ -115,6 +115,7 @@ export async function views(rows: Message[]) {
 }
 
 export async function readTimeline(roomId: number, before?: number) {
+  const observedAt = new Date().toISOString();
   await requireRoom(roomId);
   const you = await actor();
   const rows = before
@@ -131,7 +132,7 @@ export async function readTimeline(roomId: number, before?: number) {
       if (member.typingUntil > now) typing.push({ user, typing: true });
     }
   }
-  return { type: "welcome", you, present, typing, seq: 0, messages: await views(rows.slice(0, 50).reverse()), hasMore: rows.length > 50, hasNewer: false, around: null };
+  return { type: "welcome", you, present, typing, seq: 0, messages: await views(rows.slice(0, 50).reverse()), hasMore: rows.length > 50, hasNewer: false, around: null, observedAt };
 }
 
 export async function roomAfter(roomId: number, after: number) {
@@ -176,15 +177,26 @@ export async function thread(parentId: number, before?: number) {
   return { parent: await messageView(parent), messages: await views(rows.slice(0, 100).reverse()), hasMore: rows.length > 100, hasNewer: false, around: null, observedAt };
 }
 
-export const threadChanges = query({ access: "authenticated" }, async ({ parentId, after, before, since, until }: {
-  parentId: string; after: number; before: number; since: string; until: string;
-}) => {
+type ChangeRange = { after: number; before: number; since: string; until: string };
+
+async function changedPage(rows: Message[]) {
+  return { messages: await views(rows.slice(0, 50)), hasNewer: rows.length > 50 };
+}
+
+export const threadChanges = query({ access: "authenticated" }, async ({ parentId, after, before, since, until }: ChangeRange & { parentId: string }) => {
   const parent = await threadParent(numericId(parentId));
-  const rows = await messages.system.list({
+  return await changedPage(await messages.system.list({
     where: { parentId: parent.id, id: { gt: after, lt: before }, updatedAt: { gte: since, lt: until } },
     orderBy: { id: "asc" }, limit: 51,
-  });
-  return { messages: await views(rows.slice(0, 50)), hasNewer: rows.length > 50 };
+  }));
+});
+
+export const roomChanges = query({ access: "authenticated" }, async ({ roomId, after, before, since, until }: ChangeRange & { roomId: string }) => {
+  const room = await requireRoom(numericId(roomId));
+  return await changedPage(await messages.system.list({
+    where: { roomId: room.id, inRoom: true, id: { gt: after, lt: before }, updatedAt: { gte: since, lt: until } },
+    orderBy: { id: "asc" }, limit: 51,
+  }));
 });
 
 type MessageInput = {
@@ -277,6 +289,8 @@ export const react = mutation({ access: "authenticated", rateLimit: "120/min" },
   const [previous] = await reactions.system.list({ where: key, limit: 1 });
   if (previous) return { id: String(previous.id) };
   const record = await reactions.system.create(key);
+  // Refresh the message's system timestamp so historical polls pick up the new reaction.
+  await messages.system.update(row.id, {});
   return { id: String(record.id) };
 });
 
@@ -286,5 +300,6 @@ export const unreact = mutation({ access: "authenticated" }, async ({ id }: { id
   if (!record || record.personId !== user.wpId) throw new HttpError(404, "reaction_unavailable", "Reaction unavailable.");
   await accessibleMessage(record.messageId);
   await reactions.system.delete(record.id);
+  await messages.system.update(record.messageId, {});
   return { boostId: id };
 });

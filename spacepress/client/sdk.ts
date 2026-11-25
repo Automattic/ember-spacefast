@@ -11,6 +11,10 @@ export async function readAction(operation: string, args: unknown[]) {
     const [parentId, after, before, since, until] = args as [string, number, number, string, string];
     return client.actions.threadChanges({ parentId, after, before, since, until });
   }
+  if (operation === "roomChanges") {
+    const [roomId, after, before, since, until] = args as [string, number, number, string, string];
+    return client.actions.roomChanges({ roomId, after, before, since, until });
+  }
   if (operation === "invitations") return client.actions.invitationList();
   if (operation === "bots") return client.actions.botList();
   if (operation === "assistants") return client.actions.assistantList();
@@ -103,7 +107,7 @@ const unsupported = () => {
   throw Object.assign(new Error("This feature is not available in Ember on SpacePress."), { status: 501 });
 };
 
-const byId = new Set(["archiveRoom", "leaveRoom", "markRead", "deleteMessage", "unreact", "cancelFile", "revokeInvitation"]);
+const byId = new Set(["archiveRoom", "leaveRoom", "markRead", "roomPresence", "deleteMessage", "unreact", "cancelFile", "revokeInvitation"]);
 
 export function useMutation(operation: string) {
   return useCallback(async (...args: unknown[]) => {
@@ -130,7 +134,7 @@ export function useMutation(operation: string) {
       if (operation !== "commitFile" || (error.status && error.status < 500)) throw error;
       return actions[operation](input);
     });
-    refreshListeners.forEach(refresh => refresh());
+    if (operation !== "roomPresence") refreshListeners.forEach(refresh => refresh());
     return result;
   }, [operation]);
 }

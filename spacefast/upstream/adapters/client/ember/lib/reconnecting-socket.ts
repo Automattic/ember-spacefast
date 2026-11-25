@@ -1,7 +1,7 @@
 import { readNative, mutateNative, watchNative } from '../../native-transport';
 import { readAction } from '../../native-sdk';
 import type { ClientFrame, Message, Sidebar, User } from '../../protocol/index';
-type RoomSnapshot = { messages: Message[]; hasMore: boolean; typing?: { user: User; typing: boolean }[]; seq?: number };
+type RoomSnapshot = { messages: Message[]; hasMore: boolean; present?: User[]; typing?: { user: User; typing: boolean }[]; seq?: number; observedAt?: string };
 type ThreadSnapshot = { parent: Message; messages: Message[]; hasMore: boolean; observedAt: string };
 type ThreadWatch = { stop: () => void; rememberHistory?: (messages: Message[]) => void };
 export const OFFLINE_AFTER_MS=5000;
@@ -26,10 +26,25 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  let catchUp: number | undefined;
  let readingGap = false;
  let lastDelivered: string | undefined;
+ let oldestRoomMessage = Infinity;
+ let roomVisible = url.searchParams.get('visible') !== 'false';
+ const rememberRoomHistory = (messages: Message[]) => {
+  if (messages.length > 0) oldestRoomMessage = Math.min(oldestRoomMessage, Number(messages[0]!.id));
+ };
  const deliverMessage = (message: Message, updated: boolean) => {
   if (message.deleted) emit({type:'message.deleted', messageId:message.id, seq:++seq});
   else emit({type:updated ? 'message.updated' : 'message.created', message, seq:++seq});
  };
+ async function refreshHistory(operation: 'roomChanges' | 'threadChanges', id: string, oldest: number, before: number, since: string, until: string, stopped: () => boolean) {
+  let after = oldest - 1;
+  while (after + 1 < before && since < until && !stopped()) {
+   const changes = await readNative(operation, id, after, before, since, until) as {messages: Message[]; hasNewer: boolean};
+   if (stopped()) return;
+   for (const message of changes.messages) deliverMessage(message, true);
+   if (!changes.hasNewer) break;
+   after = Number(changes.messages.at(-1)!.id);
+  }
+ }
  const applyRoom = (value: RoomSnapshot) => {
   const nextTyping = new Map((value.typing ?? []).map(entry => [entry.user.id, entry]));
   for (const [id, typing] of nextTyping) if (!typingIds.has(id)) emit({type:'typing', ...typing});
@@ -39,12 +54,19 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    seq = value.seq ?? 0;
    emit(value);
   } else {
+   if (readAction && prior.present && value.present) {
+    const present = new Set(value.present.map(user => user.id));
+    const previous = new Set(prior.present.map(user => user.id));
+    for (const user of prior.present) if (!present.has(user.id)) emit({type:'presence.left', userId:user.id});
+    for (const user of value.present) if (!previous.has(user.id)) emit({type:'presence.joined', user});
+   }
    for (const message of value.messages) {
     const old = prior.messages.find(item => item.id === message.id);
     if (!old || JSON.stringify(old) !== JSON.stringify(message)) deliverMessage(message, Boolean(old));
    }
   }
   prior = value;
+  rememberRoomHistory(value.messages);
   lastDelivered = value.messages.at(-1)?.id ?? lastDelivered ?? '0';
  };
  const receiveRoom = (value: RoomSnapshot) => {
@@ -60,11 +82,16 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
     value = pendingRoom;
     pendingRoom = undefined;
     const first = Number(value.messages[0]?.id);
+    if (readAction && prior?.observedAt && value.observedAt) {
+     const before = Math.min(first, Number(lastDelivered ?? 0) + 1);
+     await refreshHistory('roomChanges', roomId, oldestRoomMessage, before, prior.observedAt, value.observedAt, () => closed);
+    }
     while (readAction && lastDelivered && (lastDelivered !== '0' || value.hasMore) && Number(lastDelivered) < first && !closed) {
      const page = await readNative('roomAfter', roomId, lastDelivered) as {messages: Message[]; hasNewer: boolean};
      if (closed) return;
      const gap = page.messages.filter(message => Number(message.id) < first);
      if (gap.length === 0) break;
+     rememberRoomHistory(gap);
      for (const message of gap) {
       deliverMessage(message, false);
       lastDelivered = message.id;
@@ -128,16 +155,8 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
       }
       // The latest snapshot covers newer replies. Only fetch edits to older replies already shown.
       const before = Math.min(Number(value.messages[0]?.id), last + 1);
-      let after = oldest - 1;
-      while (after + 1 < before && previous.observedAt < value.observedAt) {
-       const changes = await readNative('threadChanges', parentId, after, before, previous.observedAt, value.observedAt) as {
-        messages: Message[]; hasNewer: boolean;
-       };
-       if (stopped) return;
-       for (const message of changes.messages) deliverMessage(message, true);
-       if (!changes.hasNewer) break;
-       after = Number(changes.messages.at(-1)!.id);
-      }
+      await refreshHistory('threadChanges', parentId, oldest, before, previous.observedAt, value.observedAt, () => stopped);
+      if (stopped) return;
       for (const messages of missed.reverse()) {
        rememberHistory(messages);
        for (const message of messages) deliverMessage(message, false);
@@ -185,7 +204,13 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
    },
   };
  }
- if(roomId&&url.searchParams.get('visible')!=='false')void mutateNative('markRead',roomId).catch(()=>{});
+ if(roomId&&roomVisible)void mutateNative('markRead',roomId).catch(()=>{});
+ if(roomId&&readAction) {
+  const heartbeat = window.setInterval(() => {
+   if (roomVisible && !document.hidden) void mutateNative('roomPresence', roomId).catch(()=>{});
+  }, 25000);
+  off.push(() => window.clearInterval(heartbeat));
+ }
  if(roomId)off.push(watchNative('room',[roomId],receiveRoom,watchHealth('room')));
  else {off.push(watchNative('bootstrap',[],v=>{if(v.user)emit({type:'welcome',you:v.user,account:v.account});}));off.push(watchNative('sidebar',[],v=>{if(!closed)options.onSidebar?.(v);}));}
  async function send(frame:any){switch(frame.type){
@@ -194,7 +219,7 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'boost.create':await mutateNative('react',{messageId:frame.messageId,content:frame.content});break;
  case 'boost.delete':await mutateNative('unreact',frame.boostId);break;
  case 'typing.start':case 'typing.stop':await mutateNative('typing',roomId,frame.type==='typing.start');break;
- case 'presence.visible':if(frame.visible)await mutateNative('markRead',roomId);break;
+ case 'presence.visible':roomVisible=frame.visible;if(frame.visible)await mutateNative('markRead',roomId);break;
  case 'thread.open':{
   if(!threads.has(frame.parentId)) threads.set(frame.parentId,watchThread(frame.parentId));
   break;
@@ -208,9 +233,9 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
   emit({type:'thread.history',parentId:frame.parentId,before:frame.before,...v});
   break;
  }
- case 'history.before':{const v=await readNative('room',roomId,frame.before);emit({...v,type:'history',before:frame.before});break;}
+ case 'history.before':{const v=await readNative('room',roomId,frame.before);rememberRoomHistory(v.messages);emit({...v,type:'history',before:frame.before});break;}
  case 'history.after':{const v=await readNative('roomAfter',roomId,frame.after);emit({...v,type:'history.after',after:frame.after});break;}
- case 'history.around':{const v=await readNative('roomAround',roomId,frame.messageId);emit({...v,type:'history.around'});break;}
+ case 'history.around':{const v=await readNative('roomAround',roomId,frame.messageId);rememberRoomHistory(v.messages);emit({...v,type:'history.around'});break;}
  case 'message.check':{const ids=new Set(prior?.messages.map((m:any)=>m.clientMessageId));emit({type:'message.checked',stored:frame.clientMessageIds.filter((id:string)=>ids.has(id)),missing:frame.clientMessageIds.filter((id:string)=>!ids.has(id))});break;}
  case 'ping':emit({type:'pong'});break;
  }}

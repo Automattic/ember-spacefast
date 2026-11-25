@@ -52,7 +52,7 @@ function Subscription({item}:{item:Watch}){
  },[item,value,failed]);
  return null;
 }
-const names=['setup','join','createRoom','startDirect','sendMessage','dispatchPush','removePush','dispatchBotDelivery','dispatchAssistant','editMessage','deleteMessage','react','unreact','markRead','typing','profile','updateAccount','updateRoom','updateMembership','reserveFile','commitFile','updatePerson','leaveRoom','archiveRoom','favoriteOrder','sharedOrder','rememberSearch','clearSearches','cancelFile','registerAttachmentDevice','revokeAttachmentDevice'];
+const names=['setup','join','createRoom','startDirect','sendMessage','dispatchPush','removePush','dispatchBotDelivery','dispatchAssistant','editMessage','deleteMessage','react','unreact','markRead','roomPresence','typing','profile','updateAccount','updateRoom','updateMembership','reserveFile','commitFile','updatePerson','leaveRoom','archiveRoom','favoriteOrder','sharedOrder','rememberSearch','clearSearches','cancelFile','registerAttachmentDevice','revokeAttachmentDevice'];
 function Mutation({name}:{name:string}){mutations[name]=useMutation(name);return null;}
 function NativeOutbox() {
  const auth = useAuth();

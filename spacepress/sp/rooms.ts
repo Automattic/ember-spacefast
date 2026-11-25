@@ -28,7 +28,13 @@ export async function sidebar() {
     const read = lastReadId ? await messages.system.get(lastReadId) : null;
     if (!room.directKey) sharedOrder.push(String(room.id));
     const activeAt = latest?.createdAt ?? room.updatedAt;
-    const unread = Boolean(latest && latest.authorId !== user.wpId && latest.id > lastReadId);
+    let unread = false;
+    if (latest && latest.id > lastReadId) {
+      unread = latest.authorId !== user.wpId || (await messages.system.list({
+        where: { roomId: room.id, removed: false, id: { gt: lastReadId }, authorId: { ne: user.wpId } },
+        limit: 1,
+      })).length > 0;
+    }
     views.push({ ...(await roomView(room)), activeAt, unread, unreadSince: read?.createdAt, involvement: member?.involvement ?? "mentions" });
   }
   const people = await directory();
@@ -197,6 +203,14 @@ export const markRead = mutation({ access: "authenticated" }, async ({ id }: { i
   const record = await ensureMember(room.id, me.wpId, Boolean(room.directKey));
   const [latest] = await messages.system.list({ where: { roomId: room.id, removed: false }, orderBy: { id: "desc" }, limit: 1 });
   await memberships.system.update(record.id, { lastReadId: latest?.id ?? 0, seenAt: Date.now() });
+  return true;
+});
+
+export const roomPresence = mutation({ access: "authenticated" }, async ({ id }: { id: string }) => {
+  const me = await actor();
+  const room = await requireRoom(numericId(id));
+  const record = await ensureMember(room.id, me.wpId, Boolean(room.directKey));
+  await memberships.system.update(record.id, { seenAt: Date.now() });
   return true;
 });
 
