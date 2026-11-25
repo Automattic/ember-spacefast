@@ -28,9 +28,21 @@ export async function readAction(operation: string, args: unknown[]) {
   });
 }
 
-export function useQuery<T>(operation: string, ...args: unknown[]): T | undefined {
+type ReadFailure = { status?: number; code?: string };
+let leaving = false;
+
+function leaveView(path: string) {
+  if (leaving) return;
+  leaving = true;
+  const app = document.getElementById("ember-native-app");
+  if (app) app.hidden = true;
+  if (path === location.href) location.reload();
+  else location.replace(path);
+}
+
+export function useQueryStatus<T>(operation: string, ...args: unknown[]) {
   const key = JSON.stringify(args);
-  const [result, setResult] = useState<{ key: string; value: T }>();
+  const [result, setResult] = useState<{ key: string; value?: T; error?: ReadFailure }>();
   useEffect(() => {
     let stopped = false;
     let pending = false;
@@ -46,7 +58,21 @@ export function useQuery<T>(operation: string, ...args: unknown[]): T | undefine
           setResult({ key, value });
         }
       } catch (error) {
-        if (!stopped && (error as { status?: number }).status === 404) setResult(undefined);
+        if (stopped) return;
+        const failure = error as ReadFailure;
+        const { status, code } = failure;
+        if (code === "session_changed" || status === 401 || (status === 403 && operation === "bootstrap")) {
+          leaveView(location.href);
+          return;
+        }
+        if ((operation === "room" || operation === "thread") && (status === 403 || status === 404)) {
+          const room = location.pathname.match(/^\/rooms\/\d+(?=\/|$)/)?.[0];
+          leaveView(operation === "thread" && status === 404 && room && location.pathname.includes("/threads/") ? room : "/");
+          return;
+        }
+        previous = undefined;
+        const denied = status === 403 || status === 404;
+        setResult(current => ({ key, value: !denied && current?.key === key ? current.value : undefined, error: failure }));
       } finally {
         pending = false;
       }
@@ -62,7 +88,11 @@ export function useQuery<T>(operation: string, ...args: unknown[]): T | undefine
       refreshListeners.delete(poll);
     };
   }, [operation, key]);
-  return result?.key === key ? result.value : undefined;
+  return result?.key === key ? result : {};
+}
+
+export function useQuery<T>(operation: string, ...args: unknown[]): T | undefined {
+  return useQueryStatus<T>(operation, ...args).value;
 }
 
 const unsupported = () => {

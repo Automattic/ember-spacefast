@@ -15,16 +15,25 @@ const [creator, member, outsider] = JSON.parse(await readFile(credentialsFile, "
 assert(creator && member && outsider, "Supply credentials for three different WordPress users.");
 
 const browser = await chromium.launch();
-async function signIn(user: Login, width: number, height: number) {
+async function signIn(user: Login, width: number, height: number, through?: string) {
   const page = await browser.newPage({ viewport: { width, height } });
   page.setDefaultTimeout(20_000);
   const login = new URL("/wp-login.php", site);
   login.searchParams.set("redirect_to", site + "/");
-  await page.goto(login.href);
+  await page.goto(through ? site + through : login.href);
+  if (through) {
+    const link = page.getByRole("link", { name: "Sign in with WordPress" });
+    const href = await link.getAttribute("href");
+    assert(href);
+    assert.equal(new URL(href).searchParams.get("redirect_to"), site + through);
+    await link.click();
+  }
   await page.locator("#user_login").fill(user.username);
   await page.locator("#user_pass").fill(user.password);
   await page.locator("#wp-submit").click();
-  await page.waitForURL(url => url.origin === site && (url.pathname === "/" || url.pathname.startsWith("/rooms/")), {
+  await page.waitForURL(url => url.origin === site && (through
+    ? url.pathname.replace(/\/$/, "") === through
+    : url.pathname === "/" || url.pathname.startsWith("/rooms/")), {
     waitUntil: "domcontentloaded",
   });
   return page;
@@ -48,8 +57,15 @@ try {
   await desktop.waitForURL(/\/rooms\/\d+$/);
   const room = new URL(desktop.url()).pathname;
 
-  const mobile = await signIn(member, 390, 844);
-  await mobile.goto(site + room);
+  const guest = await browser.newPage();
+  const replyLink = room + "/threads/1/@2";
+  await guest.goto(site + replyLink);
+  const threadSignIn = await guest.getByRole("link", { name: "Sign in with WordPress" }).getAttribute("href");
+  assert(threadSignIn);
+  assert.equal(new URL(threadSignIn).searchParams.get("redirect_to"), site + replyLink);
+  await guest.close();
+
+  const mobile = await signIn(member, 390, 844, room);
   await composer(mobile).waitFor();
   const first = "The private room is live on WordPress.";
   const second = "Confirmed from my phone-sized browser. This longer message should wrap inside the chat without pushing the composer off screen.";
@@ -85,12 +101,51 @@ try {
   await Promise.any([deniedRead, opened.then(() => denied.waitForURL(site + "/", { timeout: 15_000 }))]);
   assert.equal(await denied.getByText(first, { exact: true }).count(), 0);
 
+  const roomRead = (url: URL) => {
+    if (!url.pathname.endsWith("/ember-read/run")) return false;
+    const input = JSON.parse(url.searchParams.get("input") ?? "{}");
+    return input.operation === "room";
+  };
+  await mobile.route(roomRead, route => route.abort("connectionfailed"));
+  await mobile.getByText("Offline", { exact: true }).waitFor({ state: "visible" });
+  await mobile.unroute(roomRead);
+  await mobile.getByText("Offline", { exact: true }).waitFor({ state: "hidden" });
+
   if (screenshots) {
     await mkdir(screenshots, { recursive: true });
     await desktop.screenshot({ path: join(screenshots, "ember-spacepress-desktop.png") });
     await mobile.screenshot({ path: join(screenshots, "ember-spacepress-mobile.png") });
   }
-  console.log(`Verified delivery in both directions, reload, mobile layout, and private-room access for ${room}.`);
+
+  const owner = await desktop.evaluate(async () => {
+    const nonce = await (await fetch("/wp-admin/admin-ajax.php?action=rest-nonce")).text();
+    const result = await fetch("/wp-json/wp-abilities/v1/abilities/ember/ember-read/run?input=" + encodeURIComponent('{"operation":"bootstrap"}'), {
+      headers: { "X-WP-Nonce": nonce },
+    });
+    return { nonce, personId: (await result.json()).user.id };
+  });
+  const roomId = room.split("/").pop();
+  await mobile.bringToFront();
+  const update = await desktop.request.post(site + "/wp-json/wp-abilities/v1/abilities/ember/update-room/run", {
+    headers: { "X-WP-Nonce": owner.nonce },
+    data: { input: { roomId, kind: "closed", memberIds: [owner.personId] } },
+  });
+  assert.equal(update.status(), 200, await update.text());
+  await mobile.waitForURL(url => url.origin === site && (
+    url.pathname === "/" || url.pathname === "/rooms" ||
+    (url.pathname.startsWith("/rooms/") && url.pathname.replace(/\/$/, "") !== room)
+  ), { waitUntil: "domcontentloaded" });
+  await mobile.getByText(first, { exact: true }).waitFor({ state: "hidden" });
+
+  await desktop.bringToFront();
+  await desktop.context().clearCookies();
+  const signInAgain = desktop.getByRole("link", { name: "Sign in with WordPress" });
+  await signInAgain.waitFor();
+  const returnLink = await signInAgain.getAttribute("href");
+  assert(returnLink);
+  assert.equal(new URL(returnLink).searchParams.get("redirect_to"), site + room);
+  await desktop.getByText(first, { exact: true }).waitFor({ state: "hidden" });
+  console.log(`Verified room sign-in, chat, outage recovery, live access revocation, and session expiry for ${room}.`);
 } finally {
   await browser.close();
 }

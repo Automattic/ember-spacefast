@@ -8,10 +8,17 @@ export function openAhead(_url:string){return ()=>{};}
 export const waitingAhead=(_url:string)=>false;
 export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocketOptions):ReconnectingSocket<Frame>{
  const url=new URL(options.url()),roomId=decodeURIComponent(url.pathname.match(/\/rooms\/([^/]+)/)?.[1]??'');let closed=false,seq=0,prior:any=null;let typingIds=new Map<string,any>();const threadStops=new Map<string,()=>void>();const off:(()=>void)[]=[];
+ const failedReads = new Set<string>();
+ const networkChanged = () => options.onOffline?.(!navigator.onLine || failedReads.size > 0);
+ const watchHealth = (key: string) => (failed: boolean) => {
+  if (failed) failedReads.add(key);
+  else failedReads.delete(key);
+  if (!closed) networkChanged();
+ };
  const emit=(frame:any)=>{if(!closed)options.onMessage(JSON.stringify(frame));};
  const fail=(error:any,frame:any)=>emit({type:'error',message:error.message,failed:frame.type,clientMessageId:frame.clientMessageId});
  if(roomId&&url.searchParams.get('visible')!=='false')void mutateNative('markRead',roomId).catch(()=>{});
- if(roomId)off.push(watchNative('room',[roomId],value=>{const nextTyping=new Map<string,any>((value.typing??[]).map((t:any)=>[t.user.id,t]));for(const [id,t] of nextTyping)if(!typingIds.has(id))emit({type:'typing',...t});for(const [id,t] of typingIds)if(!nextTyping.has(id))emit({type:'typing',user:t.user,typing:false});typingIds=nextTyping;if(!prior){prior=value;seq=value.seq??0;emit(value);return;}for(const message of value.messages){const old=prior.messages.find((m:any)=>m.id===message.id);if(!old||JSON.stringify(old)!==JSON.stringify(message)){if(message.deleted)emit({type:'message.deleted',messageId:message.id,seq:++seq});else emit({type:old?'message.updated':'message.created',message,seq:++seq});}}prior=value;}));
+ if(roomId)off.push(watchNative('room',[roomId],value=>{const nextTyping=new Map<string,any>((value.typing??[]).map((t:any)=>[t.user.id,t]));for(const [id,t] of nextTyping)if(!typingIds.has(id))emit({type:'typing',...t});for(const [id,t] of typingIds)if(!nextTyping.has(id))emit({type:'typing',user:t.user,typing:false});typingIds=nextTyping;if(!prior){prior=value;seq=value.seq??0;emit(value);return;}for(const message of value.messages){const old=prior.messages.find((m:any)=>m.id===message.id);if(!old||JSON.stringify(old)!==JSON.stringify(message)){if(message.deleted)emit({type:'message.deleted',messageId:message.id,seq:++seq});else emit({type:old?'message.updated':'message.created',message,seq:++seq});}}prior=value;},watchHealth('room')));
  else {off.push(watchNative('bootstrap',[],v=>{if(v.user)emit({type:'welcome',you:v.user,account:v.account});}));off.push(watchNative('sidebar',[],v=>{if(!closed)options.onSidebar?.(v);}));}
  async function send(frame:any){switch(frame.type){
  case 'message.update':await mutateNative('editMessage',{roomId,messageId:frame.messageId,body:frame.body});break;
@@ -20,7 +27,15 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'boost.delete':await mutateNative('unreact',frame.boostId);break;
  case 'typing.start':case 'typing.stop':await mutateNative('typing',roomId,frame.type==='typing.start');break;
  case 'presence.visible':if(frame.visible)await mutateNative('markRead',roomId);break;
- case 'thread.open':{threadStops.get(frame.parentId)?.();const stop=watchNative('thread',[frame.parentId],v=>emit({type:'thread.opened',parentId:frame.parentId,...v}));threadStops.set(frame.parentId,stop);off.push(stop);break;}
+ case 'thread.open':{
+  const health=watchHealth('thread:'+frame.parentId);
+  threadStops.get(frame.parentId)?.();
+  const unsubscribe=watchNative('thread',[frame.parentId],v=>emit({type:'thread.opened',parentId:frame.parentId,...v}),health);
+  const stop=()=>{unsubscribe();health(false);};
+  threadStops.set(frame.parentId,stop);
+  off.push(stop);
+  break;
+ }
  case 'thread.close':threadStops.get(frame.parentId)?.();threadStops.delete(frame.parentId);break;
  case 'thread.before':{const v=await readNative('thread',frame.parentId,frame.before);emit({type:'thread.history',parentId:frame.parentId,before:frame.before,...v});break;}
  case 'history.before':{const v=await readNative('room',roomId,frame.before);emit({...v,type:'history',before:frame.before});break;}
@@ -29,7 +44,6 @@ export function reconnectingSocket<Frame=ClientFrame>(options:ReconnectingSocket
  case 'message.check':{const ids=new Set(prior?.messages.map((m:any)=>m.clientMessageId));emit({type:'message.checked',stored:frame.clientMessageIds.filter((id:string)=>ids.has(id)),missing:frame.clientMessageIds.filter((id:string)=>!ids.has(id))});break;}
  case 'ping':emit({type:'pong'});break;
  }}
- const networkChanged = () => options.onOffline?.(!navigator.onLine);
  window.addEventListener('online', networkChanged);
  window.addEventListener('offline', networkChanged);
  off.push(() => window.removeEventListener('online', networkChanged), () => window.removeEventListener('offline', networkChanged));

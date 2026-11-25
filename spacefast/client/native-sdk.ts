@@ -6,6 +6,9 @@ import {useQuery as useNativeQuery,useMutation as useNativeMutation} from '@spac
 export {useAuth,signInWithGoogle,signInWithSpacefast,signOut,storage} from '@spacefast/zero/react';
 export const readAction: ((operation: string, args: unknown[]) => Promise<unknown>) | undefined = undefined;
 export const unfurlAction: ((url: string) => Promise<unknown>) | undefined = undefined;
+export function useQueryStatus<T>(operation: string, ...args: unknown[]): { value?: T; error?: unknown } {
+ return { value: useQuery<T>(operation, ...args) };
+}
 export function useQuery<TResult=unknown,TArgs extends unknown[]=unknown[]>(operation:string,...args:TArgs):TResult|undefined {
  return useNativeQuery<TResult>('read',operation,args);
 }

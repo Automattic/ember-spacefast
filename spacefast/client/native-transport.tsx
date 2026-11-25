@@ -1,17 +1,21 @@
 import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { disableBrowserPush } from './ember/lib/native-push';
 import { confirmOutbox } from './ember/lib/outbox';
-import { useQuery, useMutation, signOut, useAuth, readAction, unfurlAction } from './native-sdk';
+import { useQuery, useQueryStatus, useMutation, signOut, useAuth, readAction, unfurlAction } from './native-sdk';
 
-type Watch = { key:string; name:string; args:any[]; value?:any; listeners:Set<(value:any)=>void> };
+type Watch = { key:string; name:string; args:any[]; value?:any; failed?:boolean; listeners:Set<(value:any)=>void>; health:Set<(failed:boolean)=>void> };
 const watches = new Map<string,Watch>();
 const changed = new Set<()=>void>();
 let mutations: Record<string,(...args:any[])=>Promise<any>> = {};
-export function watchNative(name:string,args:any[],listener:(v:any)=>void) {
+export function watchNative(name:string,args:any[],listener:(v:any)=>void,onFailure?:(failed:boolean)=>void) {
  const key=JSON.stringify([name,args]); let item=watches.get(key);
- if(!item){item={key,name,args,listeners:new Set()};watches.set(key,item);changed.forEach(fn=>fn());}
+ if(!item){item={key,name,args,listeners:new Set(),health:new Set()};watches.set(key,item);changed.forEach(fn=>fn());}
+ if(onFailure){
+  item.health.add(onFailure);
+  if(item.failed)queueMicrotask(()=>{if(item.health.has(onFailure))onFailure(Boolean(item.failed));});
+ }
  item.listeners.add(listener); if(item.value!==undefined)queueMicrotask(()=>{if(item.listeners.has(listener))listener(item.value);});
- return ()=>{item.listeners.delete(listener);if(!item.listeners.size && watches.get(key)===item){watches.delete(key);changed.forEach(fn=>fn());}};
+ return ()=>{item.listeners.delete(listener);if(onFailure)item.health.delete(onFailure);if(!item.listeners.size && watches.get(key)===item){watches.delete(key);changed.forEach(fn=>fn());}};
 }
 export function readNative(name:string,...args:any[]):Promise<any>{if(readAction)return readAction(name,args);return new Promise((resolve,reject)=>{let off=()=>{};const timeout=setTimeout(()=>{off();reject(new Error('The native service did not answer. Please try again.'));},20000);off=watchNative(name,args,value=>{clearTimeout(timeout);off();resolve(value)});});}
 export async function mutateNative(name:string,...args:any[]) {
@@ -38,7 +42,16 @@ async function dispatchBotReplies(messageId:string, count:number) {
   if(!await mutateNative('dispatchBotDelivery',messageId))break;
  }
 }
-function Subscription({item}:{item:Watch}){const value=useQuery(item.name,...item.args);useEffect(()=>{if(value!==undefined){item.value=value;item.listeners.forEach(fn=>fn(value));}},[item,value]);return null;}
+function Subscription({item}:{item:Watch}){
+ const {value,error}=useQueryStatus(item.name,...item.args);
+ const failed=error!==undefined;
+ useEffect(()=>{item.failed=failed;item.health.forEach(fn=>fn(failed));},[item,failed]);
+ useEffect(()=>{
+  if(failed && value===undefined)item.value=undefined;
+  if(!failed && value!==undefined){item.value=value;item.listeners.forEach(fn=>fn(value));}
+ },[item,value,failed]);
+ return null;
+}
 const names=['setup','join','createRoom','startDirect','sendMessage','dispatchPush','removePush','dispatchBotDelivery','dispatchAssistant','editMessage','deleteMessage','react','unreact','markRead','typing','profile','updateAccount','updateRoom','updateMembership','reserveFile','commitFile','updatePerson','leaveRoom','archiveRoom','favoriteOrder','sharedOrder','rememberSearch','clearSearches','cancelFile','registerAttachmentDevice','revokeAttachmentDevice'];
 function Mutation({name}:{name:string}){mutations[name]=useMutation(name);return null;}
 function NativeOutbox() {
