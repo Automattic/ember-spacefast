@@ -89,7 +89,7 @@ export const roomPush = job({ retries: 4 }, async ({ subscriptionId, messageId }
     headers: { Authorization: "vapid t=" + token + ", k=" + config.publicKey, TTL: "300", Topic: "ember_activity" },
   });
   if (response.status === 404 || response.status === 410) await pushSubscriptions.system.delete(subscription.id);
-  if (response.status === 429 || response.status >= 500) throw new Error("Push provider is temporarily unavailable.");
+  if (response.status === 408 || response.status === 429 || response.status >= 500) throw new Error("Push provider is temporarily unavailable.");
 });
 
 export async function enqueuePush(messageId: number, roomId: number, authorId: number, mentioned: string[]) {

@@ -2,6 +2,7 @@ import { HttpError, mutation, query } from "spacepress";
 import { attachmentDevices, attachments, memberships } from "spacepress:db";
 import { attachmentChunks } from "./schema";
 import { actor, numericId, personView, requireRoom } from "./access";
+import { consumeRate } from "./records";
 
 const chunkSize = 4194304;
 const maxFileSize = 262144000;
@@ -106,6 +107,7 @@ export const reserveFile = mutation({ access: "authenticated", rateLimit: "20/ho
   if (!input.name.trim() || input.name.length > 255 || !Number.isInteger(input.size) || input.size < 1 || input.size > maxFileSize) {
     throw new HttpError(422, "invalid_file", "Invalid attachment details.");
   }
+  await consumeRate(me.id + ":file-bytes", 500 * 1024 * 1024, 3600000, input.size);
   const file = await attachments.system.create({ roomId: room.id, personId: me.wpId, name: input.name, type: input.type, size: input.size });
   return { id: String(file.id) };
 });

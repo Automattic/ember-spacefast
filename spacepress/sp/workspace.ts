@@ -1,8 +1,9 @@
 import { HttpError, mutation } from "spacepress";
 import { get_userdata } from "php/wordpress";
-import { profiles, rooms, workspaces } from "spacepress:db";
+import { profiles, pushSubscriptions, rooms, workspaces } from "spacepress:db";
 import { account, actor, admin, ensureMember, numericId, personView } from "./access";
 import { assistantReady } from "./service-settings";
+import { audit } from "./records";
 
 export async function accountView() {
   const saved = await account();
@@ -30,7 +31,7 @@ function signupDomains() {
 }
 
 export function canJoinByEmail(email: string) {
-  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+  const domain = email.toLowerCase().match(/^[^\s@]+@([a-z0-9.-]+)$/)?.[1] ?? "";
   return signupDomains().includes(domain);
 }
 
@@ -48,6 +49,7 @@ export const setup = mutation({ access: "authenticated" }, async (input: {
   await workspaces.system.create({ singleton: 1, name });
   const room = await rooms.system.create({ name: "General", owner: me.wpId });
   await ensureMember(room.id, me.wpId, false);
+  await audit(me.wpId, "workspace.setup", me.wpId);
   return me;
 });
 
@@ -79,7 +81,7 @@ export const updateAccount = mutation({ access: "authenticated" }, async (input:
   name?: string; tagline?: string; logo?: string; openSignUp?: boolean; restrictRoomCreation?: boolean;
   joinCode?: string; joinLink?: boolean; navigationIcons?: Record<string, string>;
 }) => {
-  await admin();
+  const me = await admin();
   const workspace = await account();
   const name = input.name?.trim() ?? workspace?.name ?? "Ember";
   if (!name || name.length > 80) throw new HttpError(422, "invalid_name", "Enter a workspace name.");
@@ -93,8 +95,10 @@ export const updateAccount = mutation({ access: "authenticated" }, async (input:
       ? navigationIcons(workspace?.navigationIcons ?? "{}", input.navigationIcons)
       : workspace?.navigationIcons ?? "{}",
   };
-  if (workspace) await workspaces.system.update(workspace.id, data);
-  else await workspaces.system.create({ singleton: 1, ...data });
+  const saved = workspace
+    ? await workspaces.system.update(workspace.id, data)
+    : await workspaces.system.create({ singleton: 1, ...data });
+  await audit(me.wpId, "account.update", saved.id);
   return await accountView();
 });
 
@@ -131,5 +135,10 @@ export const updatePerson = mutation({ access: "authenticated" }, async (input: 
   const [existing] = await profiles.system.list({ where: { personId: id }, limit: 1 });
   if (existing) await profiles.system.update(existing.id, { role, status });
   else await profiles.system.create({ personId: id, role, status });
+  if (status !== "active") {
+    const devices = await pushSubscriptions.system.list({ where: { personId: id }, limit: 4 });
+    for (const device of devices) await pushSubscriptions.system.delete(device.id);
+  }
+  await audit(me.wpId, "person.update", id, JSON.stringify({ role, status }));
   return await personView(id);
 });

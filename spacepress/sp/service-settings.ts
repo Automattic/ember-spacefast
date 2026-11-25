@@ -4,6 +4,7 @@ import { memberships, serviceActors, workspaces } from "spacepress:db";
 import { account, actor, admin, ensureMember, membership, numericId, requireRoom } from "./access";
 import { serviceOffset, type ServiceActor } from "./service-identity";
 import { publicAddress } from "./unfurl";
+import { audit } from "./records";
 
 function serviceVersion() {
   return randomBytes(24).toString("hex");
@@ -73,7 +74,7 @@ async function syncBotRooms(personId: number, previous: string[], wanted: string
 export const createBot = mutation({ access: "authenticated", rateLimit: "20/day" }, async (input: {
   name: string; roomIds: string[]; secret: string; outgoingUrl?: string; directMessages?: boolean;
 }) => {
-  await admin();
+  const me = await admin();
   const ids = await validRooms(input.roomIds, 100);
   const name = input.name.trim();
   if (!name || name.length > 80 || !ids.length) throw new HttpError(422, "invalid_webhook", "Choose a name and at least one room.");
@@ -83,13 +84,14 @@ export const createBot = mutation({ access: "authenticated", rateLimit: "20/day"
     outgoingUrl, directMessages: Boolean(outgoingUrl && input.directMessages), version: serviceVersion(),
   });
   await syncBotRooms(serviceOffset + bot.id, [], ids);
+  await audit(me.wpId, "bot.create", bot.id);
   return botView(bot);
 });
 
 export const updateBot = mutation({ access: "authenticated" }, async (input: {
   id: string; name?: string; roomIds?: string[]; secret?: string; outgoingUrl?: string; directMessages?: boolean; enabled?: boolean;
 }) => {
-  await admin();
+  const me = await admin();
   const bot = await serviceActors.system.get(numericId(input.id));
   if (!bot || bot.kind !== "bot") throw new HttpError(404, "webhook_unavailable", "Webhook unavailable.");
   const oldRooms = JSON.parse(bot.roomIds) as string[];
@@ -103,6 +105,7 @@ export const updateBot = mutation({ access: "authenticated" }, async (input: {
     outgoingUrl, directMessages: Boolean(outgoingUrl && (input.directMessages ?? bot.directMessages)), version: serviceVersion(),
   });
   await syncBotRooms(serviceOffset + bot.id, oldRooms, ids);
+  await audit(me.wpId, "bot.update", bot.id);
   return true;
 });
 
@@ -120,11 +123,12 @@ export const assistantList = query({ access: "authenticated" }, async () => {
 });
 
 export const setAssistants = mutation({ access: "authenticated" }, async ({ enabled }: { enabled: boolean }) => {
-  await admin();
+  const me = await admin();
   if (enabled && !assistantReady()) throw new HttpError(422, "assistant_configuration", "Connect OpenAI before enabling assistants.");
   const workspace = await account();
-  if (workspace) await workspaces.system.update(workspace.id, { assistantsEnabled: enabled });
-  else await workspaces.system.create({ singleton: 1, assistantsEnabled: enabled });
+  const saved = workspace
+    ? await workspaces.system.update(workspace.id, { assistantsEnabled: enabled })
+    : await workspaces.system.create({ singleton: 1, assistantsEnabled: enabled });
   if (Boolean(workspace?.assistantsEnabled) !== enabled) {
     const profiles = await serviceActors.system.list({ where: { kind: "assistant" }, limit: 20 });
     for (const profile of profiles) await serviceActors.system.update(profile.id, { version: serviceVersion() });
@@ -135,6 +139,7 @@ export const setAssistants = mutation({ access: "authenticated" }, async ({ enab
       kind: "assistant", name: "Ember", handle: "ember", instructions: "Help people with questions and writing. Keep replies concise.",
     });
   }
+  await audit(me.wpId, enabled ? "assistant.enable" : "assistant.disable", saved.id);
   return true;
 });
 
@@ -142,7 +147,7 @@ export const saveAssistant = mutation({ access: "authenticated" }, async (input:
   id?: string; handle: string; name: string; instructions: string; roomIds: string[];
   enabled: boolean; includeThreadRoot: boolean; directMessages: boolean;
 }) => {
-  await admin();
+  const me = await admin();
   const previous = input.id ? await serviceActors.system.get(numericId(input.id)) : null;
   if (input.id && (!previous || previous.kind !== "assistant")) throw new HttpError(404, "assistant_unavailable", "Assistant unavailable.");
   const handle = input.handle.trim().toLowerCase();
@@ -161,8 +166,10 @@ export const saveAssistant = mutation({ access: "authenticated" }, async (input:
     handle, name, instructions, roomIds: JSON.stringify(ids), enabled: input.enabled,
     directMessages: input.directMessages, includeThreadRoot: input.includeThreadRoot, version: serviceVersion(),
   };
-  if (previous) await serviceActors.system.update(previous.id, data);
-  else await serviceActors.system.create({ ...data, kind: "assistant" });
+  const saved = previous
+    ? await serviceActors.system.update(previous.id, data)
+    : await serviceActors.system.create({ ...data, kind: "assistant" });
+  await audit(me.wpId, "assistant.save", saved.id);
   return true;
 });
 

@@ -123,6 +123,13 @@ async function verifyOpenFile(sender: Session, receiver: Session) {
 
 try {
   verifyVapidSignature();
+  const guest = await browser.newPage();
+  const joinPath = "/join/ember-parity-check";
+  await guest.goto(site + joinPath);
+  const signInLink = await guest.getByRole("link", { name: "Sign in with WordPress" }).getAttribute("href");
+  assert(signInLink);
+  assert.equal(new URL(signInLink).searchParams.get("redirect_to"), site + joinPath);
+  await guest.close();
   const maya = await signIn(first);
   const jules = await signIn(second);
   const outsider = await signIn(third);
@@ -158,6 +165,9 @@ try {
   assert.equal(existing.id, dm.id);
   assert.equal(existing.kind, "direct");
   await send(maya, dm.id, "Private direct message");
+  await call(maya, "send-message", {
+    roomId: dm.id, body: "Duplicate across rooms", clientMessageId: root.clientMessageId,
+  }, false, 409);
   await call(outsider, "ember-read", { operation: "room", id: Number(dm.id) }, true, 404);
 
   await verifyProtectedFile(maya, jules, room.id);
@@ -171,6 +181,8 @@ try {
   const deleted = await call(maya, "ember-read", { operation: "thread", id: Number(root.id) }, true);
   assert.equal(deleted.parent.deleted, true);
   assert.equal(deleted.parent.body, "");
+  const removed = await call(maya, "ember-search", { q: marker }, true);
+  assert.equal(removed.messages.length, 0);
 
   if (administratorFile) {
     const wordpress = await signIn(JSON.parse(await readFile(administratorFile, "utf8")) as Login);
@@ -180,7 +192,16 @@ try {
     const webhook = site + "/webhooks/" + bot.id + "/" + open.id + "/";
     const denied = await outsider.page.request.post(webhook + "invalid-key/slack", { data: { text: "Unauthorised" } });
     assert.equal(denied.status(), 403);
-    const request = { headers: { "Idempotency-Key": randomUUID() }, data: { text: "*Slack webhook*", username: "Forged", blocks: [{ type: "section", text: { type: "mrkdwn", text: "A Slack card" } }] } };
+    const request = {
+      headers: { "Idempotency-Key": randomUUID() },
+      data: { text: "*Slack webhook*", username: "Forged", blocks: [
+        { type: "section", text: { type: "mrkdwn", text: "A Slack card" } },
+        { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open" }, url: "https://example.org/", style: "primary" }] },
+        { type: "rich_text", elements: [{ type: "rich_text_list", style: "ordered", elements: [
+          { type: "rich_text_section", elements: [{ type: "text", text: "First" }] },
+        ] }] },
+      ] },
+    };
     for (let attempt = 0; attempt < 2; attempt++) {
       const accepted = await outsider.page.request.post(webhook + key + "/slack", request);
       assert.equal(accepted.status(), 200);
@@ -191,6 +212,9 @@ try {
     assert.equal(view.messages[0].creator.name, "Parity bot");
     assert(view.messages[0].body.includes("<strong>Slack webhook</strong>"));
     assert.equal(view.messages[0].cards[0].parts[0].kind, "section");
+    assert.equal(view.messages[0].cards[0].parts[1].buttons[0].text, "Open");
+    assert.equal(view.messages[0].cards[0].parts[1].buttons[0].style, "primary");
+    assert.equal(view.messages[0].cards[0].parts[2].html, "<ol><li>First</li></ol>");
     await call(wordpress, "assistant-list", {}, true);
     await call(wordpress, "invitation-list", {}, true);
     console.log("Verified webhook authentication, Slack cards, idempotency, and integration settings.");

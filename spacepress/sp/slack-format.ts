@@ -69,13 +69,15 @@ export function slackRichText(nodes: unknown[]) {
     const node = raw as SlackText;
     const elements = node.elements ?? [];
     if (node.type === "rich_text_list") {
+      const style = (node as unknown as { style?: string }).style;
+      const tag = style === "ordered" ? "ol" : "ul";
       let list = "";
       for (const rawItem of elements.slice(0, 100)) {
         if (!rawItem || typeof rawItem !== "object") continue;
         const item = rawItem as SlackText;
         list += "<li>" + inline(item.elements ?? []) + "</li>";
       }
-      html += "<ul>" + list + "</ul>";
+      html += "<" + tag + ">" + list + "</" + tag + ">";
     } else {
       const contents = inline(elements);
       const tag = node.type === "rich_text_quote" ? "blockquote" : node.type === "rich_text_preformatted" ? "pre" : "p";

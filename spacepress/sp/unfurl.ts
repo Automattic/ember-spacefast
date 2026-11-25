@@ -1,6 +1,9 @@
 import { mutation } from "spacepress";
-import { wp_strip_all_tags } from "php/wordpress";
+import { createHash } from "node:crypto";
+import { home_url, wp_strip_all_tags } from "php/wordpress";
+import { linkPreviews } from "spacepress:db";
 import { actor } from "./access";
+import { consumeRate } from "./records";
 
 export function publicAddress(value: string) {
   if (value.length > 2048 || /[\s\\<>"']/u.test(value)) return "";
@@ -14,10 +17,7 @@ function content(value: string, limit: number) {
   return wp_strip_all_tags(value).replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
-export const unfurl = mutation({ access: "authenticated", rateLimit: "20/min" }, async ({ url }: { url: string }) => {
-  await actor();
-  const target = publicAddress(url);
-  if (!target) return null;
+async function fetchPreview(target: string) {
   try {
     const response = await fetch(target, { redirect: "error", headers: { Accept: "text/html", Range: "bytes=0-65535" } });
     if (!response.ok || response.redirected || !(response.headers.get("content-type") ?? "").startsWith("text/html")) return null;
@@ -37,4 +37,25 @@ export const unfurl = mutation({ access: "authenticated", rateLimit: "20/min" },
   } catch {
     return null;
   }
+}
+
+export const unfurl = mutation({ access: "authenticated" }, async ({ url }: { url: string }) => {
+  const user = await actor();
+  const target = publicAddress(url.split("#")[0] ?? "");
+  const root = home_url("/").toLowerCase();
+  if (!target || target.toLowerCase().startsWith(root) || target.toLowerCase() + "/" === root) return null;
+  const key = createHash("sha256").update(user.id + "\n" + target).digest("hex");
+  const [existing] = await linkPreviews.system.list({ where: { key }, limit: 1 });
+  const now = Date.now();
+  if (existing && existing.expiresAt > now) {
+    return existing.title ? { url: target, title: existing.title, description: existing.description, image: null } : null;
+  }
+  await consumeRate(user.id + ":link-preview", 12, 60000);
+  const preview = await fetchPreview(target);
+  const fields = { title: preview?.title ?? "", description: preview?.description ?? "", expiresAt: now + 1800000 };
+  if (existing) await linkPreviews.system.update(existing.id, fields);
+  else await linkPreviews.system.create({ key, ...fields });
+  const expired = await linkPreviews.system.list({ where: { expiresAt: { lt: now } }, limit: 8 });
+  for (const record of expired) await linkPreviews.system.delete(record.id);
+  return preview;
 });

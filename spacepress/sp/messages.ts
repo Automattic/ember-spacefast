@@ -6,6 +6,8 @@ import { messages as messageSchema } from "./schema";
 import { enqueueServices } from "./service-delivery";
 import { enqueuePush } from "./push";
 import { acceptAttachment, attachmentSummary, type Manifest } from "./attachments";
+import { indexMessage } from "./search-index";
+import { audit } from "./records";
 
 export type Message = InferSelectModel<typeof messageSchema>;
 
@@ -178,9 +180,11 @@ async function writeMessage(input: MessageInput, protectedUpload: boolean) {
   if (input.expectedCreatorId && input.expectedCreatorId !== user.id) throw new HttpError(403, "sender_changed", "Message sender changed.");
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(input.clientMessageId)) throw new HttpError(422, "invalid_message", "Invalid message identifier.");
   const key = { roomId: room.id, authorId: user.wpId, clientId: input.clientMessageId };
-  const [prior] = await messages.system.list({ where: key, limit: 1 });
+  const [prior] = await messages.system.list({ where: { authorId: user.wpId, clientId: input.clientMessageId }, limit: 1 });
   if (prior) {
-    if (input.fileId && numericId(input.fileId) !== prior.attachmentId) throw new HttpError(409, "message_conflict", "Message identifier already used.");
+    if (prior.roomId !== room.id || (input.fileId && numericId(input.fileId) !== prior.attachmentId)) {
+      throw new HttpError(409, "message_conflict", "Message identifier already used.");
+    }
     return await messageView(prior);
   }
   let parentId = 0;
@@ -200,11 +204,12 @@ async function writeMessage(input: MessageInput, protectedUpload: boolean) {
   const prepared = attachmentId && !(input.plainText ?? input.body).trim()
     ? { body: "", markup: "" }
     : prepare(input.body, input.plainText);
-  const row = await messages.system.create({ ...key, ...prepared, parentId, inRoom: !parentId || input.alsoSent === true, attachmentId });
+  const row = await messages.system.create({ ...key, ...prepared, parentId, inRoom: !parentId || input.alsoSent === true, attachmentId, searchIndexed: true });
+  await indexMessage(row.id, room.id, row.body);
   if (attachmentId) await attachments.system.update(attachmentId, { status: "attached" });
   await ensureMember(room.id, user.wpId, Boolean(room.directKey));
   const mentioned = (await mentionsFor(row.markup)).map(person => person.id);
-  await enqueueServices(row.id, room.id, user.wpId, mentioned, row.body, row.updatedAt);
+  await enqueueServices(row.id, room.id, user.wpId, mentioned, row.body, row.editedAt);
   await enqueuePush(row.id, room.id, user.wpId, mentioned);
   return await messageView(row);
 }
@@ -228,7 +233,8 @@ export const editMessage = mutation({ access: "authenticated", rateLimit: "60/mi
   const user = await actor();
   const row = await accessibleMessage(numericId(input.messageId));
   if (row.authorId !== user.wpId || row.removed) throw new HttpError(403, "message_owner", "You may only edit your messages.");
-  const updated = await messages.system.update(row.id, { ...prepare(input.body, input.plainText), editedAt: new Date().toISOString() });
+  const updated = await messages.system.update(row.id, { ...prepare(input.body, input.plainText), editedAt: new Date().toISOString(), searchIndexed: true });
+  await indexMessage(row.id, row.roomId, updated.body, true);
   return await messageView(updated);
 });
 
@@ -236,10 +242,12 @@ export const deleteMessage = mutation({ access: "authenticated" }, async ({ id }
   const user = await actor();
   const row = await accessibleMessage(numericId(id));
   if (row.authorId !== user.wpId && !user.administrator) throw new HttpError(403, "message_owner", "You may only delete your messages.");
-  await messages.system.update(row.id, { removed: true, body: "", markup: "", cards: "" });
+  await messages.system.update(row.id, { removed: true, body: "", markup: "", cards: "", searchIndexed: true });
+  await indexMessage(row.id, row.roomId, "", true);
   if (row.attachmentId) await attachments.system.update(row.attachmentId, { status: "deleted", manifest: "" });
   const records = await reactions.system.list({ where: { messageId: row.id }, limit: 500 });
   for (const record of records) await reactions.system.delete(record.id);
+  await audit(user.wpId, "message.delete", row.id);
   return { messageId: id };
 });
 

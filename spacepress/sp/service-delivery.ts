@@ -4,6 +4,8 @@ import { home_url } from "php/wordpress";
 import { memberships, messages, rooms, serviceActors, serviceDeliveries } from "spacepress:db";
 import { membership, numericId, personView } from "./access";
 import { signWebhook } from "./assistant-signature.js";
+import { indexMessage } from "./search-index";
+import { consumeRate } from "./records";
 import { serviceOffset, type ServiceActor } from "./service-identity";
 import { assistantReady, assistantsEnabled, outgoingReady } from "./service-settings";
 import { publicAddress } from "./unfurl";
@@ -20,6 +22,9 @@ async function canReceive(actorId: number, roomId: number, authorId: number, men
     if (!await assistantsEnabled()) return false;
   } else if (!service.outgoingUrl || !outgoingReady()) return false;
   const serviceId = serviceOffset + service.id;
+  if (service.kind === "bot") {
+    if (!await membership(roomId, serviceId) || !await membership(roomId, authorId)) return false;
+  }
   if (room.directKey) {
     if (!service.directMessages || !await membership(room.id, serviceId)) return false;
     return await memberships.system.count({ where: { roomId: room.id } }) === 2;
@@ -42,7 +47,9 @@ async function isCurrent(id: number) {
   const service = await serviceActors.system.get(delivery.actorId);
   if (!source || !service) return false;
   const elapsed = Date.now() - new Date(delivery.createdAt).getTime();
-  if (source.removed || source.updatedAt !== delivery.sourceUpdatedAt || service.version !== delivery.actorVersion || elapsed > 2700000) return false;
+  const changed = source.editedAt !== delivery.sourceUpdatedAt && (source.editedAt !== "" || source.createdAt !== delivery.sourceUpdatedAt);
+  const maxAge = service.kind === "assistant" ? 1500000 : 2700000;
+  if (source.removed || changed || service.version !== delivery.actorVersion || elapsed > maxAge) return false;
   const ids = source.markup.split('<action-text-attachment sgid="').slice(1, 101).map(value => value.split('"')[0] ?? "");
   if (source.parentId) {
     const parent = await messages.system.get(source.parentId);
@@ -67,7 +74,10 @@ async function reply(id: number, body: string) {
   const authorId = serviceOffset + delivery.actorId;
   const clientId = "service-" + id;
   const [record] = await messages.system.list({ where: { roomId, authorId, clientId }, limit: 1 });
-  if (!record) await messages.system.create({ roomId, authorId, clientId, body: text, parentId, inRoom: !parentId });
+  if (!record) {
+    const saved = await messages.system.create({ roomId, authorId, clientId, body: text, parentId, inRoom: !parentId, searchIndexed: true });
+    await indexMessage(saved.id, roomId, text);
+  }
   await serviceDeliveries.system.update(id, { status: "replied", replyHash });
   return true;
 }
@@ -194,6 +204,13 @@ export const serviceDelivery = job({ retries: 4 }, async ({ id }: { id: number }
 
   let text = "";
   if (service.kind === "assistant" && assistantReady()) {
+    try {
+      await consumeRate(String(source.authorId) + ":assistant", 6, 600000);
+      await consumeRate("workspace:assistant", 60, 3600000);
+    } catch {
+      await serviceDeliveries.system.update(id, { status: "failed" });
+      return;
+    }
     const parent = source.parentId && service.includeThreadRoot && !room.directKey ? await messages.system.get(source.parentId) : null;
     const root = parent && !parent.removed ? parent.body.slice(0, 1000) : "";
     const request = JSON.stringify({
@@ -258,22 +275,27 @@ export const serviceDelivery = job({ retries: 4 }, async ({ id }: { id: number }
 export async function enqueueServices(messageId: number, roomId: number, authorId: number, mentioned: string[], body: string, updatedAt: string) {
   if (!body || (!outgoingReady() && !assistantReady())) return;
   const services = await serviceActors.system.list({ where: { enabled: true }, limit: 120 });
-  let count = 0;
+  let bots = 0;
+  let assistant = false;
   for (const service of services) {
+    if (service.kind === "assistant" ? assistant : bots >= 3) continue;
     if (!await canReceive(service.id, roomId, authorId, mentioned, body)) continue;
     const delivery = await serviceDeliveries.system.create({
       actorId: service.id, messageId, actorVersion: service.version, sourceUpdatedAt: updatedAt,
     });
     await serviceDelivery.enqueue({ id: delivery.id }, { key: "ember-delivery-" + delivery.id });
-    count++;
-    if (count >= 3) break;
+    if (service.kind === "assistant") assistant = true;
+    else bots++;
+    if (assistant && bots >= 3) break;
   }
 }
 
 export async function botReply(request: RouteRequest) {
   const id = numericId(request.params.deliveryId ?? "");
   const delivery = await serviceDeliveries.system.get(id);
-  if (!outgoingReady() || !delivery || !["queued", "awaiting", "replied"].includes(delivery.status) || request.body.length > 24000) {
+  if (!delivery) return { status: 404, body: "not_found" };
+  const status = delivery.status;
+  if (!outgoingReady() || !["queued", "awaiting", "replied"].includes(status) || request.body.length > 24000) {
     return { status: 404, body: "not_found" };
   }
   const signature = request.headers["x-ember-signature"] ?? "";
@@ -283,9 +305,14 @@ export async function botReply(request: RouteRequest) {
   }
   try {
     const result = JSON.parse(request.body) as { text?: string };
-    if (typeof result.text !== "string" || !result.text.trim() || result.text.length > 4000) return { status: 400, body: "invalid_payload" };
-    const posted = await reply(id, result.text);
-    return { status: posted ? 200 : 409, body: posted ? "ok" : "reply_unavailable" };
+    const text = result.text ?? "";
+    if (typeof text !== "string" || !text.trim() || text.length > 4000) return { status: 400, body: "invalid_payload" };
+    if (!await isCurrent(id)) return { status: 403, body: "reply_unavailable" };
+    if (status === "queued") return { status: 425, headers: { "Retry-After": "2" } };
+    const posted = await reply(id, text);
+    return posted
+      ? { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }, body: '{"ok":true}' }
+      : { status: 409, body: "reply_unavailable" };
   } catch {
     return { status: 400, body: "invalid_payload" };
   }
@@ -332,7 +359,11 @@ function slackBlocks(blocks: SlackBlock[]) {
     }
     if (block.type === "actions") {
       const buttons = (block.elements ?? []).filter(item => item.type === "button" && Boolean(slackAddress(item.url ?? "")))
-        .map(item => ({ text: item.text ?? "", href: slackAddress(item.url ?? "") }));
+        .map(item => {
+          const button = item as unknown as { text?: SlackText; url?: string; style?: string };
+          const style = button.style === "primary" || button.style === "danger" ? button.style : undefined;
+          return { text: button.text?.text ?? "", href: slackAddress(button.url ?? ""), style };
+        });
       if (buttons.length) parts.push({ kind: "buttons", buttons });
     }
     if (block.type === "rich_text" && block.elements) {
@@ -422,7 +453,8 @@ async function persistSlack(request: RouteRequest, service: ServiceActor, roomId
   if (await messages.system.count({ where: { authorId: key.authorId, createdAt: { gte: new Date(Date.now() - 60000).toISOString() } } }) >= 60) {
     return { status: 429, body: "rate_limited", headers: { "Retry-After": "60" } };
   }
-  await messages.system.create({ ...key, body, markup: body ? slackMarkup(body) : "", cards: serialized });
+  const msg = await messages.system.create({ ...key, body, markup: body ? slackMarkup(body) : "", cards: serialized, searchIndexed: true });
+  await indexMessage(msg.id, roomId, body);
   return { status: 200, body: "ok" };
 }
 

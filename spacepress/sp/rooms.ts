@@ -17,16 +17,18 @@ export async function favorites() {
 export async function sidebar() {
   const user = await actor();
   const visible = await visibleRooms();
-  const views: (RoomView & { unread: boolean; involvement: string })[] = [];
+  const views: (RoomView & { unread: boolean; unreadSince?: string; involvement: string })[] = [];
   const sharedOrder: string[] = [];
   visible.sort((a, b) => a.position - b.position || a.id - b.id);
   for (const room of visible) {
     const member = await membership(room.id, user.wpId);
-    const [latest] = await messages.system.list({ where: { roomId: room.id, inRoom: true, removed: false }, orderBy: { id: "desc" }, limit: 1 });
+    const [latest] = await messages.system.list({ where: { roomId: room.id, removed: false }, orderBy: { id: "desc" }, limit: 1 });
+    const lastReadId = member?.lastReadId ?? 0;
+    const read = lastReadId ? await messages.system.get(lastReadId) : null;
     if (!room.directKey) sharedOrder.push(String(room.id));
     const activeAt = latest?.createdAt ?? room.updatedAt;
-    const unread = Boolean(latest && latest.authorId !== user.wpId && latest.id > (member?.lastReadId ?? 0));
-    views.push({ ...(await roomView(room)), activeAt, unread, involvement: member?.involvement ?? "mentions" });
+    const unread = Boolean(latest && latest.authorId !== user.wpId && latest.id > lastReadId);
+    views.push({ ...(await roomView(room)), activeAt, unread, unreadSince: read?.createdAt, involvement: member?.involvement ?? "mentions" });
   }
   const people = await directory();
   return { rooms: views, favorites: await favorites(), sharedOrder, suggestions: people.users.filter(person => person.id !== user.id && person.status === "active").slice(0, 20), huddles: {}, invitation: null };
@@ -188,7 +190,7 @@ export const markRead = mutation({ access: "authenticated" }, async ({ id }: { i
   const me = await actor();
   const room = await requireRoom(numericId(id));
   const record = await ensureMember(room.id, me.wpId, Boolean(room.directKey));
-  const [latest] = await messages.system.list({ where: { roomId: room.id, inRoom: true }, orderBy: { id: "desc" }, limit: 1 });
+  const [latest] = await messages.system.list({ where: { roomId: room.id, removed: false }, orderBy: { id: "desc" }, limit: 1 });
   await memberships.system.update(record.id, { lastReadId: latest?.id ?? 0, seenAt: Date.now() });
   return true;
 });

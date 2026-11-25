@@ -1,11 +1,8 @@
 import { HttpError, mutation, query } from "spacepress";
-import { messages, recentSearches } from "spacepress:db";
+import { messages, recentSearches, searchTokens } from "spacepress:db";
 import { actor, numericId, visibleRooms } from "./access";
 import { messageView, type MessageView } from "./messages";
-
-function words(text: string) {
-  return text.toLowerCase().split(/[\s.,!?;:()\[\]{}<>"'\/\\|@#$%^&*+=~`]+/).filter(word => Boolean(word));
-}
+import { words } from "./search-index";
 
 function enabled(value?: boolean | string) {
   return value === true || value === "true" || value === "1";
@@ -25,14 +22,31 @@ export const emberSearch = query({ access: "authenticated" }, async (input: {
   if (!ids.length) return { messages: matches, cursor: null };
   const cursor = input.cursor ? numericId(input.cursor) : 0;
   const descending = input.sort !== "oldest";
-  const rows = descending
-    ? await messages.system.list({ where: { roomId: { in: ids }, removed: false, id: { lt: cursor || 9007199254740991 } }, orderBy: { id: "desc" }, limit: 201 })
-    : await messages.system.list({ where: { roomId: { in: ids }, removed: false, id: { gt: cursor } }, orderBy: { id: "asc" }, limit: 201 });
+  const token = tokens[0];
+  const upper = cursor || 9007199254740991;
+  const unindexed = token
+    ? descending
+      ? await messages.system.list({ where: { roomId: { in: ids }, removed: false, searchIndexed: false, id: { lt: upper } }, orderBy: { id: "desc" }, limit: 201 })
+      : await messages.system.list({ where: { roomId: { in: ids }, removed: false, searchIndexed: false, id: { gt: cursor } }, orderBy: { id: "asc" }, limit: 201 })
+    : descending
+      ? await messages.system.list({ where: { roomId: { in: ids }, removed: false, id: { lt: upper } }, orderBy: { id: "desc" }, limit: 201 })
+      : await messages.system.list({ where: { roomId: { in: ids }, removed: false, id: { gt: cursor } }, orderBy: { id: "asc" }, limit: 201 });
+  const candidates = unindexed.map(row => row.id);
+  if (token) {
+    const hits = descending
+      ? await searchTokens.system.list({ where: { token, roomId: { in: ids }, messageId: { lt: upper } }, orderBy: { messageId: "desc" }, limit: 201 })
+      : await searchTokens.system.list({ where: { token, roomId: { in: ids }, messageId: { gt: cursor } }, orderBy: { messageId: "asc" }, limit: 201 });
+    for (const hit of hits) candidates.push(hit.messageId);
+    candidates.sort((a, b) => descending ? b - a : a - b);
+  }
+  const page = candidates.slice(0, 201);
   let last = 0;
   let scanned = 0;
-  for (const row of rows) {
-    last = row.id;
+  for (const id of page) {
+    last = id;
     scanned++;
+    const row = await messages.system.get(id);
+    if (!row || row.removed) continue;
     if (input.from && row.authorId !== numericId(input.from)) continue;
     if (enabled(input.hasFile) && !row.attachmentId) continue;
     const body = words(row.body);
@@ -52,7 +66,7 @@ export const emberSearch = query({ access: "authenticated" }, async (input: {
     matches.push(view);
     if (matches.length === 50) break;
   }
-  return { messages: matches, cursor: (rows.length === 201 || scanned < rows.length) ? String(last) : null };
+  return { messages: matches, cursor: (page.length === 201 || scanned < page.length) ? String(last) : null };
 });
 
 export async function recent() {

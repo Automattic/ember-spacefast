@@ -4,7 +4,9 @@ Ember uses the fork's existing React UI with WordPress sign-in and SpacePress ac
 
 The workspace supports open rooms, private rooms, direct messages, threaded replies, formatting, edits, reactions, search, unread state, favorites, room administration, and device-encrypted files. Invitations use WordPress mail. WordPress Action Scheduler runs push, outgoing bot, and assistant delivery after a message commits.
 
-An existing SpacePress preview upgrades its WordPress tables in place. Spacefast Zero and WordPress each have their own workspace data.
+An existing SpacePress preview upgrades its WordPress tables in place. New messages are indexed as they are written. Action Scheduler indexes existing history in batches of 50 messages per minute. Search includes unindexed messages while the backfill runs.
+
+Spacefast Zero and WordPress each have their own workspace data. A cutover that preserves Zero history still needs an export and a mapping for WordPress users, room memberships, and attachments.
 
 ## Run locally
 
@@ -36,7 +38,7 @@ Use the same build steps, including a final `spacepress build spacepress` after 
 | Feature | WordPress runtime configuration |
 | --- | --- |
 | Email invitations | Working WordPress mail transport and a sending domain on the host |
-| Email-domain admission | `EMBER_SIGNUP_EMAIL_DOMAINS` as a comma-separated list |
+| Email-domain admission | `EMBER_SIGNUP_EMAIL_DOMAINS` as a comma-separated list and WordPress mail. The signed-in user receives a 30-minute verification link at their WordPress email address. |
 | Incoming Slack webhooks | Create a webhook in Ember's workspace settings and save its private posting URL |
 | Outgoing bot replies | `EMBER_BOT_SIGNING_KEY` with at least 32 characters and a public HTTPS callback configured in Ember |
 | Browser push | `EMBER_PUSH_PRIVATE_KEY` and `EMBER_PUSH_CONTACT`. Set the matching `EMBER_PUSH_PUBLIC_KEY` to reuse the generated public key |

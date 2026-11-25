@@ -41,10 +41,38 @@ export const messages = table({
   editedAt: text().max(24).default(""),
   attachmentId: integer().default(0),
   cards: text({ multiline: true }).default(""),
+  searchIndexed: boolean().default(false),
   createdAt: timestamp().defaultNow(),
 }, { access: internal }).index(["roomId", "id"])
   .index(["roomId", "authorId", "clientId"], { unique: true })
-  .index(["roomId", "inRoom", "id"]).index(["parentId", "id"]);
+  .index(["roomId", "inRoom", "id"]).index(["parentId", "id"])
+  .index(["authorId", "clientId"]).index(["searchIndexed", "id"]);
+
+export const searchTokens = table({
+  token: text().max(100),
+  roomId: ref(rooms).onDelete("cascade"),
+  messageId: ref(messages).onDelete("cascade"),
+}, { access: internal }).index(["token", "messageId"]).index(["messageId"]);
+
+export const rateCounters = table({
+  key: text().max(100).unique(),
+  window: integer(),
+  count: integer(),
+}, { access: internal });
+
+export const auditEvents = table({
+  actorId: integer(),
+  action: text().max(40),
+  subjectId: integer(),
+  details: text().default(""),
+}, { access: internal }).index(["subjectId"]);
+
+export const linkPreviews = table({
+  key: text().max(64).unique(),
+  title: text().max(160),
+  description: text().max(280),
+  expiresAt: integer(),
+}, { access: internal }).index(["expiresAt"]);
 
 export const reactions = table({
   messageId: ref(messages).onDelete("cascade"),
@@ -108,6 +136,7 @@ export const invitations = table({
   tokenHash: text().max(64).unique(),
   expiresAt: timestamp(),
   accepted: boolean().default(false),
+  domainVerification: boolean().default(false),
 }, { access: internal }).index(["accepted", "id"]);
 
 export const serviceActors = table({
