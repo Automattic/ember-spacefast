@@ -31,13 +31,23 @@ export async function readAction(operation: string, args: unknown[]) {
       args[0] as Parameters<typeof client.actions.emberSearch>[0];
     return client.actions.emberSearch({ q, query, roomId, from, cursor, sort, hasLink, hasFile, withMe, inThread });
   }
+  if (operation === "bootstrap") return client.actions.emberBootstrap();
+  if (operation === "profile") return client.actions.emberProfile();
+  if (operation === "settings") return client.actions.emberSettings();
+  if (operation === "recentSearches") return client.actions.emberRecentSearches();
+  if (operation === "directory") return client.actions.emberDirectory();
+  if (operation === "sidebar") return client.actions.emberSidebar();
   const id = Number(args[0]);
   const cursor = Number(args[1]);
-  return client.actions.emberRead({
-    operation,
-    ...(Number.isSafeInteger(id) && id > 0 ? { id } : {}),
-    ...(Number.isSafeInteger(cursor) && cursor > 0 ? { cursor } : {}),
-  });
+  const idInput = Number.isSafeInteger(id) && id > 0 ? { id } : {};
+  const cursorInput = Number.isSafeInteger(cursor) && cursor > 0 ? { cursor } : {};
+  if (operation === "room") return client.actions.emberRoom({ ...idInput, ...cursorInput });
+  if (operation === "roomAfter") return client.actions.emberRoomAfter({ ...idInput, ...cursorInput });
+  if (operation === "roomAround") return client.actions.emberRoomAround({ ...idInput, ...cursorInput });
+  if (operation === "thread") return client.actions.emberThread({ ...idInput, ...cursorInput });
+  if (operation === "roomSettings") return client.actions.emberRoomSettings(idInput);
+  if (operation === "assistantNotice") return client.actions.emberAssistantNotice(idInput);
+  return unsupported();
 }
 
 type ReadFailure = { status?: number; code?: string };

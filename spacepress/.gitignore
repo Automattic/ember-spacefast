@@ -7,3 +7,5 @@ public/favicon.svg
 sp/_generated/*
 !sp/_generated/migrations/
 !sp/_generated/wp-plugins.lock.json
+.spacefast/
+/.spacefast-*
