@@ -1,11 +1,18 @@
 import { HttpError, type InferSelectModel } from "spacepress";
-import { get_current_user_id, get_userdata } from "php/wordpress";
+import { current_user_can, get_current_user_id, get_userdata } from "php/wordpress";
 import { memberships, people, profiles, rooms, serviceActors, workspaces } from "spacepress:db";
 import { rooms as roomSchema } from "./schema";
 import { serviceIdentity, serviceOffset } from "./service-identity";
 import { workspaceMemberStatus } from "./member-status";
 
 export type Room = InferSelectModel<typeof roomSchema>;
+
+export function isWordPressAdministrator(id: number, roles?: string[]) {
+  return Boolean(
+    (roles && roles.includes("administrator")) ||
+    (id === get_current_user_id() && current_user_can("manage_options")),
+  );
+}
 
 export function numericId(value: string) {
   const id = Number(value);
@@ -29,7 +36,7 @@ export async function personView(id: number): Promise<Person> {
   }
   const [profile] = await profiles.system.list({ where: { personId: id }, limit: 1 });
   const user = get_userdata(id);
-  const role = profile?.role || (user && user.roles.includes("administrator") ? "administrator" : "member");
+  const role = profile?.role || (isWordPressAdministrator(id, user ? user.roles : undefined) ? "administrator" : "member");
   const status = user ? await workspaceMemberStatus(id, role, profile?.status) : "deactivated";
   return {
     id: String(id),

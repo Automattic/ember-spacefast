@@ -1,3 +1,3 @@
 export default {
-  build: { rootDirectory: "spacefast" },
+  build: { rootDirectory: "spacepress" },
 };

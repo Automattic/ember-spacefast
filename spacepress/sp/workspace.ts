@@ -1,7 +1,7 @@
 import { HttpError, mutation } from "spacepress";
 import { get_userdata } from "php/wordpress";
 import { profiles, pushSubscriptions, rooms, workspaces } from "spacepress:db";
-import { account, actor, admin, ensureMember, numericId, personView } from "./access";
+import { account, actor, admin, ensureMember, isWordPressAdministrator, numericId, personView } from "./access";
 import { assistantReady } from "./service-settings";
 import { audit } from "./records";
 
@@ -48,12 +48,19 @@ export const setup = mutation({ access: "authenticated" }, async (input: {
   if (name.length > 80) throw new HttpError(422, "invalid_name", "Enter a shorter workspace name.");
   const code = input.joinCode?.trim() ?? "";
   await workspaces.system.create({ singleton: 1, name, joinCode: code, joinLink: Boolean(code) });
+  const displayName = input.name?.trim() || me.name;
+  const [existingProfile] = await profiles.system.list({ where: { personId: me.wpId }, limit: 1 });
+  if (existingProfile) {
+    await profiles.system.update(existingProfile.id, { name: displayName, role: "administrator", status: "active" });
+  } else {
+    await profiles.system.create({ personId: me.wpId, name: displayName, role: "administrator", status: "active" });
+  }
   if (!(await rooms.system.count())) {
     const room = await rooms.system.create({ name: "General", owner: me.wpId });
     await ensureMember(room.id, me.wpId, false);
   }
   await audit(me.wpId, "workspace.setup", me.wpId);
-  return me;
+  return await personView(me.wpId);
 });
 
 export async function settings() {
@@ -132,7 +139,7 @@ export const updatePerson = mutation({ access: "authenticated" }, async (input: 
   if (!["member", "administrator"].includes(role) || !["active", "deactivated", "banned"].includes(status)) {
     throw new HttpError(422, "invalid_role", "Invalid membership change.");
   }
-  if ((me.wpId === id || user.roles.includes("administrator")) && (role !== "administrator" || status !== "active")) {
+  if ((me.wpId === id || isWordPressAdministrator(id, user.roles)) && (role !== "administrator" || status !== "active")) {
     throw new HttpError(403, "protected_administrator", "WordPress administrators must retain workspace access.");
   }
   const [existing] = await profiles.system.list({ where: { personId: id }, limit: 1 });

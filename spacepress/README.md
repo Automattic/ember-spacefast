@@ -29,9 +29,21 @@ For a tailnet preview, use `spacepress dev spacepress --port <local-port> --url 
 
 Studio's built-in server needs a proxy that denies direct access to the private uploads directory. Run `node spacepress/dev-proxy.ts <proxy-port> <local-port>` and point Tailscale Serve at the proxy port. From the `spacepress` directory, run `spacepress wp eval 'echo \SpacePress\Wp\WpFiles::probe() ? "protected" : "exposed";'` to verify that WordPress can protect the directory. On a hosted site, SpacePress uses its configured private uploads backend.
 
-## Build for Spacefast
+## Deploy to Spacefast
 
-Use the same build steps, including a final `spacepress build spacepress` after generating the browser assets. Use the `spacepress` directory as the SpacePress project when pushing to a WordPress-enabled Spacefast site. Provision the WordPress users there and verify sign-in and private rooms on that host.
+Build the SpacePress typed client and browser assets, then publish the `spacepress` directory with a Spacefast CLI (`sf`) that supports the SpacePress `sp/` layout (`spacefast` built with PR `#6104` / compiler `92d6b2432c542a76552c53f4071736a2a7660296`):
+
+```sh
+npm ci --prefix spacefast
+spacepress build spacepress
+node spacepress/build-client.ts
+sf check spacepress
+sf publish spacepress --team <team> --slug <slug> --wait
+```
+
+`sf publish` captures the SpacePress app source (`.spacepress-source/*`) alongside the built browser bundle and icons under `public/`. Existing legacy Zero 0.8 Spaces cannot be upgraded in place until the Spacefast runtime finalizer removes its `legacy_0_8` `zero_migration_required` guard; publish to a fresh SpacePress Space (or a non-Zero-0.8 Space).
+
+Sign in as a Spacefast team manager (who holds the `manage_options` capability on SpacePress Spaces) or WordPress administrator to complete first-run setup.
 
 ## Optional services
 
